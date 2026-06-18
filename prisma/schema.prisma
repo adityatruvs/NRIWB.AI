@@ -1,0 +1,93 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Account {
+  id             String    @id @default(cuid())
+  userId         String
+  nickname       String
+  institution    String
+  accountType    String
+  // checking | savings | brokerage | 401k | ira | roth_ira | real_estate
+  // nre | nro | fcnr | fd | mutual_fund | property | gold | other
+  country        String
+  // US | IN
+  balanceUsd     Float
+  balanceInr     Float
+  currency       String    @default("USD")
+  isManual       Boolean   @default(true)
+  source         String    @default("manual")
+  // manual | plaid | setu | pdf_upload
+  isPfic         Boolean   @default(false)
+  plaidAccountId String?   @unique
+  setuConsentId  String?
+  lastSyncedAt   DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  snapshots BalanceSnapshot[]
+
+  @@index([userId])
+}
+
+// Stores daily balance history — required for FBAR peak balance calculation in Tranche 2
+model BalanceSnapshot {
+  id         String   @id @default(cuid())
+  accountId  String
+  balanceUsd Float
+  balanceInr Float
+  recordedAt DateTime @default(now())
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, recordedAt])
+}
+
+model FxRate {
+  id        String   @id @default(cuid())
+  pair      String   @unique
+  rate      Float
+  updatedAt DateTime @updatedAt
+}
+
+model Conversation {
+  id        String   @id @default(cuid())
+  userId    String
+  messages  String
+  // JSON string — array of { role, content, timestamp, model }
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+// Running compliance numbers — updated on every account sync
+model ComplianceData {
+  id                  String   @id @default(cuid())
+  userId              String   @unique
+  indiaPeakBalanceUsd Float    @default(0)
+  indiaDaysCurrentYear Int     @default(0)
+  lrsUsedUsd          Float    @default(0)
+  updatedAt           DateTime @updatedAt
+}
+
+// Plaid linked institutions — access tokens encrypted before storing
+model PlaidItem {
+  id                   String   @id @default(cuid())
+  userId               String
+  itemId               String   @unique
+  accessTokenEncrypted String
+  institutionId        String
+  institutionName      String
+  status               String   @default("active")
+  // active | requires_reauth | disconnected
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@index([userId])
+}

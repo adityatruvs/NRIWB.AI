@@ -1,0 +1,125 @@
+import Anthropic from '@anthropic-ai/sdk'
+import {
+  netWorth,
+  fbarStatus,
+  pficHoldings,
+  complianceItems,
+  usdValue,
+  TYPE_LABELS,
+  FBAR_THRESHOLD_USD,
+  FATCA_THRESHOLD_USD,
+  type Holding,
+} from '@/lib/portfolio'
+
+export const runtime = 'nodejs'
+
+const client = new Anthropic() // reads ANTHROPIC_API_KEY from the environment
+
+const MODEL = 'claude-sonnet-4-6'
+const MAX_HISTORY = 20
+
+interface WireMessage {
+  role: 'user' | 'assistant'
+  text: string
+}
+
+interface CopilotRequest {
+  messages: WireMessage[]
+  holdings: Holding[]
+  rate: number
+}
+
+const usd = (n: number) =>
+  new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n)
+
+/**
+ * Grounds the copilot in the user's live portfolio. Recomputed server-side
+ * from the posted holdings so the model always sees the same numbers the
+ * dashboard renders.
+ */
+function buildSystemPrompt(holdings: Holding[], rate: number): string {
+  const nw = netWorth(holdings, rate)
+  const fbar = fbarStatus(holdings, rate)
+  const pfics = pficHoldings(holdings)
+  const compliance = complianceItems(holdings, rate)
+
+  const accountLines = holdings
+    .map((h) => {
+      const flags = [h.isPfic ? 'PFIC' : null, h.source !== 'manual' ? h.source : null].filter(Boolean)
+      return `- [${h.country}] ${h.nickname} — ${h.institution}, ${TYPE_LABELS[h.accountType] ?? h.accountType}, ${usd(usdValue(h, rate))}${flags.length ? ` (${flags.join(', ')})` : ''}`
+    })
+    .join('\n')
+
+  const complianceLines = compliance
+    .map((c) => `- ${c.title}: [${c.level}] ${c.detail} (${c.meta})`)
+    .join('\n')
+
+  return `You are the NRIWB Wealth Copilot — a cross-border personal-finance assistant for NRIs (non-resident Indians) managing money in both the United States and India. You explain US↔India tax and compliance topics (FBAR/FinCEN 114, FATCA/Form 8938, PFIC/Form 8621, NRE/NRO/FCNR accounts, DTAA, the 182-day residency rule, repatriation) in plain English, grounded in the user's actual portfolio below.
+
+<portfolio>
+Net worth: ${usd(nw.totalUsd)} total — US ${usd(nw.usUsd)} (${nw.usPct}%), India ${usd(nw.inUsd)} (${nw.inPct}%)
+FX rate: 1 USD = ₹${rate.toFixed(2)}
+FBAR: India accounts peaked at ~${usd(fbar.peakUsd)} vs the ${usd(FBAR_THRESHOLD_USD)} threshold — ${fbar.crossed ? 'CROSSED, filing required' : `${Math.round(fbar.pctOfThreshold)}% of the limit`}
+FATCA: Form 8938 reporting threshold is ${usd(FATCA_THRESHOLD_USD)} in foreign assets
+PFIC holdings: ${pfics.length > 0 ? pfics.map((p) => p.nickname).join(', ') : 'none'}
+
+Accounts (${holdings.length}):
+${accountLines}
+
+Compliance status:
+${complianceLines}
+</portfolio>
+
+Guidelines:
+- Reference the user's real numbers and account names when they're relevant — that's your main value over a generic chatbot.
+- Be concise: a few short paragraphs or a tight bullet list. This renders in a small chat panel.
+- Formatting is limited: plain text, **bold** for emphasis, and lines starting with "•" for bullets. No headers, tables, links, LaTeX, or nested lists.
+- You explain and inform; you do not give personalized tax, legal, or investment advice. For filings or elections (e.g. QEF vs mark-to-market), explain the options and recommend confirming with a cross-border CPA.
+- If asked something outside cross-border personal finance, answer briefly and steer back to what you can help with.`
+}
+
+export async function POST(req: Request) {
+  let body: CopilotRequest
+  try {
+    body = await req.json()
+  } catch {
+    return Response.json({ error: 'Invalid JSON body' }, { status: 400 })
+  }
+
+  const history = (body.messages ?? [])
+    .filter((m) => (m.role === 'user' || m.role === 'assistant') && typeof m.text === 'string' && m.text.trim())
+    .slice(-MAX_HISTORY)
+
+  if (history.length === 0 || history[history.length - 1].role !== 'user') {
+    return Response.json({ error: 'Last message must be from the user' }, { status: 400 })
+  }
+
+  const stream = client.messages.stream({
+    model: MODEL,
+    max_tokens: 8192,
+    thinking: { type: 'adaptive' },
+    system: buildSystemPrompt(body.holdings ?? [], body.rate || 83),
+    messages: history.map((m): Anthropic.MessageParam => ({ role: m.role, content: m.text })),
+  })
+
+  const encoder = new TextEncoder()
+  const readable = new ReadableStream<Uint8Array>({
+    start(controller) {
+      stream.on('text', (delta) => controller.enqueue(encoder.encode(delta)))
+      stream
+        .finalMessage()
+        .then(() => controller.close())
+        .catch((err: unknown) => {
+          console.error('Copilot stream error:', err)
+          controller.error(err)
+        })
+    },
+    cancel() {
+      stream.abort()
+    },
+  })
+
+  return new Response(readable, {
+    headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' },
+  })
+}

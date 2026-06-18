@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-Command pandoc -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-Command python -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-Command python3 -ErrorAction SilentlyContinue)",
+      "PowerShell(python -c \"import docx2txt; print\\('docx2txt ok'\\)\" 2>&1)",
+      "PowerShell(python -c \"import mammoth; print\\('mammoth ok'\\)\" 2>&1)",
+      "PowerShell(python -c \"import docx; print\\('docx ok'\\)\" 2>&1)",
+      "Bash(python -)",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\aditb\\\\Desktop\\\\nriwb\" -Recurse -Depth 2)",
+      "Bash(Select-Object FullName)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:plaid.com)",
+      "Bash(npm run *)",
+      "Bash(node -e \"const l=require\\('lucide-react'\\); console.log\\('keys:', Object.keys\\(l\\).slice\\(0,15\\).join\\(', '\\)\\); console.log\\('has Wallet:', !!l.Wallet, '| has TrendingUp:', !!l.TrendingUp, '| has Sparkles:', !!l.Sparkles\\)\")",
+      "PowerShell(npm run build)",
+      "PowerShell(npm run dev)",
+      "PowerShell($pages = @\\('/', '/accounts', '/copilot'\\); foreach \\($p in $pages\\) { try { $r = Invoke-WebRequest -Uri \"http://localhost:3000$p\" -UseBasicParsing -TimeoutSec 30; $hasErr = $r.Content -match 'Internal Server Error|__next_error__'; Write-Output \"$p -> $\\($r.StatusCode\\) errorMarker=$hasErr length=$\\($r.Content.Length\\)\" } catch { Write-Output \"$p -> FAILED: $\\($_.Exception.Message\\)\" } })",
+      "PowerShell($r = Invoke-WebRequest -Uri \"http://localhost:3000/\" -UseBasicParsing; foreach \\($c in 'page-aurora','gradient-hairline','btn-primary','icon-chip','hero-mesh','eyebrow'\\) { Write-Output \"$c -> $\\($r.Content.Contains\\($c\\)\\)\" })",
+      "PowerShell(npm install @anthropic-ai/sdk)",
+      "Bash(curl -s -N --max-time 60 -X POST http://localhost:3000/api/copilot -H \"Content-Type: application/json\" -d '{\"rate\":86.5,\"holdings\":[{\"nickname\":\"HDFC NRO Savings\",\"institution\":\"HDFC Bank\",\"accountType\":\"nro\",\"country\":\"IN\",\"balanceUsd\":0,\"balanceInr\":1200000,\"isPfic\":false,\"source\":\"manual\"},{\"nickname\":\"Chase Checking\",\"institution\":\"Chase\",\"accountType\":\"checking\",\"country\":\"US\",\"balanceUsd\":42000,\"balanceInr\":0,\"isPfic\":false,\"source\":\"manual\"}],\"messages\":[{\"role\":\"user\",\"text\":\"Do I need to file FBAR this year? One short paragraph.\"}]}')"
+    ]
+  }
+}
