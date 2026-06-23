@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { motion, type Variants } from "motion/react";
-import { SignIn, SignUp } from "@clerk/nextjs";
+import { SignIn, SignUp, useAuth } from "@clerk/nextjs";
 import {
   LineChart,
   ArrowLeftRight,
@@ -61,6 +62,15 @@ const item: Variants = {
 
 export default function LandingAuth() {
   const [mode, setMode] = useState<"sign-up" | "sign-in">("sign-up");
+  const router = useRouter();
+  const { isSignedIn } = useAuth();
+
+  // The signed-out/in switch is a server component (<Show>), so a client-side
+  // sign-in/up here won't move the user. When auth flips to signed-in, force a
+  // server re-render so the gate re-evaluates and shows onboarding/dashboard.
+  useEffect(() => {
+    if (isSignedIn) router.refresh();
+  }, [isSignedIn, router]);
 
   return (
     <div className="relative flex min-h-screen flex-1 flex-col overflow-y-auto">
