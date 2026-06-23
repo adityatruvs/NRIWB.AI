@@ -1,10 +1,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { ClerkProvider, Show } from "@clerk/nextjs";
+import { ClerkProvider } from "@clerk/nextjs";
 import { shadcn } from "@clerk/ui/themes";
 import "./globals.css";
-import LandingAuth from "@/components/LandingAuth";
-import AppGate from "@/components/AppGate";
 import { CurrencyProvider } from "@/context/CurrencyContext";
 import { AccountsProvider } from "@/context/AccountsContext";
 import { ThemeProvider } from "@/context/ThemeContext";
@@ -50,14 +48,7 @@ export default function RootLayout({
         <ClerkProvider appearance={{ theme: shadcn }}>
           <ThemeProvider>
             <CurrencyProvider>
-              <AccountsProvider>
-                <Show when="signed-out">
-                  <LandingAuth />
-                </Show>
-                <Show when="signed-in">
-                  <AppGate>{children}</AppGate>
-                </Show>
-              </AccountsProvider>
+              <AccountsProvider>{children}</AccountsProvider>
             </CurrencyProvider>
           </ThemeProvider>
         </ClerkProvider>
