@@ -1,14 +1,9 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import {
-  ClerkProvider,
-  Show,
-  SignInButton,
-  SignUpButton,
-  UserButton,
-} from "@clerk/nextjs";
+import { ClerkProvider, Show, UserButton } from "@clerk/nextjs";
 import { shadcn } from "@clerk/ui/themes";
 import "./globals.css";
+import LandingAuth from "@/components/LandingAuth";
 import TopNav from "@/components/TopNav";
 import Sidebar from "@/components/Sidebar";
 import { CurrencyProvider } from "@/context/CurrencyContext";
@@ -58,26 +53,7 @@ export default function RootLayout({
             <CurrencyProvider>
               <AccountsProvider>
                 <Show when="signed-out">
-                  <div className="flex flex-1 items-center justify-center">
-                    <div className="rounded-lg border border-border bg-card px-8 py-10 text-center shadow-sm">
-                      <h1 className="text-lg font-semibold">Sign in to NRIWB</h1>
-                      <p className="mt-2 text-sm text-muted-foreground">
-                        Your financial data is protected — sign in to continue.
-                      </p>
-                      <div className="mt-6 flex items-center justify-center gap-3">
-                        <SignInButton mode="modal">
-                          <button className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">
-                            Sign in
-                          </button>
-                        </SignInButton>
-                        <SignUpButton mode="modal">
-                          <button className="rounded-md border border-border px-4 py-2 text-sm font-medium">
-                            Create account
-                          </button>
-                        </SignUpButton>
-                      </div>
-                    </div>
-                  </div>
+                  <LandingAuth />
                 </Show>
                 <Show when="signed-in">
                   <TopNav />
