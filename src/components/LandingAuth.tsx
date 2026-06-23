@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { motion, type Variants } from "motion/react";
 import { SignIn, SignUp, useAuth } from "@clerk/nextjs";
 import {
@@ -62,15 +61,25 @@ const item: Variants = {
 
 export default function LandingAuth() {
   const [mode, setMode] = useState<"sign-up" | "sign-in">("sign-up");
-  const router = useRouter();
   const { isSignedIn } = useAuth();
 
-  // The signed-out/in switch is a server component (<Show>), so a client-side
-  // sign-in/up here won't move the user. When auth flips to signed-in, force a
-  // server re-render so the gate re-evaluates and shows onboarding/dashboard.
+  // The signed-out/in switch is a server component (<Show>). A client-side
+  // sign-in here won't move the user, and on a Clerk *development* instance the
+  // server only learns about the session via a middleware handshake that needs a
+  // FULL page navigation (a soft router.refresh() can't do it). So when auth
+  // flips to signed-in, do a hard navigation to "/" — the handshake runs, the
+  // server sees the session, and the gate shows onboarding/dashboard.
+  // A small sessionStorage guard avoids a reload loop if anything goes wrong.
   useEffect(() => {
-    if (isSignedIn) router.refresh();
-  }, [isSignedIn, router]);
+    if (!isSignedIn) {
+      sessionStorage.removeItem("nriwb_auth_redirect");
+      return;
+    }
+    const tries = Number(sessionStorage.getItem("nriwb_auth_redirect") || "0");
+    if (tries >= 2) return;
+    sessionStorage.setItem("nriwb_auth_redirect", String(tries + 1));
+    window.location.assign("/");
+  }, [isSignedIn]);
 
   return (
     <div className="relative flex min-h-screen flex-1 flex-col overflow-y-auto">
