@@ -47,6 +47,29 @@ function mapType(subtype: string | null, type: string): AccountType {
   return SUBTYPE_MAP[subtype?.toLowerCase() ?? ''] ?? SUBTYPE_MAP[type] ?? 'other'
 }
 
+/** Map raw Plaid accounts into our LinkedAccount shape. Shared by PlaidConnect and the add-account chooser. */
+export function buildLinkedAccounts(
+  rawAccounts: RawPlaidAccount[],
+  institutionName: string,
+  fxRate: number,
+): LinkedAccount[] {
+  return rawAccounts.map((a) => ({
+    userId: 'plaid-user',
+    nickname: `${institutionName} ${a.name}`,
+    institution: institutionName,
+    accountType: mapType(a.subtype, a.type),
+    country: 'US',
+    balanceUsd: a.balances.current ?? a.balances.available ?? 0,
+    balanceInr: (a.balances.current ?? a.balances.available ?? 0) * fxRate,
+    currency: 'USD',
+    isManual: false,
+    source: 'plaid',
+    isPfic: false,
+  }))
+}
+
+export type { RawPlaidAccount }
+
 export function PlaidConnect({ onLinked, fxRate }: Props) {
   const [linkToken, setLinkToken] = useState<string | null>(null)
 
@@ -65,22 +88,7 @@ export function PlaidConnect({ onLinked, fxRate }: Props) {
       })
       const data = await res.json()
       const institutionName: string = metadata.institution?.name ?? 'Bank'
-
-      const linked: LinkedAccount[] = (data.accounts as RawPlaidAccount[]).map((a) => ({
-        userId: 'plaid-user',
-        nickname: `${institutionName} ${a.name}`,
-        institution: institutionName,
-        accountType: mapType(a.subtype, a.type),
-        country: 'US',
-        balanceUsd: a.balances.current ?? a.balances.available ?? 0,
-        balanceInr: (a.balances.current ?? a.balances.available ?? 0) * fxRate,
-        currency: 'USD',
-        isManual: false,
-        source: 'plaid',
-        isPfic: false,
-      }))
-
-      onLinked(linked)
+      onLinked(buildLinkedAccounts(data.accounts as RawPlaidAccount[], institutionName, fxRate))
     },
     [onLinked, fxRate]
   )

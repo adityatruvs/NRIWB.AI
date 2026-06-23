@@ -31,6 +31,7 @@ import { Donut } from '@/components/ui/charts'
 import { Money } from '@/components/ui/Money'
 import { Reveal } from '@/components/ui/Reveal'
 import { PlaidConnect } from '@/components/PlaidConnect'
+import { AddAccountChooser } from '@/components/AddAccountChooser'
 import { cn } from '@/lib/utils'
 
 type CountryFilter = 'all' | 'US' | 'IN'
@@ -44,6 +45,7 @@ export default function AccountsPage() {
   const { rate } = useCurrency()
   const { holdings, addLinked, addManual, updateAccount, removeAccount } = useAccounts()
   const [adding, setAdding] = useState(false)
+  const [choosing, setChoosing] = useState(false)
   const [editing, setEditing] = useState<Holding | null>(null)
   const [deleting, setDeleting] = useState<Holding | null>(null)
   const [filter, setFilter] = useState<CountryFilter>('all')
@@ -93,7 +95,7 @@ export default function AccountsPage() {
           </p>
         </div>
         <button
-          onClick={() => setAdding(true)}
+          onClick={() => setChoosing(true)}
           className="btn-primary inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-[13px] font-medium"
         >
           <Plus size={14} />
@@ -269,9 +271,16 @@ export default function AccountsPage() {
             <CardHeader title="Add more" subtitle="Link, upload, or type it in" icon={<Link2 size={15} />} />
             <div className="flex flex-col gap-2">
               <PlaidConnect fxRate={rate} onLinked={addLinked} />
-              <button className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-border px-3 py-3 text-xs font-medium text-muted-foreground transition-all hover:border-india/50 hover:bg-india-muted/40 hover:text-india">
+              <button
+                disabled
+                title="India bank linking is coming soon"
+                className="flex w-full cursor-not-allowed items-center justify-center gap-1.5 rounded-xl border border-dashed border-border px-3 py-3 text-xs font-medium text-muted-foreground opacity-55"
+              >
                 <Link2 size={13} />
-                Link India accounts via Setu or PDF
+                Link India accounts
+                <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide">
+                  Coming soon
+                </span>
               </button>
               <button
                 onClick={() => setAdding(true)}
@@ -285,6 +294,14 @@ export default function AccountsPage() {
         </div>
       </Reveal>
 
+      {choosing && (
+        <AddAccountChooser
+          fxRate={rate}
+          onLinked={addLinked}
+          onManual={() => setAdding(true)}
+          onClose={() => setChoosing(false)}
+        />
+      )}
       {adding && (
         <AccountDialog rate={rate} onClose={() => setAdding(false)} onSave={addManual} />
       )}
