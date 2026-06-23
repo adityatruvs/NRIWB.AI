@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
+import { requireUserId, unauthorized, UnauthorizedError } from '@/lib/auth'
 import {
   netWorth,
   fbarStatus,
@@ -79,6 +80,16 @@ Guidelines:
 }
 
 export async function POST(req: Request) {
+  // The copilot streams the user's portfolio to Anthropic — require an authenticated
+  // session even though the UI is already gated (defense in depth: the endpoint is
+  // directly reachable). Anthropic is a subprocessor; disclose this in the privacy policy.
+  try {
+    await requireUserId()
+  } catch (e) {
+    if (e instanceof UnauthorizedError) return unauthorized()
+    throw e
+  }
+
   let body: CopilotRequest
   try {
     body = await req.json()

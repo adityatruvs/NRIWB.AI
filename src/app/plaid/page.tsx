@@ -1,10 +1,21 @@
+import { auth } from '@clerk/nextjs/server'
 import { plaidClient } from '@/lib/plaid'
 import { CountryCode, Products } from 'plaid'
 import { PlaidLink } from '@/components/PlaidLink'
 
 export default async function PlaidTestPage() {
+  // Don't mint a Plaid Link token for unauthenticated requests — and tie it to the real user.
+  const { userId } = await auth()
+  if (!userId) {
+    return (
+      <main className="flex min-h-[60vh] items-center justify-center p-8">
+        <p className="text-sm text-muted-foreground">Sign in to link an account.</p>
+      </main>
+    )
+  }
+
   const { data } = await plaidClient.linkTokenCreate({
-    user: { client_user_id: 'sandbox-test-user' },
+    user: { client_user_id: userId },
     client_name: 'NRIWB',
     products: [Products.Auth],
     country_codes: [CountryCode.Us],
