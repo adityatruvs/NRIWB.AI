@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { Moon, Sun } from 'lucide-react'
-import { MOCK_USER } from '@/data/mock/user'
+import { useUser, UserButton } from '@clerk/nextjs'
 import { useAccounts } from '@/context/AccountsContext'
 import { useCurrency } from '@/context/CurrencyContext'
 import { useTheme } from '@/context/ThemeContext'
@@ -21,6 +21,9 @@ export default function TopNav() {
   const { holdings } = useAccounts()
   const { rate } = useCurrency()
   const { theme, toggle } = useTheme()
+  const { user } = useUser()
+  const displayName = user?.fullName ?? user?.firstName ?? 'Your account'
+  const email = user?.primaryEmailAddress?.emailAddress ?? ''
 
   const worst = complianceItems(holdings, rate).reduce<ComplianceLevel>(
     (acc, it) => (LEVEL_RANK[it.level] > LEVEL_RANK[acc] ? it.level : acc),
@@ -70,17 +73,14 @@ export default function TopNav() {
           {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
         </button>
 
-        <div className="ml-1 flex items-center gap-2.5 rounded-full bg-card py-1 pl-1 pr-3 shadow-sm ring-1 ring-border/80">
-          <div className="relative">
-            <div className="flex size-7 items-center justify-center rounded-full bg-gradient-to-br from-[var(--us)] via-[var(--brand)] to-[var(--india)] text-xs font-semibold text-white shadow-sm">
-              {MOCK_USER.name.charAt(0)}
-            </div>
-            <span className="absolute -bottom-px -right-px size-2 rounded-full border-2 border-card bg-success" />
+        <div className="ml-1 flex items-center gap-2.5">
+          <div className="hidden leading-tight text-right sm:block">
+            <p className="max-w-[140px] truncate text-xs font-semibold">{displayName}</p>
+            {email && (
+              <p className="max-w-[140px] truncate text-[11px] text-muted-foreground">{email}</p>
+            )}
           </div>
-          <div className="hidden leading-tight sm:block">
-            <p className="text-xs font-semibold">{MOCK_USER.name}</p>
-            <p className="text-[11px] text-muted-foreground">{MOCK_USER.location}</p>
-          </div>
+          <UserButton appearance={{ elements: { avatarBox: 'size-8' } }} />
         </div>
       </div>
     </header>

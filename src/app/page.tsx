@@ -29,8 +29,8 @@ import {
   FBAR_THRESHOLD_USD,
   type ComplianceLevel,
 } from '@/lib/portfolio'
+import { useUser } from '@clerk/nextjs'
 import { NET_WORTH_HISTORY, RESIDENCY, GOALS, TARGET_INDIA_PCT } from '@/data/mock/insights'
-import { MOCK_USER } from '@/data/mock/user'
 import { Card, CardHeader } from '@/components/ui/Card'
 import { Sparkline, ProgressBar, Donut, RadialProgress } from '@/components/ui/charts'
 import { Money } from '@/components/ui/Money'
@@ -48,6 +48,8 @@ const GREETING = (() => {
 export default function DashboardPage() {
   const { mode, rate } = useCurrency()
   const { holdings, addLinked } = useAccounts()
+  const { user } = useUser()
+  const firstName = user?.firstName ?? 'there'
   const [filter, setFilter] = useState<CountryFilter>('all')
   const [activeAsset, setActiveAsset] = useState<number | null>(null)
   const [splitHover, setSplitHover] = useState<'us' | 'in' | null>(null)
@@ -76,7 +78,7 @@ export default function DashboardPage() {
       <div className="flex flex-wrap items-end justify-between gap-3 animate-fade-in">
         <div>
           <h1 className="text-[1.65rem] font-semibold tracking-tight">
-            {GREETING}, {MOCK_USER.name.split(' ')[0]}
+            {GREETING}, {firstName}
           </h1>
           <p className="mt-1 flex items-center gap-2 text-[15px] text-muted-foreground">
             Here&apos;s your cross-border picture
