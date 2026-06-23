@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -73,7 +72,6 @@ export default function Onboarding({
   lastName: string;
   email: string;
 }) {
-  const router = useRouter();
   const [form, setForm] = useState({
     firstName: firstName || "",
     lastName: lastName || "",
@@ -128,7 +126,9 @@ export default function Onboarding({
         }),
       });
       if (res.ok) {
-        router.refresh();
+        // Hard navigation so the server re-reads the (now complete) profile and
+        // renders the dashboard — reliable and avoids any stale-metadata flash.
+        window.location.assign("/");
       } else {
         const data = await res.json().catch(() => ({}));
         setError(data.error || "Something went wrong. Please try again.");
@@ -173,7 +173,7 @@ export default function Onboarding({
                 onChange={set("firstName")}
                 required
                 autoComplete="given-name"
-                placeholder="Aditya"
+                placeholder="e.g. Priya"
               />
             </div>
             <div>
@@ -184,7 +184,7 @@ export default function Onboarding({
                 onChange={set("lastName")}
                 required
                 autoComplete="family-name"
-                placeholder="Bala"
+                placeholder="e.g. Sharma"
               />
             </div>
             <div className="sm:col-span-2">
@@ -221,7 +221,8 @@ export default function Onboarding({
           </div>
 
           {/* Residency & tax */}
-          <p className="eyebrow mb-3 mt-8">Residency &amp; tax</p>
+          <div className="my-7 border-t border-border/60" />
+          <p className="eyebrow mb-3">Residency &amp; tax</p>
           <div className="flex flex-col gap-4">
             <div>
               <label className={labelCls}>Country of residence</label>
@@ -260,7 +261,8 @@ export default function Onboarding({
           </div>
 
           {/* Contact (optional) */}
-          <p className="eyebrow mb-3 mt-8">
+          <div className="my-7 border-t border-border/60" />
+          <p className="eyebrow mb-3">
             Contact <span className="font-normal lowercase tracking-normal">· optional</span>
           </p>
           <div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-2">

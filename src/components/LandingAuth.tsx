@@ -9,6 +9,7 @@ import {
   ShieldCheck,
   Sparkles,
   Lock,
+  Loader2,
 } from "lucide-react";
 import CrossBorderBeams from "@/components/CrossBorderBeams";
 import BankMarquee from "@/components/BankMarquee";
@@ -80,6 +81,10 @@ export default function LandingAuth() {
     sessionStorage.setItem("nriwb_auth_redirect", String(tries + 1));
     window.location.assign("/");
   }, [isSignedIn]);
+
+  // Once signed in we're navigating away — show a clean loader instead of the
+  // (now form-less) landing, so the transition never looks stuck.
+  if (isSignedIn) return <AuthRedirecting />;
 
   return (
     <div className="relative flex min-h-screen flex-1 flex-col overflow-y-auto">
@@ -261,6 +266,28 @@ export default function LandingAuth() {
       <section className="mx-auto w-full max-w-6xl px-6 pb-16 sm:px-8 lg:px-12">
         <BankMarquee />
       </section>
+    </div>
+  );
+}
+
+function AuthRedirecting() {
+  return (
+    <div className="relative flex min-h-screen flex-1 flex-col items-center justify-center gap-5 px-6">
+      <div aria-hidden className="hero-mesh" />
+      <div className="flex items-center gap-2.5">
+        <span className="icon-chip h-9 w-9 text-base font-bold">N</span>
+        <span className="text-lg font-semibold tracking-tight">NRIWB</span>
+      </div>
+      <div className="flex items-center gap-2.5 text-sm text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        Taking you to your dashboard…
+      </div>
+      <a
+        href="/"
+        className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+      >
+        Taking a moment? Click to continue
+      </a>
     </div>
   );
 }
