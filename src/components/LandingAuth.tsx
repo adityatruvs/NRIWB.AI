@@ -102,12 +102,13 @@ export default function LandingAuth() {
               in, so nothing slips through the cracks between two systems.
             </motion.p>
 
-            <motion.ul variants={item} className="mt-8 flex flex-col gap-2.5">
+            <motion.ul variants={item} className="mt-8 flex flex-col gap-3">
               {FEATURES.slice(0, 3).map(({ icon: Icon, title }) => (
-                <li key={title} className="flex items-center gap-2.5 text-sm">
-                  <span className="icon-chip h-7 w-7">
-                    <Icon className="h-[15px] w-[15px]" strokeWidth={2} />
-                  </span>
+                <li key={title} className="flex items-center gap-3 text-sm">
+                  <Icon
+                    className="h-[18px] w-[18px] shrink-0 text-muted-foreground"
+                    strokeWidth={1.5}
+                  />
                   <span className="font-medium">{title}</span>
                 </li>
               ))}
@@ -225,9 +226,10 @@ export default function LandingAuth() {
             variants={item}
             className="card-surface card-hover p-6"
           >
-            <span className="icon-chip mb-4 h-10 w-10">
-              <Icon className="h-5 w-5" strokeWidth={2} />
-            </span>
+            <Icon
+              className="mb-4 h-[22px] w-[22px] text-foreground/70"
+              strokeWidth={1.5}
+            />
             <p className="font-medium">{title}</p>
             <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
               {body}

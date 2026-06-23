@@ -1,11 +1,10 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { ClerkProvider, Show, UserButton } from "@clerk/nextjs";
+import { ClerkProvider, Show } from "@clerk/nextjs";
 import { shadcn } from "@clerk/ui/themes";
 import "./globals.css";
 import LandingAuth from "@/components/LandingAuth";
-import TopNav from "@/components/TopNav";
-import Sidebar from "@/components/Sidebar";
+import AppGate from "@/components/AppGate";
 import { CurrencyProvider } from "@/context/CurrencyContext";
 import { AccountsProvider } from "@/context/AccountsContext";
 import { ThemeProvider } from "@/context/ThemeContext";
@@ -56,18 +55,7 @@ export default function RootLayout({
                   <LandingAuth />
                 </Show>
                 <Show when="signed-in">
-                  <TopNav />
-                  <div className="flex flex-1 overflow-hidden">
-                    <Sidebar />
-                    <main className="flex-1 overflow-y-auto">
-                      <div className="mx-auto w-full max-w-[1600px] px-6 py-8 sm:px-8 lg:px-12">
-                        <div className="mb-4 flex justify-end">
-                          <UserButton />
-                        </div>
-                        {children}
-                      </div>
-                    </main>
-                  </div>
+                  <AppGate>{children}</AppGate>
                 </Show>
               </AccountsProvider>
             </CurrencyProvider>
