@@ -62,6 +62,19 @@
   --radius-xl: calc(var(--radius) * 1.4);
   --radius-2xl: calc(var(--radius) * 1.9);
   --radius-3xl: calc(var(--radius) * 2.4);
+
+  /* Marquee (Magic UI) — registered as animate-marquee / animate-marquee-vertical */
+  --animate-marquee: marquee var(--duration, 40s) infinite linear;
+  --animate-marquee-vertical: marquee-vertical var(--duration, 40s) infinite linear;
+
+  @keyframes marquee {
+    from { transform: translateX(0); }
+    to { transform: translateX(calc(-100% - var(--gap, 1rem))); }
+  }
+  @keyframes marquee-vertical {
+    from { transform: translateY(0); }
+    to { transform: translateY(calc(-100% - var(--gap, 1rem))); }
+  }
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -339,6 +352,26 @@
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
+  }
+
+  /* Animated tri-color gradient text — slow horizontal pan */
+  .text-gradient-brand-animated {
+    background: linear-gradient(
+      105deg,
+      var(--us) 0%,
+      var(--brand) 30%,
+      var(--india) 50%,
+      var(--brand) 70%,
+      var(--us) 100%
+    );
+    background-size: 220% auto;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: gradient-pan 7s linear infinite;
+  }
+  @keyframes gradient-pan {
+    to { background-position: 220% center; }
   }
 
   /* Tri-color hairline — US blue → brand → India green */
