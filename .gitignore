@@ -25,6 +25,9 @@
 *.pem
 *.db
 
+# agent scratch memory (local only)
+/memory
+
 # debug
 npm-debug.log*
 yarn-debug.log*

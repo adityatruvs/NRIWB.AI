@@ -152,7 +152,7 @@ export default function Onboarding({
             <span className="icon-chip h-8 w-8 text-sm font-bold">N</span>
             <span className="text-sm font-semibold tracking-tight">NRIWB</span>
           </div>
-          <h1 className="mt-6 text-2xl font-semibold tracking-tight">
+          <h1 className="mt-6 font-serif text-[1.75rem] font-medium tracking-tight">
             Set up your profile
           </h1>
           <p className="mt-1.5 text-sm text-muted-foreground">

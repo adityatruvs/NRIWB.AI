@@ -14,8 +14,10 @@ import {
   Trash2,
   AlertTriangle,
 } from 'lucide-react'
+import { AccountsLogo } from '@/components/ui/logos'
 import { useCurrency } from '@/context/CurrencyContext'
 import { useAccounts } from '@/context/AccountsContext'
+import { useGoals } from '@/context/GoalsContext'
 import { formatUSD, formatINR } from '@/lib/currency'
 import {
   netWorth,
@@ -44,6 +46,14 @@ const COUNTRY_META = {
 export default function AccountsPage() {
   const { rate } = useCurrency()
   const { holdings, addLinked, addManual, updateAccount, removeAccount } = useAccounts()
+  const { goals } = useGoals()
+
+  // accountId → name of the goal it funds, so each account shows where it's earmarked.
+  const accountToGoal = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const g of goals) for (const id of g.linkedAccountIds ?? []) m.set(id, g.name)
+    return m
+  }, [goals])
   const [adding, setAdding] = useState(false)
   const [choosing, setChoosing] = useState(false)
   const [editing, setEditing] = useState<Holding | null>(null)
@@ -88,11 +98,16 @@ export default function AccountsPage() {
     <div className="flex flex-col gap-6">
       {/* ── Header ────────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-end justify-between gap-3 animate-fade-in">
-        <div>
-          <h1 className="text-[1.65rem] font-semibold tracking-tight">Accounts</h1>
-          <p className="mt-1 text-[15px] text-muted-foreground">
-            Everything you own, across both countries
-          </p>
+        <div className="flex items-center gap-3">
+          <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-brand text-brand-foreground shadow-[0_2px_8px_-3px_hsl(var(--shadow-color)/0.4)]">
+            <AccountsLogo size={18} />
+          </span>
+          <div>
+            <h1 className="font-serif text-[1.7rem] font-medium tracking-tight">Accounts</h1>
+            <p className="mt-1 text-[15px] text-muted-foreground">
+              Everything you own, across both countries
+            </p>
+          </div>
         </div>
         <button
           onClick={() => setChoosing(true)}
@@ -109,7 +124,7 @@ export default function AccountsPage() {
           <div className="flex items-center justify-between gap-4 px-6 py-5">
             <div className="min-w-0">
               <p className="text-[13px] font-medium text-muted-foreground">Total balance</p>
-              <Money usd={nw.totalUsd} className="mt-1.5 block font-mono text-[1.7rem] font-semibold leading-none tracking-tight tabular-nums" />
+              <Money usd={nw.totalUsd} className="mt-1.5 block tabular-nums text-[1.7rem] font-semibold leading-none tracking-tight tabular-nums" />
               <p className="mt-2 text-[13px] text-muted-foreground">{holdings.length} accounts</p>
             </div>
             <Donut
@@ -125,13 +140,13 @@ export default function AccountsPage() {
               {jurHover !== null ? (
                 <span
                   key={jurHover}
-                  className="animate-fade-in font-mono text-[12px] font-bold tabular-nums"
+                  className="animate-fade-in tabular-nums text-[12px] font-bold tabular-nums"
                   style={{ color: jurHover === 0 ? 'var(--us)' : 'var(--india)' }}
                 >
                   {jurHover === 0 ? nw.usPct : nw.inPct}%
                 </span>
               ) : (
-                <span key="split" className="animate-fade-in font-mono text-[11px] font-bold tabular-nums text-muted-foreground">
+                <span key="split" className="animate-fade-in tabular-nums text-[11px] font-bold tabular-nums text-muted-foreground">
                   {nw.usPct}/{nw.inPct}
                 </span>
               )}
@@ -177,8 +192,8 @@ export default function AccountsPage() {
               {t.label}
               <span
                 className={cn(
-                  'rounded-full px-1.5 py-px font-mono text-[10px] font-semibold tabular-nums',
-                  filter === t.key ? 'bg-brand-muted text-brand' : 'bg-muted text-muted-foreground',
+                  'rounded-full px-1.5 py-px tabular-nums text-[10px] font-semibold tabular-nums',
+                  filter === t.key ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground',
                 )}
               >
                 {t.count}
@@ -227,6 +242,7 @@ export default function AccountsPage() {
                 accounts={g.accounts}
                 rate={rate}
                 grandTotalUsd={nw.totalUsd}
+                accountToGoal={accountToGoal}
                 onEdit={setEditing}
                 onDelete={setDeleting}
               />
@@ -284,7 +300,7 @@ export default function AccountsPage() {
               </button>
               <button
                 onClick={() => setAdding(true)}
-                className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-border px-3 py-3 text-xs font-medium text-muted-foreground transition-all hover:border-brand/50 hover:bg-brand-muted/40 hover:text-brand"
+                className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-border px-3 py-3 text-xs font-medium text-muted-foreground transition-all hover:border-foreground/30 hover:bg-muted hover:text-foreground"
               >
                 <Wallet size={13} />
                 Add anything manually
@@ -359,7 +375,7 @@ function SummaryCell({
       className={cn('px-6 py-5 transition-colors duration-200', onEnter && 'cursor-pointer', active && 'bg-accent/40')}
     >
       <p className="text-[13px] font-medium text-muted-foreground">{label}</p>
-      <Money usd={usd} className="mt-1.5 block font-mono text-[1.7rem] font-semibold leading-none tracking-tight tabular-nums" />
+      <Money usd={usd} className="mt-1.5 block tabular-nums text-[1.7rem] font-semibold leading-none tracking-tight tabular-nums" />
       <div className="mt-2 flex items-center gap-2">
         {color !== undefined && pct !== undefined && (
           <span className="h-1.5 w-12 overflow-hidden rounded-full bg-muted">
@@ -417,6 +433,7 @@ function AccountGroup({
   accounts,
   rate,
   grandTotalUsd,
+  accountToGoal,
   onEdit,
   onDelete,
 }: {
@@ -424,6 +441,8 @@ function AccountGroup({
   accounts: Holding[]
   rate: number
   grandTotalUsd: number
+  /** accountId → name of the goal it funds (shown as a tag on the row). */
+  accountToGoal: Map<string, string>
   onEdit: (h: Holding) => void
   onDelete: (h: Holding) => void
 }) {
@@ -455,12 +474,12 @@ function AccountGroup({
         </span>
         <h2 className="text-[15px] font-semibold">{name}</h2>
         <span
-          className="rounded-full px-2 py-0.5 font-mono text-[11px] font-bold tabular-nums"
+          className="rounded-full px-2 py-0.5 tabular-nums text-[11px] font-bold tabular-nums"
           style={{ background: `color-mix(in oklch, ${color} 13%, transparent)`, color }}
         >
           {accounts.length}
         </span>
-        <Money usd={total} className="ml-auto font-mono text-[15px] font-semibold tabular-nums" />
+        <Money usd={total} className="ml-auto tabular-nums text-[15px] font-semibold tabular-nums" />
       </div>
 
       {/* Jurisdiction mix — what this money actually is */}
@@ -474,7 +493,7 @@ function AccountGroup({
         >
           {activeSlice !== null && slices[activeSlice] ? (
             <div key={activeSlice} className="animate-fade-in">
-              <p className="font-mono text-sm font-bold tabular-nums" style={{ color: slices[activeSlice].colorVar }}>
+              <p className="tabular-nums text-sm font-bold tabular-nums" style={{ color: slices[activeSlice].colorVar }}>
                 {slices[activeSlice].pct.toFixed(0)}%
               </p>
               <p className="mx-auto max-w-[54px] truncate text-[9px] leading-tight text-muted-foreground">
@@ -483,7 +502,7 @@ function AccountGroup({
             </div>
           ) : (
             <div key="share" className="animate-fade-in">
-              <p className="font-mono text-sm font-bold tabular-nums" style={{ color }}>
+              <p className="tabular-nums text-sm font-bold tabular-nums" style={{ color }}>
                 {share}%
               </p>
               <p className="text-[10px] leading-tight text-muted-foreground">of total</p>
@@ -512,9 +531,9 @@ function AccountGroup({
                   }}
                 />
                 <span className="truncate font-medium">{s.label}</span>
-                <span className="ml-auto font-mono font-semibold tabular-nums">{s.pct.toFixed(0)}%</span>
+                <span className="ml-auto tabular-nums font-semibold tabular-nums">{s.pct.toFixed(0)}%</span>
               </div>
-              <p className="mt-0.5 pl-3.5 font-mono text-[11px] tabular-nums text-muted-foreground">
+              <p className="mt-0.5 pl-3.5 tabular-nums text-[11px] tabular-nums text-muted-foreground">
                 {formatUSD(s.usd)}
               </p>
             </div>
@@ -540,8 +559,19 @@ function AccountGroup({
                 )}
                 <SourceBadge source={a.source} />
               </div>
-              <p className="mt-0.5 truncate text-[13px] text-muted-foreground">
-                {a.institution} · {TYPE_LABELS[a.accountType] ?? a.accountType}
+              <p className="mt-0.5 flex items-center gap-1.5 truncate text-[13px] text-muted-foreground">
+                <span className="truncate">
+                  {a.institution} · {TYPE_LABELS[a.accountType] ?? a.accountType}
+                </span>
+                {a.id && accountToGoal.has(a.id) && (
+                  <span
+                    className="inline-flex shrink-0 items-center gap-1 rounded bg-brand/10 px-1.5 py-px text-[10.5px] font-medium text-brand"
+                    title={`Funds your “${accountToGoal.get(a.id)}” goal`}
+                  >
+                    <Link2 size={10} />
+                    {accountToGoal.get(a.id)}
+                  </span>
+                )}
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-0.5 opacity-100 transition-opacity focus-within:opacity-100 sm:opacity-0 sm:group-hover:opacity-100">
@@ -562,7 +592,7 @@ function AccountGroup({
                 <Trash2 size={13} />
               </button>
             </div>
-            <Money usd={usdValue(a, rate)} className="shrink-0 text-right font-mono text-[15px] font-semibold tabular-nums" />
+            <Money usd={usdValue(a, rate)} className="shrink-0 text-right tabular-nums text-[15px] font-semibold tabular-nums" />
           </div>
         ))}
       </div>
@@ -680,7 +710,7 @@ function AccountDialog({
         <span aria-hidden className="gradient-hairline absolute inset-x-0 top-0" />
         <div className="mb-5 flex items-center justify-between">
           <div>
-            <h2 className="text-base font-semibold tracking-tight">
+            <h2 className="font-serif text-base font-medium tracking-tight">
               {isEdit ? 'Edit account' : 'Add an account'}
             </h2>
             <p className="mt-0.5 text-xs text-muted-foreground">
@@ -739,7 +769,7 @@ function AccountDialog({
                 onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ''))}
                 inputMode="decimal"
                 placeholder="0"
-                className={cn(inputCls, 'font-mono tabular-nums')}
+                className={cn(inputCls, 'tabular-nums tabular-nums')}
               />
             </Field>
           </div>
@@ -798,11 +828,11 @@ function ConfirmDeleteDialog({
             <AlertTriangle size={18} />
           </span>
           <div className="min-w-0">
-            <h2 className="text-base font-semibold tracking-tight">Remove this account?</h2>
+            <h2 className="font-serif text-base font-medium tracking-tight">Remove this account?</h2>
             <p className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground">
               <span className="font-medium text-foreground">{account.nickname}</span>{' '}
               ({account.institution} · {TYPE_LABELS[account.accountType] ?? account.accountType}) holding{' '}
-              <Money usd={usdValue(account, rate)} className="font-mono font-semibold tabular-nums text-foreground" />{' '}
+              <Money usd={usdValue(account, rate)} className="tabular-nums font-semibold tabular-nums text-foreground" />{' '}
               will be removed from your net worth, compliance checks, and allocation.
             </p>
           </div>

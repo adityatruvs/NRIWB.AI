@@ -70,7 +70,7 @@ export default function CurrencyToggle() {
           >
             <span className="font-medium">USD</span>
             <span className="ml-auto text-xs text-muted-foreground">US Dollar</span>
-            {mode === 'usd' && <Check size={13} className="text-brand" />}
+            {mode === 'usd' && <Check size={13} className="text-foreground" />}
           </button>
 
           <div className="border-t border-border/70" />
@@ -89,7 +89,7 @@ export default function CurrencyToggle() {
             >
               <span className="font-medium">{opt.label}</span>
               <span className="ml-auto text-xs text-muted-foreground">{opt.sublabel}</span>
-              {mode === opt.mode && <Check size={13} className="text-brand" />}
+              {mode === opt.mode && <Check size={13} className="text-foreground" />}
             </button>
           ))}
         </div>

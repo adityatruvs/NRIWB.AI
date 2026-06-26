@@ -41,7 +41,7 @@ export default function TopNav() {
         <BrandMark />
         <div className="leading-none">
           <span className="text-[16px] font-semibold tracking-tight">
-            <span className="text-gradient-brand">NRI</span>
+            <span className="text-foreground">NRI</span>
             <span className="text-foreground">WB</span>
           </span>
           <span className="ml-2 hidden text-[13px] font-medium text-muted-foreground sm:inline">
@@ -89,15 +89,15 @@ export default function TopNav() {
 
 function BrandMark() {
   return (
-    <span className="relative flex size-8 items-center justify-center rounded-[10px] bg-gradient-to-br from-[var(--us)] via-[var(--brand)] to-[var(--india)] shadow-[0_2px_8px_-2px_color-mix(in_oklch,var(--brand)_55%,transparent)] transition-transform duration-200 group-hover:scale-105">
-      <span className="absolute inset-0 rounded-[10px] shadow-[inset_0_1px_0_rgb(255_255_255/0.3)]" />
+    <span className="relative flex size-8 items-center justify-center rounded-[10px] bg-foreground text-background shadow-[0_2px_8px_-3px_hsl(var(--shadow-color)/0.4)] transition-transform duration-200 group-hover:scale-105">
+      <span className="absolute inset-0 rounded-[10px] shadow-[inset_0_1px_0_rgb(255_255_255/0.18)]" />
       <svg width="17" height="17" viewBox="0 0 18 18" fill="none">
         {/* a bridge / arc linking two markers — US ↔ India */}
-        <circle cx="3.5" cy="13" r="1.6" fill="white" />
-        <circle cx="14.5" cy="13" r="1.6" fill="white" />
+        <circle cx="3.5" cy="13" r="1.6" fill="currentColor" />
+        <circle cx="14.5" cy="13" r="1.6" fill="currentColor" />
         <path
           d="M3.5 12.5 C 5 5.5, 13 5.5, 14.5 12.5"
-          stroke="white"
+          stroke="currentColor"
           strokeWidth="1.6"
           strokeLinecap="round"
           fill="none"

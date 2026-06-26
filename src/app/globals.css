@@ -13,6 +13,7 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --font-serif: var(--font-source-serif);
   --font-heading: var(--font-geist-sans);
 
   --color-card: var(--card);
@@ -56,12 +57,12 @@
   --color-sidebar-accent: var(--sidebar-accent);
   --color-sidebar-border: var(--sidebar-border);
 
-  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-sm: calc(var(--radius) * 0.65);
   --radius-md: calc(var(--radius) * 0.85);
   --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.9);
-  --radius-3xl: calc(var(--radius) * 2.4);
+  --radius-xl: calc(var(--radius) * 1.25);
+  --radius-2xl: calc(var(--radius) * 1.55);
+  --radius-3xl: calc(var(--radius) * 2);
 
   /* Marquee (Magic UI) — registered as animate-marquee / animate-marquee-vertical */
   --animate-marquee: marquee var(--duration, 40s) infinite linear;
@@ -78,111 +79,117 @@
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
-   Light theme — gallery-white canvas, floating white cards, indigo brand.
-   The canvas is a whisper of cool gray so pure-white surfaces lift off it.
+   Light theme — warm "paper" canvas, near-white cards, quiet accents.
+   Inspired by Anthropic's cream-and-ink palette: warmth over cool tech-gray,
+   restraint over saturation. Accents (US blue / India green / indigo) are kept
+   for identity but pulled way down in chroma so they read as calm, not loud.
    ────────────────────────────────────────────────────────────────────────── */
 :root {
-  --background: oklch(0.977 0.0035 265);
-  --foreground: oklch(0.185 0.02 265);
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.205 0.014 75);
 
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.185 0.02 265);
+  --card-foreground: oklch(0.205 0.014 75);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.185 0.02 265);
+  --popover-foreground: oklch(0.205 0.014 75);
 
-  --primary: oklch(0.49 0.19 277);
-  --primary-foreground: oklch(0.99 0.005 277);
-  --secondary: oklch(0.965 0.004 265);
-  --secondary-foreground: oklch(0.30 0.02 265);
+  --primary: oklch(0.52 0.13 162);
+  --primary-foreground: oklch(0.99 0.012 162);
+  --secondary: oklch(0.955 0.006 80);
+  --secondary-foreground: oklch(0.33 0.016 75);
 
-  --muted: oklch(0.957 0.005 265);
-  --muted-foreground: oklch(0.52 0.02 265);
-  --accent: oklch(0.955 0.012 277);
-  --accent-foreground: oklch(0.32 0.06 277);
+  --muted: oklch(0.953 0.006 80);
+  --muted-foreground: oklch(0.50 0.016 75);
+  --accent: oklch(0.95 0.03 162);
+  --accent-foreground: oklch(0.40 0.08 162);
 
-  --destructive: oklch(0.58 0.22 18);
-  --border: oklch(0.917 0.006 265);
-  --input: oklch(0.905 0.006 265);
-  --ring: oklch(0.49 0.19 277);
+  --destructive: oklch(0.57 0.21 25);
+  --border: oklch(0.90 0.007 80);
+  --input: oklch(0.885 0.007 80);
+  --ring: oklch(0.52 0.13 162);
 
-  --brand: oklch(0.49 0.19 277);
-  --brand-foreground: oklch(0.99 0.005 277);
-  --brand-muted: oklch(0.95 0.028 277);
+  /* Brand = deep emerald (Monarch-style). US blue / India green kept for the
+     cross-border identity; saffron = amber. Chart category palette is fleshed
+     out with violet/teal/rose in lib/portfolio.ts + lib/allocation.ts. */
+  --brand: oklch(0.52 0.13 162);
+  --brand-foreground: oklch(0.99 0.012 162);
+  --brand-muted: oklch(0.93 0.045 162);
 
-  --us: oklch(0.55 0.17 255);
-  --us-muted: oklch(0.95 0.032 255);
-  --india: oklch(0.60 0.15 158);
-  --india-muted: oklch(0.95 0.042 158);
-  --saffron: oklch(0.72 0.16 60);
+  --us: oklch(0.55 0.15 252);
+  --us-muted: oklch(0.94 0.05 252);
+  --india: oklch(0.60 0.14 152);
+  --india-muted: oklch(0.94 0.05 152);
+  --saffron: oklch(0.74 0.14 70);
 
-  --success: oklch(0.60 0.15 158);
-  --success-muted: oklch(0.95 0.042 158);
-  --warning: oklch(0.70 0.15 75);
-  --warning-muted: oklch(0.957 0.05 85);
-  --danger: oklch(0.58 0.22 18);
-  --danger-muted: oklch(0.955 0.04 18);
+  --success: oklch(0.565 0.13 162);
+  --success-muted: oklch(0.94 0.05 162);
+  --warning: oklch(0.715 0.15 72);
+  --warning-muted: oklch(0.95 0.07 80);
+  --danger: oklch(0.57 0.21 25);
+  --danger-muted: oklch(0.95 0.05 25);
 
-  --radius: 0.75rem;
+  --radius: 0.625rem;
 
-  --sidebar: oklch(0.985 0.002 265);
-  --sidebar-foreground: oklch(0.185 0.02 265);
-  --sidebar-accent: oklch(0.955 0.012 277);
-  --sidebar-border: oklch(0.922 0.006 265);
+  --sidebar: oklch(0.982 0.005 80);
+  --sidebar-foreground: oklch(0.205 0.014 75);
+  --sidebar-accent: oklch(0.95 0.03 162);
+  --sidebar-border: oklch(0.905 0.007 80);
 
-  /* Indigo-tinted shadow base — gives "expensive" depth instead of gray mud */
-  --shadow-color: 250 35% 28%;
+  /* Faintly emerald-tinted shadow for warmth/depth */
+  --shadow-color: 162 25% 18%;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
-   Dark theme — deep slate, not pure black; luminous brand
+   Dark theme — warm charcoal (not pure black, not cool slate); quiet brand
    ────────────────────────────────────────────────────────────────────────── */
 .dark {
-  --background: oklch(0.17 0.013 265);
-  --foreground: oklch(0.96 0.004 265);
+  --background: oklch(0.185 0.008 75);
+  --foreground: oklch(0.95 0.005 80);
 
-  --card: oklch(0.205 0.016 265);
-  --card-foreground: oklch(0.96 0.004 265);
-  --popover: oklch(0.225 0.017 265);
-  --popover-foreground: oklch(0.96 0.004 265);
+  --card: oklch(0.218 0.009 75);
+  --card-foreground: oklch(0.95 0.005 80);
+  --popover: oklch(0.235 0.01 75);
+  --popover-foreground: oklch(0.95 0.005 80);
 
-  --primary: oklch(0.66 0.17 277);
-  --primary-foreground: oklch(0.16 0.02 277);
-  --secondary: oklch(0.255 0.016 265);
-  --secondary-foreground: oklch(0.96 0.004 265);
+  --primary: oklch(0.68 0.14 162);
+  --primary-foreground: oklch(0.16 0.02 162);
+  --secondary: oklch(0.265 0.01 75);
+  --secondary-foreground: oklch(0.95 0.005 80);
 
-  --muted: oklch(0.255 0.016 265);
-  --muted-foreground: oklch(0.69 0.015 265);
-  --accent: oklch(0.30 0.03 277);
-  --accent-foreground: oklch(0.92 0.02 277);
+  --muted: oklch(0.265 0.01 75);
+  --muted-foreground: oklch(0.71 0.013 78);
+  --accent: oklch(0.31 0.05 162);
+  --accent-foreground: oklch(0.92 0.04 162);
 
-  --destructive: oklch(0.68 0.19 20);
+  --destructive: oklch(0.67 0.19 28);
   --border: oklch(1 0 0 / 9%);
   --input: oklch(1 0 0 / 13%);
-  --ring: oklch(0.66 0.17 277);
+  --ring: oklch(0.68 0.14 162);
 
-  --brand: oklch(0.68 0.16 277);
-  --brand-foreground: oklch(0.16 0.02 277);
-  --brand-muted: oklch(0.30 0.05 277);
+  /* Brand = emerald; US blue / India green for cross-border identity. */
+  --brand: oklch(0.68 0.14 162);
+  --brand-foreground: oklch(0.16 0.02 162);
+  --brand-muted: oklch(0.32 0.06 162);
 
-  --us: oklch(0.68 0.14 255);
-  --us-muted: oklch(0.30 0.05 255);
-  --india: oklch(0.72 0.14 158);
-  --india-muted: oklch(0.30 0.05 158);
-  --saffron: oklch(0.78 0.15 65);
+  --us: oklch(0.70 0.14 252);
+  --us-muted: oklch(0.32 0.06 252);
+  --india: oklch(0.72 0.13 152);
+  --india-muted: oklch(0.32 0.06 152);
+  --saffron: oklch(0.80 0.13 72);
 
-  --success: oklch(0.72 0.14 158);
-  --success-muted: oklch(0.30 0.05 158);
-  --warning: oklch(0.80 0.14 80);
-  --warning-muted: oklch(0.32 0.06 85);
-  --danger: oklch(0.68 0.19 20);
-  --danger-muted: oklch(0.30 0.06 20);
+  --success: oklch(0.74 0.14 162);
+  --success-muted: oklch(0.32 0.07 162);
+  --warning: oklch(0.81 0.14 80);
+  --warning-muted: oklch(0.33 0.07 85);
+  --danger: oklch(0.67 0.19 28);
+  --danger-muted: oklch(0.32 0.07 28);
 
-  --sidebar: oklch(0.19 0.014 265);
-  --sidebar-foreground: oklch(0.96 0.004 265);
-  --sidebar-accent: oklch(0.30 0.03 277);
+  --sidebar: oklch(0.205 0.008 75);
+  --sidebar-foreground: oklch(0.95 0.005 80);
+  --sidebar-accent: oklch(0.31 0.05 162);
   --sidebar-border: oklch(1 0 0 / 8%);
 
-  --shadow-color: 265 60% 3%;
+  --shadow-color: 162 40% 2%;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -194,8 +201,7 @@
   }
   html {
     @apply font-sans antialiased;
-    /* Slightly larger base — scales every rem-based size up a notch */
-    font-size: 17px;
+    font-size: 16px;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }
@@ -206,8 +212,14 @@
   h1, h2, h3 {
     letter-spacing: -0.02em;
   }
+  /* Serif display headings (Anthropic-style) sit better with looser tracking
+     and old-style figures than the tight sans tracking above. */
+  .font-serif {
+    letter-spacing: -0.012em;
+    font-feature-settings: "onum" 1, "liga" 1;
+  }
   ::selection {
-    background: color-mix(in oklch, var(--brand) 22%, transparent);
+    background: color-mix(in oklch, var(--brand) 18%, transparent);
   }
   /* Refined scrollbars */
   * {
@@ -234,111 +246,168 @@
    Component utilities
    ────────────────────────────────────────────────────────────────────────── */
 @layer components {
-  /* Elevated white card — crisp hairline + soft layered indigo shadow */
+  /* Flat surface — hairline border, barely-there shadow (minimal chrome) */
   .card-surface {
     position: relative;
     background: var(--card);
-    border: 1px solid color-mix(in oklch, var(--border) 90%, transparent);
+    border: 1px solid var(--border);
     border-radius: var(--radius-2xl);
     box-shadow:
-      0 1px 1px hsl(var(--shadow-color) / 0.03),
-      0 2px 6px -2px hsl(var(--shadow-color) / 0.06),
-      0 12px 32px -12px hsl(var(--shadow-color) / 0.08);
+      0 1px 2px hsl(var(--shadow-color) / 0.06),
+      0 6px 18px -8px hsl(var(--shadow-color) / 0.1);
   }
   .dark .card-surface {
     box-shadow:
       inset 0 1px 0 oklch(1 0 0 / 4%),
-      0 1px 2px hsl(var(--shadow-color) / 0.4),
-      0 12px 32px -12px hsl(var(--shadow-color) / 0.6);
+      0 1px 2px hsl(var(--shadow-color) / 0.35),
+      0 8px 24px -12px hsl(var(--shadow-color) / 0.5);
   }
 
   .card-hover {
-    transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1),
-      box-shadow 0.22s cubic-bezier(0.16, 1, 0.3, 1),
-      border-color 0.22s ease;
+    transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+      box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+      border-color 0.2s ease;
   }
   .card-hover:hover {
-    transform: translateY(-3px);
-    border-color: color-mix(in oklch, var(--brand) 30%, var(--border));
+    transform: translateY(-1px);
+    border-color: color-mix(in oklch, var(--foreground) 14%, var(--border));
     box-shadow:
-      0 1px 2px hsl(var(--shadow-color) / 0.05),
-      0 8px 20px -6px hsl(var(--shadow-color) / 0.12),
-      0 24px 48px -16px hsl(var(--shadow-color) / 0.16);
+      0 1px 2px hsl(var(--shadow-color) / 0.04),
+      0 6px 16px -8px hsl(var(--shadow-color) / 0.1);
   }
 
   .glass {
-    background: color-mix(in oklch, var(--card) 72%, transparent);
-    backdrop-filter: blur(14px) saturate(1.4);
-    -webkit-backdrop-filter: blur(14px) saturate(1.4);
+    background: color-mix(in oklch, var(--card) 82%, transparent);
+    backdrop-filter: blur(10px) saturate(1.1);
+    -webkit-backdrop-filter: blur(10px) saturate(1.1);
   }
 
-  /* Primary action — soft top-light gradient, inner highlight, brand glow */
+  /* Primary action — brand emerald with a whisper of top-light for depth and a
+     crisp slightly-darker edge. Confident, like a real portfolio app's CTA. */
   .btn-primary {
     position: relative;
-    overflow: hidden;
     isolation: isolate;
     background: linear-gradient(
       180deg,
       color-mix(in oklch, var(--brand) 88%, white) 0%,
       var(--brand) 55%,
-      color-mix(in oklch, var(--brand) 92%, black) 100%
+      color-mix(in oklch, var(--brand) 93%, black) 100%
     );
     color: var(--brand-foreground);
-    border: 1px solid color-mix(in oklch, var(--brand) 85%, black);
+    border: 1px solid color-mix(in oklch, var(--brand) 74%, black);
     box-shadow:
       inset 0 1px 0 oklch(1 0 0 / 22%),
-      0 1px 2px hsl(var(--shadow-color) / 0.25),
-      0 4px 12px -2px color-mix(in oklch, var(--brand) 35%, transparent);
-    transition: filter 0.15s ease, transform 0.15s ease, box-shadow 0.2s ease;
+      0 1px 1.5px hsl(var(--shadow-color) / 0.18),
+      0 1px 3px -1px hsl(var(--shadow-color) / 0.14);
+    transition: filter 0.15s ease, transform 0.1s ease, box-shadow 0.18s ease;
   }
   .btn-primary:hover {
-    filter: brightness(1.07);
+    filter: brightness(1.05);
     box-shadow:
       inset 0 1px 0 oklch(1 0 0 / 25%),
-      0 2px 4px hsl(var(--shadow-color) / 0.25),
-      0 8px 20px -4px color-mix(in oklch, var(--brand) 45%, transparent);
+      0 2px 4px hsl(var(--shadow-color) / 0.18),
+      0 4px 12px -3px color-mix(in oklch, var(--brand) 38%, transparent);
   }
   .btn-primary:active {
-    transform: translateY(1px);
-    filter: brightness(0.98);
-  }
-  /* Shine sweep on hover */
-  .btn-primary::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    z-index: -1;
-    background: linear-gradient(
-      105deg,
-      transparent 35%,
-      oklch(1 0 0 / 28%) 50%,
-      transparent 65%
-    );
-    transform: translateX(-120%);
-  }
-  .btn-primary:hover::after {
-    animation: shine 0.7s cubic-bezier(0.4, 0, 0.2, 1);
+    transform: translateY(0.5px);
+    filter: brightness(0.96);
   }
 
-  /* Quiet secondary action */
+  /* Secondary action — quiet neutral fill (not white-on-white) so it blends
+     and pairs cleanly next to the primary. */
   .btn-ghost {
-    background: var(--card);
-    border: 1px solid var(--border);
-    box-shadow:
-      0 1px 1px hsl(var(--shadow-color) / 0.04),
-      0 1px 3px hsl(var(--shadow-color) / 0.05);
+    background: color-mix(in oklch, var(--secondary) 70%, var(--card));
+    color: var(--foreground);
+    border: 1px solid color-mix(in oklch, var(--border) 85%, transparent);
+    box-shadow: 0 1px 1px hsl(var(--shadow-color) / 0.03);
     transition: border-color 0.15s ease, background 0.15s ease,
-      box-shadow 0.15s ease, transform 0.15s ease;
+      box-shadow 0.15s ease, transform 0.1s ease;
   }
   .btn-ghost:hover {
-    background: color-mix(in oklch, var(--accent) 60%, var(--card));
-    border-color: color-mix(in oklch, var(--brand) 25%, var(--border));
-    box-shadow:
-      0 1px 2px hsl(var(--shadow-color) / 0.06),
-      0 4px 10px -4px hsl(var(--shadow-color) / 0.1);
+    background: color-mix(in oklch, var(--foreground) 6%, var(--card));
+    border-color: color-mix(in oklch, var(--foreground) 16%, var(--border));
   }
   .btn-ghost:active {
-    transform: translateY(1px);
+    transform: translateY(0.5px);
+    background: color-mix(in oklch, var(--foreground) 9%, var(--card));
+  }
+
+  /* AI action — a "cool" indigo→violet→blue gradient body wrapped by a CONSTANT
+     flowing conic ring (bright cyan/white energy rotating around the edge) plus
+     an always-on soft glow. Distinct from the emerald primary buttons. Built
+     with padding-box (body) + border-box (ring) layers and a 0deg angle
+     fallback — bulletproof, no CSS mask. */
+  .btn-ai {
+    position: relative;
+    isolation: isolate;
+    border: 2px solid transparent;
+    border-radius: 0.5rem;
+    color: oklch(0.99 0.02 250);
+    background:
+      linear-gradient(
+        135deg,
+        oklch(0.68 0.16 244) 0%,
+        oklch(0.60 0.17 258) 52%,
+        oklch(0.64 0.15 232) 100%
+      ) padding-box,
+      conic-gradient(
+        from var(--ai-angle, 0deg),
+        oklch(0.92 0.09 216),
+        oklch(0.72 0.18 252),
+        oklch(0.98 0.02 250),
+        oklch(0.76 0.16 288),
+        oklch(0.92 0.09 216)
+      ) border-box;
+    box-shadow:
+      inset 0 1px 0 oklch(1 0 0 / 28%),
+      0 2px 8px -2px color-mix(in oklch, oklch(0.62 0.18 252) 60%, transparent),
+      0 8px 24px -6px color-mix(in oklch, oklch(0.62 0.18 252) 52%, transparent);
+    animation: ai-spin 3.5s linear infinite;
+    transition: box-shadow 0.25s ease, transform 0.1s ease, filter 0.2s ease;
+  }
+  /* Constant soft aura — always on, blooms on hover. */
+  .btn-ai::after {
+    content: "";
+    position: absolute;
+    inset: -3px;
+    z-index: -1;
+    border-radius: inherit;
+    background: linear-gradient(135deg, oklch(0.64 0.18 248), oklch(0.6 0.18 272));
+    filter: blur(14px);
+    opacity: 0.5;
+    transition: opacity 0.25s ease;
+    pointer-events: none;
+  }
+  .btn-ai:hover {
+    filter: brightness(1.06);
+  }
+  .btn-ai:hover::after {
+    opacity: 0.78;
+  }
+  .btn-ai:active {
+    transform: translateY(0.5px);
+    filter: brightness(0.97);
+  }
+  /* The sparkle gets a gentle twinkle to read as "live" intelligence. */
+  .btn-ai .ai-spark {
+    animation: ai-twinkle 2.6s ease-in-out infinite;
+  }
+
+  /* AI badge pill — same cool identity as the AI buttons, in miniature. */
+  .ai-chip {
+    background: linear-gradient(135deg, oklch(0.64 0.17 248), oklch(0.58 0.17 264));
+    color: oklch(0.99 0.02 250);
+    border: 1px solid transparent;
+    box-shadow: 0 1px 3px -1px color-mix(in oklch, oklch(0.62 0.18 252) 55%, transparent);
+  }
+
+  /* Both button utilities own their radius (~8px, Origin/Robinhood-tight) and
+     keep it regardless of any inline rounded-* utility on the element. The
+     doubled selector raises specificity just above a single utility class. */
+  .btn-primary.btn-primary,
+  .btn-ghost.btn-ghost,
+  .btn-ai.btn-ai {
+    border-radius: 0.5rem;
   }
 
   /* Brand gradient text */
@@ -354,29 +423,22 @@
     color: transparent;
   }
 
-  /* Animated tri-color gradient text — slow horizontal pan */
+  /* Was an animated pan — now a calm static gradient (no motion). */
   .text-gradient-brand-animated {
     background: linear-gradient(
       105deg,
       var(--us) 0%,
-      var(--brand) 30%,
-      var(--india) 50%,
-      var(--brand) 70%,
-      var(--us) 100%
+      var(--brand) 50%,
+      var(--india) 100%
     );
-    background-size: 220% auto;
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
-    animation: gradient-pan 7s linear infinite;
-  }
-  @keyframes gradient-pan {
-    to { background-position: 220% center; }
   }
 
-  /* Tri-color hairline — US blue → brand → India green */
+  /* Tri-color hairline — US blue → brand → India green, thin and quiet */
   .gradient-hairline {
-    height: 3px;
+    height: 2px;
     background: linear-gradient(
       90deg,
       var(--us) 0%,
@@ -402,9 +464,8 @@
     aspect-ratio: 1;
     border-radius: 50%;
     background: radial-gradient(circle, var(--brand) 0%, var(--us) 45%, transparent 70%);
-    filter: blur(64px);
-    opacity: 0.09;
-    animation: drift 18s ease-in-out infinite alternate;
+    filter: blur(72px);
+    opacity: 0.05;
   }
   .hero-mesh::after {
     content: "";
@@ -415,51 +476,55 @@
     aspect-ratio: 1;
     border-radius: 50%;
     background: radial-gradient(circle, var(--india) 0%, transparent 70%);
-    filter: blur(64px);
-    opacity: 0.08;
-    animation: drift 22s ease-in-out infinite alternate-reverse;
+    filter: blur(72px);
+    opacity: 0.045;
   }
-  .dark .hero-mesh::before { opacity: 0.18; }
-  .dark .hero-mesh::after  { opacity: 0.14; }
+  .dark .hero-mesh::before { opacity: 0.12; }
+  .dark .hero-mesh::after  { opacity: 0.10; }
 
-  /* Whole-page ambient backdrop — faint aurora + dot grid, fixed behind app */
+  /* Whole-page ambient backdrop — a living "aurora wave": two soft color
+     clouds slowly drifting and morphing over the white canvas. Subtle enough
+     to keep text crisp; the slow motion gives a state-of-the-art, AI feel. */
   .page-aurora {
     position: fixed;
     inset: 0;
     z-index: -10;
     pointer-events: none;
-    background:
-      radial-gradient(
-        55rem 26rem at 18% -8%,
-        color-mix(in oklch, var(--us) 7%, transparent),
-        transparent 65%
-      ),
-      radial-gradient(
-        50rem 24rem at 85% -10%,
-        color-mix(in oklch, var(--india) 6%, transparent),
-        transparent 65%
-      ),
-      radial-gradient(
-        40rem 22rem at 55% 0%,
-        color-mix(in oklch, var(--brand) 5%, transparent),
-        transparent 70%
-      );
+    overflow: hidden;
+    background: var(--background);
   }
+  .page-aurora::before,
   .page-aurora::after {
     content: "";
     position: absolute;
-    inset: 0;
-    background-image: radial-gradient(
-      color-mix(in oklch, var(--foreground) 7%, transparent) 1px,
-      transparent 1px
-    );
-    background-size: 26px 26px;
-    mask-image: linear-gradient(to bottom, black, transparent 38%);
-    -webkit-mask-image: linear-gradient(to bottom, black, transparent 38%);
+    border-radius: 50%;
+    filter: blur(90px);
+    will-change: transform;
   }
-  .dark .page-aurora::after {
-    opacity: 0.5;
+  /* Blue → violet cloud, drifting from the top-left */
+  .page-aurora::before {
+    width: 58vw;
+    height: 58vw;
+    top: -20vw;
+    left: -12vw;
+    background:
+      radial-gradient(circle at 35% 35%, color-mix(in oklch, oklch(0.62 0.18 255) 28%, transparent), transparent 62%),
+      radial-gradient(circle at 72% 62%, color-mix(in oklch, oklch(0.6 0.2 295) 20%, transparent), transparent 60%);
+    animation: aurora-drift-a 24s ease-in-out infinite alternate;
   }
+  /* Emerald → teal cloud, drifting from the bottom-right */
+  .page-aurora::after {
+    width: 54vw;
+    height: 54vw;
+    bottom: -22vw;
+    right: -14vw;
+    background:
+      radial-gradient(circle at 60% 40%, color-mix(in oklch, var(--brand) 26%, transparent), transparent 62%),
+      radial-gradient(circle at 30% 72%, color-mix(in oklch, oklch(0.66 0.13 200) 18%, transparent), transparent 60%);
+    animation: aurora-drift-b 31s ease-in-out infinite alternate;
+  }
+  .dark .page-aurora::before { opacity: 0.45; }
+  .dark .page-aurora::after { opacity: 0.4; }
 
   /* Small uppercase section/eyebrow label */
   .eyebrow {
@@ -470,33 +535,96 @@
     color: var(--muted-foreground);
   }
 
-  /* Icon chip — tinted rounded square for card headers / rows */
+  /* Icon tile for card/section headers — understated MONOCHROME, not branded.
+     Stripe/Linear principle: color belongs to data, chrome stays neutral. A
+     quiet neutral surface, hairline ring, and a confident dark-gray glyph read
+     far more professional than a colored chip on every header. */
   .icon-chip {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
-    border-radius: var(--radius-lg);
-    background: linear-gradient(
-      180deg,
-      color-mix(in oklch, var(--brand) 10%, var(--card)),
-      color-mix(in oklch, var(--brand) 16%, var(--card))
-    );
-    border: 1px solid color-mix(in oklch, var(--brand) 18%, var(--border));
-    color: var(--brand);
-    box-shadow: inset 0 1px 0 oklch(1 0 0 / 60%);
+    border-radius: var(--radius-md);
+    background: color-mix(in oklch, var(--foreground) 3.5%, var(--card));
+    border: 1px solid color-mix(in oklch, var(--foreground) 9%, var(--border));
+    color: color-mix(in oklch, var(--foreground) 80%, transparent);
+    box-shadow:
+      0 1px 1.5px hsl(var(--shadow-color) / 0.05),
+      inset 0 1px 0 oklch(1 0 0 / 45%);
   }
   .dark .icon-chip {
-    box-shadow: inset 0 1px 0 oklch(1 0 0 / 8%);
+    background: color-mix(in oklch, var(--foreground) 7%, var(--card));
+    border-color: oklch(1 0 0 / 9%);
+    color: color-mix(in oklch, var(--foreground) 82%, transparent);
+    box-shadow: inset 0 1px 0 oklch(1 0 0 / 5%);
+  }
+
+  /* Slim range input — used for the analyzer age slider */
+  .allocation-range {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 0.625rem;
+    border-radius: 99px;
+    background: var(--muted);
+    cursor: pointer;
+    outline: none;
+  }
+  .allocation-range::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 1.15rem;
+    height: 1.15rem;
+    border-radius: 50%;
+    background: var(--card);
+    border: 2px solid var(--accent, var(--brand));
+    box-shadow: 0 1px 4px hsl(var(--shadow-color) / 0.2);
+    transition: transform 0.15s ease;
+  }
+  .allocation-range::-webkit-slider-thumb:hover {
+    transform: scale(1.12);
+  }
+  .allocation-range::-moz-range-thumb {
+    width: 1.15rem;
+    height: 1.15rem;
+    border-radius: 50%;
+    background: var(--card);
+    border: 2px solid var(--accent, var(--brand));
+    box-shadow: 0 1px 4px hsl(var(--shadow-color) / 0.2);
   }
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
    Keyframes
    ────────────────────────────────────────────────────────────────────────── */
+/* Animatable angle for the AI button's rotating gradient rim. */
+@property --ai-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+@keyframes ai-spin {
+  to { --ai-angle: 360deg; }
+}
+@keyframes ai-twinkle {
+  0%, 100% { opacity: 0.85; transform: scale(1) rotate(0deg); }
+  50%      { opacity: 1; transform: scale(1.14) rotate(12deg); }
+}
+
 @keyframes drift {
   from { transform: translate(0, 0) scale(1); }
   to   { transform: translate(8%, 6%) scale(1.12); }
+}
+
+/* Slow-drifting ambient aurora clouds (whole-page background) */
+@keyframes aurora-drift-a {
+  0%   { transform: translate(0, 0) scale(1) rotate(0deg); }
+  50%  { transform: translate(12vw, 7vw) scale(1.18) rotate(9deg); }
+  100% { transform: translate(5vw, -4vw) scale(1.06) rotate(-6deg); }
+}
+@keyframes aurora-drift-b {
+  0%   { transform: translate(0, 0) scale(1) rotate(0deg); }
+  50%  { transform: translate(-11vw, -8vw) scale(1.14) rotate(-9deg); }
+  100% { transform: translate(-4vw, 3vw) scale(1.05) rotate(7deg); }
 }
 
 @keyframes shine {

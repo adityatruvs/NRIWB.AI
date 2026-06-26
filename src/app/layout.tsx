@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist, Geist_Mono, Source_Serif_4 } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import { shadcn } from "@clerk/ui/themes";
 import "./globals.css";
 import { CurrencyProvider } from "@/context/CurrencyContext";
 import { AccountsProvider } from "@/context/AccountsContext";
+import { GoalsProvider } from "@/context/GoalsContext";
+import { BudgetProvider } from "@/context/BudgetContext";
 import { ThemeProvider } from "@/context/ThemeContext";
 
 const geistSans = Geist({
@@ -15,6 +17,14 @@ const geistSans = Geist({
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
+});
+
+// Refined transitional serif for large display headings — gives the warm,
+// editorial "Anthropic" feel in place of the usual all-sans tech look.
+const sourceSerif = Source_Serif_4({
+  variable: "--font-source-serif",
+  subsets: ["latin"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {
@@ -38,7 +48,7 @@ export default function RootLayout({
     <html
       lang="en"
       suppressHydrationWarning
-      className={`${geistSans.variable} ${geistMono.variable} h-full`}
+      className={`${geistSans.variable} ${geistMono.variable} ${sourceSerif.variable} h-full`}
     >
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
@@ -48,7 +58,11 @@ export default function RootLayout({
         <ClerkProvider appearance={{ theme: shadcn }}>
           <ThemeProvider>
             <CurrencyProvider>
-              <AccountsProvider>{children}</AccountsProvider>
+              <AccountsProvider>
+                <BudgetProvider>
+                  <GoalsProvider>{children}</GoalsProvider>
+                </BudgetProvider>
+              </AccountsProvider>
             </CurrencyProvider>
           </ThemeProvider>
         </ClerkProvider>

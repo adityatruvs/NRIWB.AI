@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import {
   Sparkles,
@@ -13,10 +13,14 @@ import {
   CheckCircle2,
   AlertTriangle,
   AlertCircle,
-  Landmark,
+  Target,
+  RefreshCw,
 } from 'lucide-react'
+import { AnalyzerLogo, AccountsLogo } from '@/components/ui/logos'
 import { useCurrency } from '@/context/CurrencyContext'
 import { useAccounts } from '@/context/AccountsContext'
+import { useGoals } from '@/context/GoalsContext'
+import { useProfile } from '@/context/ProfileContext'
 import { formatAmount, formatUSD } from '@/lib/currency'
 import {
   netWorth,
@@ -28,31 +32,104 @@ import {
   TYPE_LABELS,
   FBAR_THRESHOLD_USD,
   type ComplianceLevel,
+  type ComplianceItem,
 } from '@/lib/portfolio'
+import {
+  recommendedAllocation,
+  currentAllocation,
+  activeBuckets,
+  BUCKET_META,
+} from '@/lib/allocation'
+import { goalProgress, goalAccent, resolveGoal } from '@/lib/goals'
 import { useUser } from '@clerk/nextjs'
-import { NET_WORTH_HISTORY, RESIDENCY, GOALS, TARGET_INDIA_PCT } from '@/data/mock/insights'
+import { NET_WORTH_HISTORY, RESIDENCY, TARGET_INDIA_PCT } from '@/data/mock/insights'
 import { Card, CardHeader } from '@/components/ui/Card'
 import { Sparkline, ProgressBar, Donut, RadialProgress } from '@/components/ui/charts'
 import { Money } from '@/components/ui/Money'
 import { Reveal } from '@/components/ui/Reveal'
 import { PlaidConnect } from '@/components/PlaidConnect'
+import { DataCompletion } from '@/components/DataCompletion'
 import { cn } from '@/lib/utils'
 
 type CountryFilter = 'all' | 'us' | 'in'
 
-const GREETING = (() => {
-  const h = new Date().getHours()
+function greetingForHour(h: number): string {
   return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'
-})()
+}
 
 export default function DashboardPage() {
   const { mode, rate } = useCurrency()
   const { holdings, addLinked } = useAccounts()
+  const { goals } = useGoals()
+  const { age: profileAge } = useProfile()
   const { user } = useUser()
   const firstName = user?.firstName ?? 'there'
+  // Compute the time-based greeting after mount so SSR and the first client
+  // render agree (the hour can differ between server build and the browser).
+  const [greeting, setGreeting] = useState('Welcome')
+  useEffect(() => setGreeting(greetingForHour(new Date().getHours())), [])
   const [filter, setFilter] = useState<CountryFilter>('all')
   const [activeAsset, setActiveAsset] = useState<number | null>(null)
   const [splitHover, setSplitHover] = useState<'us' | 'in' | null>(null)
+
+  // AI-generated "needs attention" items, grounded in the live portfolio.
+  // Cached per user so a returning user instantly sees the last result (with the
+  // date it was generated) — they refresh manually for the latest. Rule-based
+  // items are the fallback until the first generation lands.
+  const [aiCompliance, setAiCompliance] = useState<ComplianceItem[] | null>(null)
+  const [aiTs, setAiTs] = useState<number | null>(null)
+  const [aiLoading, setAiLoading] = useState(false)
+  const insightsCacheKey = user?.id ? `nriwb:insights:${user.id}` : null
+
+  const refreshInsights = useCallback(async () => {
+    if (holdings.length === 0 || aiLoading) return
+    setAiLoading(true)
+    try {
+      const r = await fetch('/api/insights', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ holdings, rate }),
+      })
+      const d = r.ok ? await r.json() : null
+      if (Array.isArray(d?.insights)) {
+        const stamp = Date.now()
+        setAiCompliance(d.insights as ComplianceItem[])
+        setAiTs(stamp)
+        if (insightsCacheKey) {
+          try {
+            localStorage.setItem(insightsCacheKey, JSON.stringify({ items: d.insights, ts: stamp }))
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+    } catch {
+      /* keep the rule-based fallback */
+    } finally {
+      setAiLoading(false)
+    }
+  }, [holdings, rate, aiLoading, insightsCacheKey])
+
+  // On load: show the cached result; only auto-generate the first time (no cache).
+  useEffect(() => {
+    if (!insightsCacheKey) return
+    let hydrated = false
+    try {
+      const raw = localStorage.getItem(insightsCacheKey)
+      if (raw) {
+        const saved = JSON.parse(raw) as { items?: ComplianceItem[]; ts?: number }
+        if (Array.isArray(saved.items)) {
+          setAiCompliance(saved.items)
+          setAiTs(saved.ts ?? null)
+          hydrated = true
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    if (!hydrated && holdings.length > 0) refreshInsights()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [insightsCacheKey])
 
   const nw = netWorth(holdings, rate)
   const heroUsd = filter === 'us' ? nw.usUsd : filter === 'in' ? nw.inUsd : nw.totalUsd
@@ -77,8 +154,8 @@ export default function DashboardPage() {
       {/* ── Greeting ──────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-end justify-between gap-3 animate-fade-in">
         <div>
-          <h1 className="text-[1.65rem] font-semibold tracking-tight">
-            {GREETING}, {firstName}
+          <h1 className="font-serif text-[1.8rem] font-medium tracking-tight">
+            {greeting}, {firstName}
           </h1>
           <p className="mt-1 flex items-center gap-2 text-[15px] text-muted-foreground">
             Here&apos;s your cross-border picture
@@ -91,9 +168,9 @@ export default function DashboardPage() {
         <div className="flex items-center gap-2">
           <Link
             href="/copilot"
-            className="btn-primary inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-[13px] font-medium"
+            className="btn-ai inline-flex items-center gap-1.5 px-3.5 py-2 text-[13px] font-medium"
           >
-            <Sparkles size={14} />
+            <Sparkles size={14} className="ai-spark" />
             Ask Copilot
           </Link>
           <Link
@@ -105,6 +182,11 @@ export default function DashboardPage() {
           </Link>
         </div>
       </div>
+
+      {/* ── Data completeness — connected accounts + setup, hideable ──── */}
+      <Reveal delay={0.02}>
+        <DataCompletion />
+      </Reveal>
 
       {/* ── Net worth + Needs attention ───────────────────────────────── */}
       <Reveal className="grid gap-6 lg:grid-cols-3" delay={0.04}>
@@ -136,7 +218,7 @@ export default function DashboardPage() {
             <div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-2">
               <Money
                 usd={heroUsd}
-                className="block font-mono text-[3.4rem] font-semibold leading-none tracking-tighter tabular-nums"
+                className="block tabular-nums text-[3.4rem] font-semibold leading-none tracking-tighter tabular-nums"
               />
               <div className="flex flex-col gap-1">
                 <span
@@ -193,7 +275,7 @@ export default function DashboardPage() {
                   )}
                 >
                   <span className="size-2 rounded-full bg-us" />
-                  🇺🇸 US <Money usd={nw.usUsd} className="font-mono font-semibold tabular-nums text-foreground" /> · {nw.usPct}%
+                  🇺🇸 US <Money usd={nw.usUsd} className="tabular-nums font-semibold tabular-nums text-foreground" /> · {nw.usPct}%
                 </span>
                 <span
                   onPointerEnter={() => setSplitHover('in')}
@@ -205,20 +287,23 @@ export default function DashboardPage() {
                   )}
                 >
                   <span className="size-2 rounded-full bg-india" />
-                  🇮🇳 India <Money usd={nw.inUsd} className="font-mono font-semibold tabular-nums text-foreground" /> · {nw.inPct}%
+                  🇮🇳 India <Money usd={nw.inUsd} className="tabular-nums font-semibold tabular-nums text-foreground" /> · {nw.inPct}%
                 </span>
               </div>
             </div>
 
-            {/* Trend, full width — hover for month-by-month values */}
-            <div className="mt-auto pt-6">
-              <Sparkline
-                data={series}
-                labels={NET_WORTH_HISTORY.map((h) => h.month)}
-                format={(v) => formatAmount(v, mode, rate)}
-                color="var(--brand)"
-                height={56}
-              />
+            {/* Trend — grows to fill the card so the hero never feels hollow */}
+            <div className="mt-6 flex min-h-0 flex-1 flex-col">
+              <div className="min-h-[140px] flex-1">
+                <Sparkline
+                  data={series}
+                  labels={NET_WORTH_HISTORY.map((h) => h.month)}
+                  format={(v) => formatAmount(v, mode, rate)}
+                  color="var(--brand)"
+                  height={140}
+                  fill
+                />
+              </div>
               <p className="mt-2 text-[13px] text-muted-foreground">
                 12-month trend · 1 USD = ₹{rate.toFixed(2)}
               </p>
@@ -226,21 +311,56 @@ export default function DashboardPage() {
           </div>
         </Card>
 
-        {/* Needs attention — the single place for "what should I do?" */}
+        {/* Needs attention — AI-triaged from the live portfolio, with the
+            rule-based list shown instantly until the AI items arrive. */}
         <Card className="flex flex-col">
           <CardHeader
             title="Needs attention"
             subtitle="US ↔ India obligations"
             icon={<ShieldCheck size={15} />}
+            action={
+              holdings.length > 0 && (
+                <div className="flex items-center gap-2">
+                  {aiTs && (
+                    <span className="hidden text-[11px] text-muted-foreground sm:inline">
+                      Updated {new Date(aiTs).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                    </span>
+                  )}
+                  <button
+                    onClick={refreshInsights}
+                    disabled={aiLoading}
+                    title="Re-run on your latest portfolio"
+                    className="ai-chip inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold disabled:opacity-60"
+                  >
+                    <RefreshCw size={11} className={cn(aiLoading && 'animate-spin')} />
+                    {aiLoading ? 'Refreshing' : aiTs ? 'Refresh' : 'AI insights'}
+                  </button>
+                </div>
+              )
+            }
           />
           <div className="flex flex-1 flex-col gap-1.5">
-            {compliance.map((item) => (
-              <ComplianceRow key={item.key} level={item.level} title={item.title} detail={item.detail} meta={item.meta} />
-            ))}
+            {aiCompliance && aiCompliance.length === 0 ? (
+              <div className="flex flex-1 flex-col items-center justify-center gap-2 py-6 text-center">
+                <span className="flex size-9 items-center justify-center rounded-full bg-success-muted text-success">
+                  <CheckCircle2 size={18} />
+                </span>
+                <p className="text-[13px] font-medium">You&apos;re all clear</p>
+                <p className="max-w-[15rem] text-xs text-muted-foreground">
+                  Nothing needs your attention right now across the US &amp; India.
+                </p>
+              </div>
+            ) : (
+              /* Top 3 most-urgent on the dashboard to keep the card compact;
+                 the AI analyzes & ranks the full set server-side. */
+              (aiCompliance ?? compliance).slice(0, 3).map((item) => (
+                <ComplianceRow key={item.key} level={item.level} title={item.title} detail={item.detail} meta={item.meta} />
+              ))
+            )}
           </div>
-          <div className="mt-4 rounded-xl border border-brand/15 bg-brand-muted/40 px-3.5 py-3">
+          <div className="mt-4 rounded-xl border border-border bg-muted/50 px-3.5 py-3">
             <p className="text-xs leading-relaxed text-muted-foreground">
-              <Sparkles size={12} className="mb-0.5 mr-1 inline text-brand" />
+              <Sparkles size={12} className="mb-0.5 mr-1 inline text-muted-foreground" />
               {pfics.length > 0 ? (
                 <>
                   <span className="font-medium text-foreground">{pfics.length} India mutual fund{pfics.length > 1 ? 's' : ''}</span>{' '}
@@ -249,7 +369,7 @@ export default function DashboardPage() {
               ) : (
                 <>You&apos;re {Math.abs(driftDelta)} pts {driftDelta < 0 ? 'below' : 'above'} your India target. </>
               )}
-              <Link href="/copilot" className="font-medium text-brand hover:underline">
+              <Link href="/copilot" className="font-medium text-foreground underline-offset-2 hover:underline">
                 Ask Copilot how to handle it →
               </Link>
             </p>
@@ -272,7 +392,10 @@ export default function DashboardPage() {
           ring={{
             value: Math.min(fbar.pctOfThreshold / 100, 1),
             color: fbar.crossed ? 'var(--danger)' : fbar.pctOfThreshold > 70 ? 'var(--warning)' : 'var(--success)',
-            center: `${Math.round(fbar.pctOfThreshold)}%`,
+            center:
+              fbar.pctOfThreshold >= 100
+                ? `${(fbar.pctOfThreshold / 100).toFixed(1)}×`
+                : `${Math.round(fbar.pctOfThreshold)}%`,
           }}
           sub={
             <>
@@ -301,7 +424,7 @@ export default function DashboardPage() {
         />
         <KpiCard
           label="India Allocation"
-          value={<Money usd={nw.inUsd} className="font-mono text-[1.6rem] font-semibold leading-none tracking-tight tabular-nums" />}
+          value={<Money usd={nw.inUsd} className="tabular-nums text-[1.6rem] font-semibold leading-none tracking-tight tabular-nums" />}
           chip={{
             text: `${driftDelta >= 0 ? '+' : ''}${driftDelta} vs target`,
             tone: Math.abs(driftDelta) <= 5 ? 'success' : 'warning',
@@ -341,17 +464,17 @@ export default function DashboardPage() {
                   >
                     {assets[activeAsset].label}
                   </p>
-                  <p className="font-mono text-[1.6rem] font-semibold leading-tight tabular-nums">
+                  <p className="tabular-nums text-[1.6rem] font-semibold leading-tight tabular-nums">
                     {assets[activeAsset].pct.toFixed(0)}%
                   </p>
-                  <p className="font-mono text-[11px] tabular-nums text-muted-foreground">
+                  <p className="tabular-nums text-[11px] tabular-nums text-muted-foreground">
                     {formatAmount(assets[activeAsset].usd, mode, rate)}
                   </p>
                 </div>
               ) : (
                 <div key="total" className="animate-fade-in">
                   <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Total</p>
-                  <Money usd={nw.totalUsd} className="font-mono text-[15px] font-semibold tabular-nums" />
+                  <Money usd={nw.totalUsd} className="tabular-nums text-[15px] font-semibold tabular-nums" />
                 </div>
               )}
             </Donut>
@@ -380,7 +503,7 @@ export default function DashboardPage() {
                       <span className={cn('font-medium', activeAsset === i && 'text-foreground')}>{a.label}</span>
                     </div>
                     <div className="flex items-center gap-2 text-muted-foreground">
-                      <span className="font-mono tabular-nums text-foreground">
+                      <span className="tabular-nums tabular-nums text-foreground">
                         {formatAmount(a.usd, mode, rate)}
                       </span>
                       <span className="w-9 text-right font-semibold tabular-nums">{a.pct.toFixed(0)}%</span>
@@ -394,33 +517,79 @@ export default function DashboardPage() {
         </Card>
 
         {/* Goals */}
-        <Card>
-          <CardHeader title="Goals" subtitle="Across the US & India" icon={<TrendingUp size={15} />} />
-          <div className="flex flex-col gap-4">
-            {GOALS.map((g) => {
-              const pct = g.currentUsd / g.targetUsd
-              return (
-                <div key={g.name}>
-                  <div className="mb-1.5 flex items-center justify-between">
-                    <span className="text-sm font-medium">{g.name}</span>
-                    <span className="font-mono text-xs font-semibold tabular-nums" style={{ color: g.accent }}>
-                      {Math.round(pct * 100)}%
-                    </span>
+        <Card className="flex flex-col">
+          <CardHeader
+            title="Goals"
+            subtitle="Across the US & India"
+            icon={<Target size={15} />}
+            action={
+              <Link
+                href="/goals"
+                className="group flex shrink-0 items-center gap-1 text-[13px] font-medium text-muted-foreground transition-colors hover:text-foreground"
+              >
+                Manage
+                <ArrowRight size={13} className="transition-transform group-hover:translate-x-0.5" />
+              </Link>
+            }
+          />
+          {goals.length === 0 ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-2 py-8 text-center">
+              <span className="flex size-10 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
+                <Target size={18} />
+              </span>
+              <p className="max-w-[14rem] text-[13px] text-muted-foreground">
+                No goals yet — set a target and track it as your wealth grows.
+              </p>
+              <Link
+                href="/goals"
+                className="btn-primary mt-1 inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-[13px] font-medium"
+              >
+                <Plus size={14} />
+                Add a goal
+              </Link>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-4">
+              {goals.slice(0, 3).map((raw) => {
+                const g = resolveGoal(raw, holdings, rate)
+                const pct = goalProgress(g)
+                const accent = goalAccent(g)
+                return (
+                  <div key={g.id}>
+                    <div className="mb-1.5 flex items-center justify-between">
+                      <span className="text-sm font-medium">{g.name}</span>
+                      <span className="tabular-nums text-xs font-semibold tabular-nums" style={{ color: accent }}>
+                        {Math.round(pct * 100)}%
+                      </span>
+                    </div>
+                    <ProgressBar value={pct} color={accent} height={7} />
+                    <div className="mt-1.5 flex items-center justify-between text-[13px] text-muted-foreground">
+                      <span className="tabular-nums tabular-nums">
+                        {formatAmount(g.currentUsd, mode, rate)} / {formatAmount(g.targetUsd, mode, rate)}
+                      </span>
+                      <span className="rounded-full bg-muted px-1.5 py-0.5 text-[11px] font-medium">
+                        by {g.targetYear}
+                      </span>
+                    </div>
                   </div>
-                  <ProgressBar value={pct} color={g.accent} height={7} />
-                  <div className="mt-1.5 flex items-center justify-between text-[13px] text-muted-foreground">
-                    <span className="font-mono tabular-nums">
-                      {formatAmount(g.currentUsd, mode, rate)} / {formatAmount(g.targetUsd, mode, rate)}
-                    </span>
-                    <span className="rounded-full bg-muted px-1.5 py-0.5 text-[11px] font-medium">
-                      by {g.targetYear}
-                    </span>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
+                )
+              })}
+              {goals.length > 3 && (
+                <Link
+                  href="/goals"
+                  className="mt-1 text-center text-[12px] font-medium text-foreground underline-offset-2 hover:underline"
+                >
+                  +{goals.length - 3} more goal{goals.length - 3 > 1 ? 's' : ''}
+                </Link>
+              )}
+            </div>
+          )}
         </Card>
+      </Reveal>
+
+      {/* ── Portfolio Analyzer teaser ─────────────────────────────────── */}
+      <Reveal delay={0.19}>
+        <AnalyzerTeaser holdings={holdings} rate={rate} age={profileAge} />
       </Reveal>
 
       {/* ── Accounts preview ──────────────────────────────────────────── */}
@@ -428,10 +597,10 @@ export default function DashboardPage() {
         <div className="mb-4 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <span className="icon-chip size-8">
-              <Landmark size={15} />
+              <AccountsLogo size={16} />
             </span>
             <div>
-              <h2 className="text-sm font-semibold tracking-tight">Accounts</h2>
+              <h2 className="font-serif text-[15px] font-medium tracking-tight">Accounts</h2>
               <p className="text-xs text-muted-foreground">{holdings.length} across both countries</p>
             </div>
           </div>
@@ -467,6 +636,90 @@ export default function DashboardPage() {
   )
 }
 
+/* ── Portfolio Analyzer teaser ───────────────────────────────────────────────
+   A compact promo for /analyzer: shows the recommended split for the user's age
+   vs. what they currently hold, and surfaces the single biggest rebalancing move.
+   Age comes from their profile (DOB) when available, with a sensible fallback. */
+
+function AnalyzerTeaser({
+  holdings,
+  rate,
+  age,
+}: {
+  holdings: ReturnType<typeof useAccounts>['holdings']
+  rate: number
+  age: number | null
+}) {
+  const effectiveAge = age ?? 35
+  const buckets = activeBuckets(false)
+  const recommended = recommendedAllocation(effectiveAge, 'moderate', false)
+  const current = currentAllocation(holdings, rate, false)
+  const currentPct = new Map(current.slices.map((s) => [s.key, s.pct]))
+  const hasHoldings = current.totalUsd > 0
+
+  // The single largest gap between current holdings and the recommended split.
+  const biggest = buckets
+    .map((b) => ({
+      b,
+      delta: recommended[b] - (currentPct.get(b) ?? 0),
+    }))
+    .sort((x, y) => Math.abs(y.delta) - Math.abs(x.delta))[0]
+
+  return (
+    <Card hover className="relative overflow-hidden">
+      <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:gap-6">
+        <div className="flex min-w-0 flex-1 items-start gap-3">
+          <span className="ai-chip relative flex size-10 shrink-0 items-center justify-center rounded-xl shadow-[0_2px_10px_-3px_rgba(80,120,255,0.5)]">
+            <span className="absolute inset-0 rounded-xl shadow-[inset_0_1px_0_rgb(255_255_255/0.18)]" />
+            <AnalyzerLogo size={18} />
+          </span>
+          <div className="min-w-0">
+            <h2 className="flex items-center gap-2 font-serif text-[15px] font-medium tracking-tight">
+              Portfolio Analyzer
+              <span className="ai-chip inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide">
+                AI
+              </span>
+            </h2>
+            <p className="mt-0.5 text-[13px] leading-relaxed text-muted-foreground">
+              {hasHoldings && biggest && Math.abs(biggest.delta) >= 1 ? (
+                <>
+                  Tuned to age {effectiveAge}, your biggest move is{' '}
+                  <span className="font-medium text-foreground">
+                    {biggest.delta > 0 ? 'adding to' : 'trimming'} {BUCKET_META[biggest.b].label}
+                  </span>{' '}
+                  ({biggest.delta > 0 ? '+' : ''}
+                  {Math.round(biggest.delta)} pts).
+                </>
+              ) : (
+                <>An ideal split for your net worth, tuned to age {effectiveAge} — then make it yours.</>
+              )}
+            </p>
+          </div>
+        </div>
+
+        {/* Mini recommended-split bar */}
+        <div className="hidden h-2.5 w-40 shrink-0 overflow-hidden rounded-full sm:flex">
+          {buckets.map((b) => (
+            <div
+              key={b}
+              style={{ width: `${recommended[b]}%`, background: BUCKET_META[b].colorVar }}
+              title={`${BUCKET_META[b].label} ${recommended[b]}%`}
+            />
+          ))}
+        </div>
+
+        <Link
+          href="/analyzer"
+          className="btn-ai inline-flex shrink-0 items-center justify-center gap-1.5 px-4 py-2.5 text-[13px] font-medium"
+        >
+          <Sparkles size={14} className="ai-spark" />
+          Open analyzer
+        </Link>
+      </div>
+    </Card>
+  )
+}
+
 /* ── Sub-components ────────────────────────────────────────────────────────── */
 
 const CHIP_TONE = {
@@ -494,7 +747,7 @@ function KpiCard({
       <div className="flex min-w-0 flex-1 flex-col items-start gap-2.5">
         <span className="eyebrow">{label}</span>
         {typeof value === 'string' ? (
-          <p className="font-mono text-[1.6rem] font-semibold leading-none tracking-tight tabular-nums">{value}</p>
+          <p className="tabular-nums text-[1.6rem] font-semibold leading-none tracking-tight tabular-nums">{value}</p>
         ) : (
           value
         )}
@@ -510,7 +763,7 @@ function KpiCard({
         <p className="text-[13px] leading-snug text-muted-foreground">{sub}</p>
       </div>
       <RadialProgress value={ring.value} color={ring.color} size={92} thickness={9}>
-        <span className="font-mono text-sm font-bold tabular-nums" style={{ color: ring.color }}>
+        <span className="tabular-nums text-sm font-bold tabular-nums" style={{ color: ring.color }}>
           {ring.center}
         </span>
       </RadialProgress>
@@ -591,7 +844,7 @@ function AccountColumn({
         <span className="rounded-full px-2 py-0.5 text-[11px] font-bold" style={{ background: `color-mix(in oklch, ${color} 13%, transparent)`, color }}>
           {accounts.length}
         </span>
-        <Money usd={totalUsd} className="ml-auto font-mono font-semibold tabular-nums" />
+        <Money usd={totalUsd} className="ml-auto tabular-nums font-semibold tabular-nums" />
       </div>
       <div className="flex flex-col gap-1">
         {accounts.slice(0, 5).map((a, i) => (
@@ -612,7 +865,7 @@ function AccountColumn({
             </div>
             <Money
               usd={usdValue(a, rate)}
-              className="ml-3 shrink-0 font-mono text-[15px] font-medium tabular-nums"
+              className="ml-3 shrink-0 tabular-nums text-[15px] font-medium tabular-nums"
             />
           </div>
         ))}

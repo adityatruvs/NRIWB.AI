@@ -2,16 +2,18 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   LayoutDashboard,
   Wallet,
   Sparkles,
+  PieChart,
   ShieldCheck,
   CalendarClock,
   Target,
   PanelLeftClose,
   PanelLeftOpen,
+  ChevronDown,
   type LucideIcon,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -27,19 +29,60 @@ interface NavItem {
 const PRIMARY: NavItem[] = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/accounts', label: 'Accounts', icon: Wallet },
+  { href: '/analyzer', label: 'Analyzer', icon: PieChart, live: true },
   { href: '/copilot', label: 'AI Copilot', icon: Sparkles, live: true },
 ]
 
 const SECONDARY: NavItem[] = [
   { href: '/', label: 'Compliance', icon: ShieldCheck },
   { href: '/', label: 'Deadlines', icon: CalendarClock },
-  { href: '/', label: 'Goals', icon: Target },
+  { href: '/goals', label: 'Goals', icon: Target },
 ]
+
+interface NavGroupDef {
+  label: string
+  items: NavItem[]
+  /** Placeholder items (href '/') render muted/non-active in this group. */
+  mutePlaceholders?: boolean
+}
+
+const GROUPS: NavGroupDef[] = [
+  { label: 'Overview', items: PRIMARY },
+  { label: 'Planning', items: SECONDARY, mutePlaceholders: true },
+]
+
+const GROUPS_STORAGE_KEY = 'nriwb:sidebar-groups'
 
 export default function Sidebar() {
   const pathname = usePathname()
   const { rate } = useCurrency()
   const [collapsed, setCollapsed] = useState(false)
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(GROUPS.map((g) => [g.label, true])),
+  )
+
+  // Restore which groups are expanded after mount (localStorage is client-only,
+  // so we keep the SSR/first-render state all-open to avoid a hydration mismatch).
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(GROUPS_STORAGE_KEY)
+      if (saved) setOpenGroups((prev) => ({ ...prev, ...JSON.parse(saved) }))
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
+  function toggleGroup(label: string) {
+    setOpenGroups((prev) => {
+      const next = { ...prev, [label]: !prev[label] }
+      try {
+        localStorage.setItem(GROUPS_STORAGE_KEY, JSON.stringify(next))
+      } catch {
+        /* ignore */
+      }
+      return next
+    })
+  }
 
   return (
     <aside
@@ -48,22 +91,21 @@ export default function Sidebar() {
         collapsed ? 'w-[64px]' : 'w-[216px]',
       )}
     >
-      <div className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 pt-5">
-        {!collapsed && <SectionLabel>Overview</SectionLabel>}
-        <nav className="flex flex-col gap-1">
-          {PRIMARY.map((item) => (
-            <NavLink key={item.label} item={item} pathname={pathname} collapsed={collapsed} />
-          ))}
-        </nav>
-
-        <div className="my-3 h-px bg-gradient-to-r from-transparent via-border to-transparent" />
-
-        {!collapsed && <SectionLabel>Planning</SectionLabel>}
-        <nav className="flex flex-col gap-1">
-          {SECONDARY.map((item, i) => (
-            <NavLink key={i} item={item} pathname={pathname} collapsed={collapsed} muted />
-          ))}
-        </nav>
+      <div className="flex flex-1 flex-col overflow-y-auto px-3 pt-5">
+        {GROUPS.map((group, i) => (
+          <div key={group.label}>
+            {i > 0 && (
+              <div className="my-3 h-px bg-gradient-to-r from-transparent via-border to-transparent" />
+            )}
+            <NavGroup
+              group={group}
+              pathname={pathname}
+              collapsed={collapsed}
+              open={openGroups[group.label] ?? true}
+              onToggle={() => toggleGroup(group.label)}
+            />
+          </div>
+        ))}
       </div>
 
       {/* Footer */}
@@ -81,7 +123,7 @@ export default function Sidebar() {
                 live
               </span>
             </div>
-            <p className="mt-1 font-mono text-[15px] font-semibold tabular-nums tracking-tight">
+            <p className="mt-1 tabular-nums text-[15px] font-semibold tabular-nums tracking-tight">
               ₹{rate.toFixed(2)}
             </p>
           </div>
@@ -133,7 +175,7 @@ function NavLink({
       )}
     >
       {active && (
-        <span className="absolute left-0 top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-full bg-gradient-to-b from-[var(--us)] to-[var(--brand)]" />
+        <span className="absolute left-0 top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-full bg-brand" />
       )}
       <Icon
         size={17}
@@ -144,7 +186,7 @@ function NavLink({
       />
       {!collapsed && <span className="ml-2.5 truncate">{item.label}</span>}
       {!collapsed && item.live && (
-        <span className="ml-auto rounded-full bg-gradient-to-r from-[var(--brand)] to-[var(--india)] px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white shadow-sm">
+        <span className="ai-chip ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide">
           AI
         </span>
       )}
@@ -152,6 +194,59 @@ function NavLink({
   )
 }
 
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return <p className="eyebrow px-2.5 pb-1.5 pt-1 !text-[11px] opacity-80">{children}</p>
+function NavGroup({
+  group,
+  pathname,
+  collapsed,
+  open,
+  onToggle,
+}: {
+  group: NavGroupDef
+  pathname: string
+  collapsed: boolean
+  open: boolean
+  onToggle: () => void
+}) {
+  // When the whole sidebar is icon-only, groups are always shown (no headers).
+  const showItems = collapsed || open
+  return (
+    <div>
+      {!collapsed && (
+        <button
+          onClick={onToggle}
+          aria-expanded={open}
+          className="group flex w-full items-center justify-between rounded-lg px-2.5 pb-1.5 pt-1 text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <span className="eyebrow !text-[11px] opacity-80 transition-opacity group-hover:opacity-100">
+            {group.label}
+          </span>
+          <ChevronDown
+            size={13}
+            className={cn(
+              'shrink-0 opacity-50 transition-all duration-200 group-hover:opacity-90',
+              !open && '-rotate-90',
+            )}
+          />
+        </button>
+      )}
+      <nav
+        className={cn(
+          'grid transition-[grid-template-rows,opacity] duration-200 ease-out',
+          showItems ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0',
+        )}
+      >
+        <div className="flex min-h-0 flex-col gap-1 overflow-hidden">
+          {group.items.map((item, i) => (
+            <NavLink
+              key={i}
+              item={item}
+              pathname={pathname}
+              collapsed={collapsed}
+              muted={group.mutePlaceholders && item.href === '/'}
+            />
+          ))}
+        </div>
+      </nav>
+    </div>
+  )
 }

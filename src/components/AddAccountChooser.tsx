@@ -66,7 +66,7 @@ export function AddAccountChooser({ fxRate, onLinked, onManual, onClose }: Props
         </button>
 
         <div className="px-7 pb-2 pt-8">
-          <h2 className="text-lg font-semibold tracking-tight">Add an account</h2>
+          <h2 className="font-serif text-lg font-medium tracking-tight">Add an account</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             Link a bank automatically, or enter one by hand.
           </p>

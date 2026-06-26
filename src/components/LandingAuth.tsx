@@ -110,7 +110,7 @@ export default function LandingAuth() {
 
             <motion.h1
               variants={item}
-              className="mt-3 text-balance text-4xl font-semibold leading-[1.08] tracking-tight sm:text-5xl"
+              className="mt-3 text-balance font-serif text-[2.6rem] font-medium leading-[1.08] tracking-tight sm:text-[3.25rem]"
             >
               All your wealth,{" "}
               <span className="text-gradient-brand-animated">across borders</span>{" "}
@@ -163,7 +163,7 @@ export default function LandingAuth() {
                 className="gradient-hairline absolute inset-x-0 top-0 rounded-t-[inherit]"
               />
               <div className="px-6 pb-5 pt-7 text-center">
-                <h2 className="text-xl font-semibold tracking-tight">
+                <h2 className="font-serif text-[1.55rem] font-medium tracking-tight">
                   {mode === "sign-up" ? "Create your account" : "Welcome back"}
                 </h2>
                 <p className="mt-1.5 text-sm text-muted-foreground">
@@ -228,7 +228,7 @@ export default function LandingAuth() {
       >
         <div className="mb-8 text-center">
           <p className="eyebrow">How it works</p>
-          <h2 className="mt-2 text-3xl font-semibold tracking-tight">
+          <h2 className="mt-2 font-serif text-[2rem] font-medium tracking-tight">
             Two countries. Every account.{" "}
             <span className="text-gradient-brand">One number.</span>
           </h2>

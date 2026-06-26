@@ -73,12 +73,12 @@ export function PlaidLink({ linkToken }: { linkToken: string }) {
                 <td className="py-2 pr-4 capitalize text-muted-foreground">
                   {a.subtype ?? a.type}
                 </td>
-                <td className="py-2 pr-4 text-right font-mono tabular-nums">
+                <td className="py-2 pr-4 text-right tabular-nums tabular-nums">
                   {a.balances.available != null
                     ? `$${a.balances.available.toLocaleString()}`
                     : '—'}
                 </td>
-                <td className="py-2 text-right font-mono tabular-nums">
+                <td className="py-2 text-right tabular-nums tabular-nums">
                   {a.balances.current != null
                     ? `$${a.balances.current.toLocaleString()}`
                     : '—'}

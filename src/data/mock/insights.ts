@@ -48,42 +48,9 @@ export const DEADLINES: Deadline[] = [
   { label: 'Form 15CA', country: 'IN', daysLeft: 41, status: 'upcoming', note: 'Required before next repatriation' },
 ]
 
-/* ── Goals across both countries ──────────────────────────────────────────── */
-export interface Goal {
-  name: string
-  icon: 'retirement' | 'education' | 'property'
-  targetUsd: number
-  currentUsd: number
-  targetYear: number
-  accent: string // css color var
-}
-
-export const GOALS: Goal[] = [
-  {
-    name: 'Retirement',
-    icon: 'retirement',
-    targetUsd: 2_000_000,
-    currentUsd: 1_020_000,
-    targetYear: 2041,
-    accent: 'var(--brand)',
-  },
-  {
-    name: "Child's Education",
-    icon: 'education',
-    targetUsd: 250_000,
-    currentUsd: 96_000,
-    targetYear: 2035,
-    accent: 'var(--us)',
-  },
-  {
-    name: 'India Property',
-    icon: 'property',
-    targetUsd: 180_000,
-    currentUsd: 132_000,
-    targetYear: 2029,
-    accent: 'var(--saffron)',
-  },
-]
+/* ── Goals ────────────────────────────────────────────────────────────────────
+   Goals now live in client state — see src/lib/goals.ts (types + seed) and
+   src/context/GoalsContext.tsx (CRUD). */
 
 /* ── Target allocation (for portfolio-drift signalling) ───────────────────── */
 export const TARGET_INDIA_PCT = 25

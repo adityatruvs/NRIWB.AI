@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect, useId, useRef, useState } from 'react'
-import { Sparkles, ArrowUp, ShieldCheck, FileText, Plane, Scale, Wallet } from 'lucide-react'
+import { ArrowUp, ShieldCheck, FileText, Plane, Scale, Wallet } from 'lucide-react'
+import { CopilotLogo } from '@/components/ui/logos'
 import { useAccounts } from '@/context/AccountsContext'
 import { useCurrency } from '@/context/CurrencyContext'
 import { netWorth } from '@/lib/portfolio'
@@ -100,12 +101,12 @@ export default function CopilotPage() {
       {/* Header */}
       <div className="flex items-center justify-between gap-3 animate-fade-in">
         <div className="flex items-center gap-3">
-          <span className="relative flex size-10 items-center justify-center rounded-2xl bg-gradient-to-br from-[var(--us)] via-[var(--brand)] to-[var(--india)] text-white shadow-[0_4px_14px_-4px_color-mix(in_oklch,var(--brand)_60%,transparent)]">
-            <span className="absolute inset-0 rounded-2xl shadow-[inset_0_1px_0_rgb(255_255_255/0.35)]" />
-            <Sparkles size={18} />
+          <span className="ai-chip relative flex size-10 items-center justify-center rounded-xl shadow-[0_2px_10px_-3px_rgba(80,120,255,0.5)]">
+            <span className="absolute inset-0 rounded-xl shadow-[inset_0_1px_0_rgb(255_255_255/0.18)]" />
+            <CopilotLogo size={18} />
           </span>
           <div>
-            <h1 className="flex items-center gap-2 text-base font-semibold tracking-tight">
+            <h1 className="flex items-center gap-2 font-serif text-[1.05rem] font-medium tracking-tight">
               Wealth Copilot
               <span className="inline-flex items-center gap-1 rounded-full bg-success-muted/80 px-2 py-0.5 text-[11px] font-medium text-success ring-1 ring-success/20">
                 <span className="size-1 rounded-full bg-success" />
@@ -118,7 +119,7 @@ export default function CopilotPage() {
           </div>
         </div>
         <span className="hidden items-center gap-1.5 rounded-full bg-card px-3 py-1.5 text-[13px] text-muted-foreground shadow-sm ring-1 ring-border/80 sm:flex">
-          <Wallet size={12} className="text-brand" />
+          <Wallet size={12} className="text-muted-foreground" />
           Claude Sonnet 4.6 · live
         </span>
       </div>
@@ -188,14 +189,14 @@ function EmptyState({ onPick }: { onPick: (q: string) => void }) {
       <div className="relative">
         <span
           aria-hidden
-          className="absolute -inset-6 rounded-full bg-[radial-gradient(circle,color-mix(in_oklch,var(--brand)_22%,transparent),transparent_70%)] blur-xl"
+          className="absolute -inset-6 rounded-full bg-[radial-gradient(circle,#5b8cff55,transparent_70%)] blur-xl"
         />
-        <span className="animate-float-slow relative flex size-14 items-center justify-center rounded-2xl bg-gradient-to-br from-[var(--us)] via-[var(--brand)] to-[var(--india)] text-white shadow-[0_8px_24px_-6px_color-mix(in_oklch,var(--brand)_65%,transparent)]">
-          <span className="absolute inset-0 rounded-2xl shadow-[inset_0_1px_0_rgb(255_255_255/0.35)]" />
-          <Sparkles size={24} />
+        <span className="animate-float-slow ai-chip relative flex size-14 items-center justify-center rounded-2xl shadow-[0_8px_28px_-8px_rgba(80,120,255,0.55)]">
+          <span className="absolute inset-0 rounded-2xl shadow-[inset_0_1px_0_rgb(255_255_255/0.22)]" />
+          <CopilotLogo size={24} />
         </span>
       </div>
-      <h2 className="mt-6 text-xl font-semibold tracking-tight">
+      <h2 className="mt-6 font-serif text-[1.4rem] font-medium tracking-tight">
         Your cross-border money, explained
       </h2>
       <p className="mt-1.5 max-w-md text-sm leading-relaxed text-muted-foreground">
@@ -228,7 +229,7 @@ function EmptyState({ onPick }: { onPick: (q: string) => void }) {
             className="group flex items-center justify-between rounded-xl border border-border/70 bg-card px-4 py-3 text-left text-sm shadow-[0_1px_2px_hsl(var(--shadow-color)/0.03)] transition-all hover:border-brand/35 hover:bg-accent/40 hover:shadow-[0_2px_8px_-2px_hsl(var(--shadow-color)/0.1)]"
           >
             <span>{q}</span>
-            <span className="flex size-6 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground transition-all group-hover:bg-brand group-hover:text-brand-foreground">
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground transition-all group-hover:bg-foreground group-hover:text-background">
               <ArrowUp size={13} className="rotate-45" />
             </span>
           </button>
@@ -249,7 +250,7 @@ function Bubble({ message, onFollowup }: { message: Message; onFollowup: (q: str
           className={cn(
             'rounded-2xl px-4 py-2.5 text-sm leading-relaxed',
             isUser
-              ? 'rounded-tr-sm bg-gradient-to-b from-[color-mix(in_oklch,var(--brand)_88%,white)] to-[var(--brand)] text-brand-foreground shadow-[inset_0_1px_0_rgb(255_255_255/0.2),0_2px_8px_-2px_color-mix(in_oklch,var(--brand)_45%,transparent)]'
+              ? 'rounded-tr-sm bg-foreground text-background shadow-[inset_0_1px_0_rgb(255_255_255/0.12),0_2px_8px_-3px_hsl(var(--shadow-color)/0.3)]'
               : 'rounded-tl-sm border border-border/60 bg-muted/60 text-foreground shadow-[0_1px_2px_hsl(var(--shadow-color)/0.03)]',
           )}
         >
@@ -275,9 +276,9 @@ function Bubble({ message, onFollowup }: { message: Message; onFollowup: (q: str
 
 function AssistantAvatar() {
   return (
-    <span className="relative mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-[var(--brand)] to-[var(--india)] text-white shadow-[0_2px_6px_-1px_color-mix(in_oklch,var(--brand)_50%,transparent)]">
-      <span className="absolute inset-0 rounded-lg shadow-[inset_0_1px_0_rgb(255_255_255/0.3)]" />
-      <Sparkles size={13} />
+    <span className="ai-chip relative mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg shadow-[0_2px_8px_-2px_rgba(80,120,255,0.5)]">
+      <span className="absolute inset-0 rounded-lg shadow-[inset_0_1px_0_rgb(255_255_255/0.18)]" />
+      <CopilotLogo size={14} />
     </span>
   )
 }
@@ -309,7 +310,7 @@ function Rich({ text }: { text: string }) {
         const content = bullet ? line.trim().slice(1).trim() : line
         return (
           <p key={i} className={cn(bullet && 'flex gap-2 pl-1')}>
-            {bullet && <span className="text-brand">•</span>}
+            {bullet && <span className="text-muted-foreground">•</span>}
             <span>{renderBold(content)}</span>
           </p>
         )

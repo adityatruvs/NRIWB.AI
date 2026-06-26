@@ -34,7 +34,7 @@ export function CardHeader({
       <div className="flex min-w-0 items-center gap-2.5">
         {icon && <span className="icon-chip size-8">{icon}</span>}
         <div className="min-w-0">
-          <h2 className="truncate text-sm font-semibold tracking-tight">{title}</h2>
+          <h2 className="truncate font-serif text-[15px] font-medium tracking-tight">{title}</h2>
           {subtitle && (
             <p className="truncate text-xs text-muted-foreground">{subtitle}</p>
           )}

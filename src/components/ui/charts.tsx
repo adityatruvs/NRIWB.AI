@@ -13,6 +13,7 @@ export function Sparkline({
   format,
   color = 'var(--brand)',
   height = 56,
+  fill = false,
   className,
 }: {
   data: number[]
@@ -20,6 +21,8 @@ export function Sparkline({
   format?: (v: number) => string
   color?: string
   height?: number
+  /** Stretch to fill the parent's height instead of using a fixed height. */
+  fill?: boolean
   className?: string
 }) {
   const id = useId().replace(/:/g, '')
@@ -50,8 +53,8 @@ export function Sparkline({
 
   return (
     <div
-      className={cn('relative w-full', className)}
-      style={{ height }}
+      className={cn('relative w-full', fill && 'h-full', className)}
+      style={fill ? undefined : { height }}
       onPointerMove={onMove}
       onPointerLeave={() => setHover(null)}
     >
@@ -62,7 +65,7 @@ export function Sparkline({
       >
         <defs>
           <linearGradient id={`spark-${id}`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={color} stopOpacity="0.22" />
+            <stop offset="0%" stopColor={color} stopOpacity="0.28" />
             <stop offset="100%" stopColor={color} stopOpacity="0" />
           </linearGradient>
         </defs>
@@ -110,7 +113,7 @@ export function Sparkline({
           }}
         >
           <div className="whitespace-nowrap rounded-lg border border-border/70 bg-popover px-2.5 py-1.5 text-center shadow-[0_4px_12px_-2px_hsl(var(--shadow-color)/0.15)]">
-            <p className="font-mono text-xs font-semibold tabular-nums">
+            <p className="tabular-nums text-xs font-semibold tabular-nums">
               {format ? format(data[hover]) : data[hover].toLocaleString()}
             </p>
             <p className="text-[10px] leading-tight text-muted-foreground">{labels[hover]}</p>

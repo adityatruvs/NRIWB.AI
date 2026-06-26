@@ -54,7 +54,7 @@ function Section({
 }) {
   return (
     <section className="mt-10">
-      <h2 className="text-xl font-semibold tracking-tight text-foreground">
+      <h2 className="font-serif text-xl font-medium tracking-tight text-foreground">
         {title}
       </h2>
       <div className="mt-3 flex flex-col gap-3 text-[15px] leading-relaxed text-muted-foreground">
@@ -87,7 +87,7 @@ export default function PrivacyPolicyPage() {
 
       <article className="mx-auto w-full max-w-3xl px-6 py-12">
         <p className="eyebrow">Legal</p>
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">
+        <h1 className="mt-2 font-serif text-3xl font-medium tracking-tight sm:text-4xl">
           Privacy Policy
         </h1>
         <p className="mt-3 text-sm text-muted-foreground">

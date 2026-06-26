@@ -59,10 +59,10 @@ export const ASSET_CLASS_META: Record<
 > = {
   cash: { label: 'Cash & Banking', colorVar: 'var(--us)' },
   investments: { label: 'Investments', colorVar: 'var(--brand)' },
-  retirement: { label: 'Retirement', colorVar: 'oklch(0.6 0.13 300)' },
+  retirement: { label: 'Retirement', colorVar: 'oklch(0.55 0.18 292)' },
   realEstate: { label: 'Real Estate', colorVar: 'var(--saffron)' },
-  fixedDeposits: { label: 'Fixed Deposits', colorVar: 'var(--india)' },
-  mutualFunds: { label: 'Mutual Funds', colorVar: 'oklch(0.6 0.14 200)' },
+  fixedDeposits: { label: 'Fixed Deposits', colorVar: 'oklch(0.63 0.17 12)' },
+  mutualFunds: { label: 'Mutual Funds', colorVar: 'oklch(0.64 0.11 195)' },
   other: { label: 'Other', colorVar: 'var(--muted-foreground)' },
 }
 

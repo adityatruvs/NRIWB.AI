@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, useState } from 'react'
+import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import { MOCK_ACCOUNTS } from '@/data/mock/accounts'
 import type { Holding } from '@/lib/portfolio'
 import type { LinkedAccount } from '@/components/PlaidConnect'
@@ -35,6 +35,40 @@ const SEED_HOLDINGS: Holding[] = MOCK_ACCOUNTS.map((a, i) => ({
 export function AccountsProvider({ children }: { children: React.ReactNode }) {
   const [holdings, setHoldings] = useState<Holding[]>(SEED_HOLDINGS)
   const [linkedIds, setLinkedIds] = useState<ReadonlySet<string>>(new Set())
+
+  // Persist holdings so edits survive reloads and stay consistent across every
+  // page (dashboard, analyzer, etc.). We start from the deterministic seed for
+  // SSR/hydration, then hydrate from localStorage after mount.
+  const persistReady = useRef(false)
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('nriwb:holdings')
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        if (Array.isArray(parsed)) setHoldings(parsed)
+      }
+      const rawLinked = localStorage.getItem('nriwb:linked-ids')
+      if (rawLinked) {
+        const ids = JSON.parse(rawLinked)
+        if (Array.isArray(ids)) setLinkedIds(new Set(ids))
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [])
+  useEffect(() => {
+    // Skip the first run (initial seed) so we never clobber stored edits on mount.
+    if (!persistReady.current) {
+      persistReady.current = true
+      return
+    }
+    try {
+      localStorage.setItem('nriwb:holdings', JSON.stringify(holdings))
+      localStorage.setItem('nriwb:linked-ids', JSON.stringify([...linkedIds]))
+    } catch {
+      /* ignore */
+    }
+  }, [holdings, linkedIds])
 
   const value: AccountsContextValue = {
     holdings,
