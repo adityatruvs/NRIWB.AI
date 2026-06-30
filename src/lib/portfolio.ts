@@ -1,6 +1,44 @@
 import type { AccountType, AccountSource } from '@/types/accounts'
 
 /**
+ * Optional, instrument-specific attributes. Only the fields relevant to a
+ * holding's country × type are ever populated — see `detailSpec` in the
+ * account dialog for which fields surface where. Everything here is additive:
+ * a holding with no `details` behaves exactly as before.
+ */
+export interface HoldingDetails {
+  /** Annual interest / coupon rate, percent (e.g. 7.1). Fixed-income + savings. */
+  interestRate?: number
+  /**
+   * Per-account expected annual return override, percent (e.g. 11). Lets the user
+   * pin a projection rate on an estimated holding (a specific fund/stock) instead
+   * of the type default. Takes precedence over everything in `expectedReturn()`.
+   */
+  expectedReturn?: number
+  /** ISO YYYY-MM-DD maturity date. FDs, FCNR, Sovereign Gold Bonds. */
+  maturityDate?: string
+  /** Compounding frequency, for interest projection. FDs, FCNR. */
+  compounding?: 'monthly' | 'quarterly' | 'half_yearly' | 'annually' | 'maturity'
+  /**
+   * Currency the deposit is actually held in. FCNR is foreign-currency-
+   * denominated (not INR), so this drives true FX exposure. Defaults to the
+   * country's native currency when absent.
+   */
+  depositCurrency?: 'USD' | 'GBP' | 'EUR' | 'CAD' | 'AUD' | 'INR'
+  /** India tax withheld at source, percent. NRO interest, NRO fixed deposits. */
+  tdsRate?: number
+  /**
+   * Scheme of an India fixed deposit. Drives tax: NRE interest is tax-free
+   * (no TDS) and fully repatriable; NRO interest is taxable (TDS applies).
+   */
+  fdScheme?: 'NRE' | 'NRO'
+  /** Sovereign Gold Bond (carries a coupon + maturity) vs physical gold. */
+  isSgb?: boolean
+  /** Minimum / planned monthly payment, in the holding's native currency. Liabilities. */
+  minPayment?: number
+}
+
+/**
  * A normalized holding. Both mock accounts and Plaid-linked accounts conform
  * to this shape, so every selector below works uniformly across sources.
  */
@@ -15,31 +53,116 @@ export interface Holding {
   balanceInr: number
   isPfic: boolean
   source: AccountSource
+  /**
+   * Asset (you own it) or liability (you owe it). Absent ⇒ asset, so all
+   * existing holdings stay assets. Liability balances are stored as positive
+   * amounts owed; `usdValue` applies the negative sign.
+   */
+  kind?: 'asset' | 'liability'
+  /**
+   * For a liability: the `id` of the asset it's secured against (e.g. a mortgage
+   * → the home). Many loans may point at one asset; the asset's equity is its
+   * value minus these. Purely for attribution — net worth still nets all debt.
+   */
+  securedAgainstId?: string
+  /** Instrument-specific attributes (interest rate, maturity, …). Optional. */
+  details?: HoldingDetails
 }
 
-/** USD value of a holding at the *live* rate (India balances are INR-native). */
+/** Account types that represent debt. Used to set `kind` and drive the form. */
+export const LIABILITY_TYPES: ReadonlySet<AccountType> = new Set<AccountType>([
+  'notes_payable',
+  'mortgage',
+  'heloc',
+  'home_loan',
+  'auto_loan',
+  'student_loan',
+  'education_loan',
+  'personal_loan',
+  'credit_card',
+  'other_debt',
+])
+
+/** True when a holding is a debt (by explicit kind, or by its type as a fallback). */
+export function isLiability(h: Holding): boolean {
+  return h.kind === 'liability' || LIABILITY_TYPES.has(h.accountType)
+}
+
+/**
+ * Asset types a loan can sensibly be secured against — tangible/owned things you
+ * borrow against, not cash or deposits. Drives the link pickers on both sides.
+ */
+export const SECURABLE_ASSET_TYPES: ReadonlySet<AccountType> = new Set<AccountType>([
+  'real_estate',
+  'property',
+  'brokerage',
+  'mutual_fund',
+  'gold',
+  'vehicle',
+  'other',
+])
+
+/** An asset (not a debt) that a loan can be secured against. */
+export function isSecurableAsset(h: Holding): boolean {
+  return !isLiability(h) && SECURABLE_ASSET_TYPES.has(h.accountType)
+}
+
+/**
+ * Signed USD value at the *live* rate (India balances are INR-native).
+ * Liabilities return a negative value, so any sum over holdings nets debt out.
+ */
 export function usdValue(h: Holding, rate: number): number {
-  return h.country === 'IN' ? h.balanceInr / rate : h.balanceUsd
+  const gross = h.country === 'IN' ? h.balanceInr / rate : h.balanceUsd
+  return isLiability(h) ? -gross : gross
+}
+
+/** Liabilities secured against a given asset id (e.g. the mortgages on a home). */
+export function loansSecuredBy(assetId: string | undefined, holdings: Holding[]): Holding[] {
+  if (!assetId) return []
+  return holdings.filter((h) => isLiability(h) && h.securedAgainstId === assetId)
+}
+
+/**
+ * An asset's equity: its value minus the loans secured against it. Uses signed
+ * `usdValue`, so the secured loans (already negative) simply add in.
+ */
+export function assetEquity(asset: Holding, holdings: Holding[], rate: number): number {
+  return loansSecuredBy(asset.id, holdings).reduce(
+    (eq, loan) => eq + usdValue(loan, rate),
+    usdValue(asset, rate),
+  )
 }
 
 export interface NetWorth {
+  /** Net worth: gross assets − liabilities. */
   totalUsd: number
+  /** Net (assets − liabilities) within each jurisdiction. */
   usUsd: number
   inUsd: number
+  /** Jurisdiction split of net worth (clamped to ≥0 so the donut stays sane). */
   usPct: number
   inPct: number
+  /** Gross totals, before netting. */
+  assetsUsd: number
+  liabilitiesUsd: number
 }
 
 export function netWorth(holdings: Holding[], rate: number): NetWorth {
-  const usUsd = holdings
-    .filter((h) => h.country === 'US')
-    .reduce((s, h) => s + h.balanceUsd, 0)
-  const inUsd = holdings
-    .filter((h) => h.country === 'IN')
-    .reduce((s, h) => s + h.balanceInr / rate, 0)
+  let assetsUsd = 0
+  let liabilitiesUsd = 0
+  let usUsd = 0
+  let inUsd = 0
+  for (const h of holdings) {
+    const v = usdValue(h, rate) // signed: liabilities are negative
+    if (v >= 0) assetsUsd += v
+    else liabilitiesUsd += -v
+    if (h.country === 'US') usUsd += v
+    else inUsd += v
+  }
   const totalUsd = usUsd + inUsd
-  const usPct = totalUsd > 0 ? Math.round((usUsd / totalUsd) * 100) : 0
-  return { totalUsd, usUsd, inUsd, usPct, inPct: 100 - usPct }
+  const base = Math.max(usUsd, 0) + Math.max(inUsd, 0)
+  const usPct = base > 0 ? Math.round((Math.max(usUsd, 0) / base) * 100) : 0
+  return { totalUsd, usUsd, inUsd, usPct, inPct: 100 - usPct, assetsUsd, liabilitiesUsd }
 }
 
 /* ── Asset-class grouping ─────────────────────────────────────────────────── */
@@ -72,6 +195,8 @@ const TYPE_TO_CLASS: Record<AccountType, AssetClass> = {
   nre: 'cash',
   nro: 'cash',
   fcnr: 'cash',
+  cd: 'fixedDeposits',
+  bond: 'fixedDeposits',
   brokerage: 'investments',
   '401k': 'retirement',
   ira: 'retirement',
@@ -81,7 +206,20 @@ const TYPE_TO_CLASS: Record<AccountType, AssetClass> = {
   fd: 'fixedDeposits',
   mutual_fund: 'mutualFunds',
   gold: 'other',
+  vehicle: 'other',
+  notes_receivable: 'other',
   other: 'other',
+  // Liabilities never appear in asset-class grouping (filtered out before use).
+  notes_payable: 'other',
+  mortgage: 'other',
+  heloc: 'other',
+  home_loan: 'other',
+  auto_loan: 'other',
+  student_loan: 'other',
+  education_loan: 'other',
+  personal_loan: 'other',
+  credit_card: 'other',
+  other_debt: 'other',
 }
 
 export interface AssetSlice {
@@ -95,6 +233,7 @@ export interface AssetSlice {
 export function byAssetClass(holdings: Holding[], rate: number): AssetSlice[] {
   const totals = new Map<AssetClass, number>()
   for (const h of holdings) {
+    if (isLiability(h)) continue // debts aren't an asset class
     const cls = TYPE_TO_CLASS[h.accountType] ?? 'other'
     totals.set(cls, (totals.get(cls) ?? 0) + usdValue(h, rate))
   }
@@ -133,7 +272,7 @@ export interface FbarStatus {
  */
 export function fbarStatus(holdings: Holding[], rate: number): FbarStatus {
   const currentUsd = holdings
-    .filter((h) => h.country === 'IN')
+    .filter((h) => h.country === 'IN' && !isLiability(h))
     .reduce((s, h) => s + h.balanceInr / rate, 0)
   const peakUsd = currentUsd * 1.04
   return {
@@ -161,7 +300,10 @@ export function complianceItems(
   const items: ComplianceItem[] = []
   const fbar = fbarStatus(holdings, rate)
   const pfics = pficHoldings(holdings)
-  const indiaUsd = netWorth(holdings, rate).inUsd
+  // FATCA reports foreign *assets*, so exclude India liabilities (use gross, not net).
+  const indiaUsd = holdings
+    .filter((h) => h.country === 'IN' && !isLiability(h))
+    .reduce((s, h) => s + h.balanceInr / rate, 0)
 
   items.push({
     key: 'fbar',
@@ -211,6 +353,8 @@ function usd(n: number): string {
 export const TYPE_LABELS: Record<string, string> = {
   checking: 'Checking',
   savings: 'Savings',
+  cd: 'CD',
+  bond: 'Bonds',
   brokerage: 'Brokerage',
   '401k': '401(k)',
   ira: 'IRA',
@@ -223,5 +367,17 @@ export const TYPE_LABELS: Record<string, string> = {
   mutual_fund: 'Mutual Fund',
   property: 'Property',
   gold: 'Gold',
+  vehicle: 'Vehicle',
+  notes_receivable: 'Notes Receivable',
   other: 'Other',
+  notes_payable: 'Notes Payable',
+  mortgage: 'Mortgage',
+  heloc: 'HELOC',
+  home_loan: 'Home Loan',
+  auto_loan: 'Auto Loan',
+  student_loan: 'Student Loan',
+  education_loan: 'Education Loan',
+  personal_loan: 'Personal Loan',
+  credit_card: 'Credit Card',
+  other_debt: 'Other Debt',
 }

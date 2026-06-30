@@ -36,6 +36,7 @@ import {
   activeBuckets,
   allocationFor,
   blendedReturn,
+  portfolioExpectedReturn,
   riskFeedback,
   BUCKET_META,
   RISK_META,
@@ -125,11 +126,15 @@ export default function AnalyzerPage() {
   const history: number[] = []
   const historyMonths = history.length
   const usingHistorical = historyMonths >= MIN_HISTORY_MONTHS
-  // Default basis = your target mix's expected return, so risk/allocation move the
-  // forecast (the two halves of the page stay in sync). Real history overrides it
-  // once ≥3 months exist; the ± steppers nudge whichever basis is active.
+  // Default basis = the balance-weighted expected return of your ACTUAL accounts
+  // (each grows at its own contractual/estimated rate). Falls back to the target
+  // mix's blended return only when there are no holdings yet. Real net-worth
+  // history overrides it once ≥3 months exist; the ± steppers nudge whichever
+  // basis is active.
   const topBucket = buckets.reduce((a, b) => (display[b] > display[a] ? b : a), buckets[0])
-  const baseRate = usingHistorical ? annualizedRate(history) : blendedReturn(working)
+  const baseRate = usingHistorical
+    ? annualizedRate(history)
+    : (portfolioExpectedReturn(holdings, rate) ?? blendedReturn(working))
   const [rateAdjust, setRateAdjust] = useState(0)
   const annualRate = Math.min(0.4, Math.max(0, baseRate + rateAdjust))
 

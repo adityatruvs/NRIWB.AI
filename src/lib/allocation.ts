@@ -1,5 +1,5 @@
 import type { AccountType } from '@/types/accounts'
-import { usdValue, type Holding } from '@/lib/portfolio'
+import { usdValue, isLiability, type Holding } from '@/lib/portfolio'
 
 /**
  * Portfolio Analyzer engine.
@@ -123,6 +123,8 @@ const ACCOUNT_TYPE_TO_BUCKET: Record<AccountType, AllocBucket> = {
   nro: 'cash',
   fcnr: 'cash',
   other: 'cash',
+  cd: 'bonds',
+  bond: 'bonds',
   brokerage: 'stocks',
   '401k': 'stocks',
   ira: 'stocks',
@@ -132,6 +134,19 @@ const ACCOUNT_TYPE_TO_BUCKET: Record<AccountType, AllocBucket> = {
   real_estate: 'realEstate',
   property: 'realEstate',
   gold: 'gold',
+  vehicle: 'cash', // placeholder — vehicles are skipped from investable allocation
+  notes_receivable: 'cash', // a claim to be repaid — treated like cash for allocation
+  // Liabilities are excluded from allocation (filtered out before this map is used).
+  notes_payable: 'cash',
+  mortgage: 'cash',
+  heloc: 'cash',
+  home_loan: 'cash',
+  auto_loan: 'cash',
+  student_loan: 'cash',
+  education_loan: 'cash',
+  personal_loan: 'cash',
+  credit_card: 'cash',
+  other_debt: 'cash',
 }
 
 export interface CurrentSlice {
@@ -161,6 +176,8 @@ export function currentAllocation(
   const totals = new Map<AllocBucket, number>(buckets.map((b) => [b, 0]))
 
   for (const h of holdings) {
+    if (isLiability(h)) continue // debts don't form part of an investable allocation
+    if (h.accountType === 'vehicle') continue // a car isn't an investable asset
     const bucket = ACCOUNT_TYPE_TO_BUCKET[h.accountType] ?? 'cash'
     if (!includeRealEstate && bucket === 'realEstate') continue
     totals.set(bucket, (totals.get(bucket) ?? 0) + usdValue(h, rate))
@@ -275,6 +292,48 @@ export const EXPECTED_RETURN: Record<AllocBucket, number> = {
 /** Weighted average expected return of an allocation (percentages → fraction). */
 export function blendedReturn(alloc: Allocation): number {
   return BUCKET_ORDER.reduce((s, b) => s + (alloc[b] / 100) * EXPECTED_RETURN[b], 0)
+}
+
+/**
+ * Expected annual return for a *single holding*, as a fraction (0.071 = 7.1%).
+ * Precedence: an explicit per-account override → the contractual rate we already
+ * capture for fixed-income (interest/coupon) → a per-type default derived from
+ * the account's allocation bucket. This is what lets projections reflect *your*
+ * accounts and their real rates rather than a generic allocation blend.
+ *
+ * Intended for assets. Liabilities carry their APR here too, but the roll-up
+ * below filters them out — debt is a drag handled separately, not "a return".
+ */
+export function expectedReturn(h: Holding): number {
+  const override = h.details?.expectedReturn
+  if (typeof override === 'number' && override > 0) return override / 100
+  const contractual = h.details?.interestRate
+  if (typeof contractual === 'number' && contractual > 0) return contractual / 100
+  return typeExpectedReturn(h.accountType)
+}
+
+/** The per-type default expected return (fraction), before any account-level rate. */
+export function typeExpectedReturn(t: AccountType): number {
+  return EXPECTED_RETURN[ACCOUNT_TYPE_TO_BUCKET[t]]
+}
+
+/**
+ * Balance-weighted expected return across your asset holdings, as a fraction.
+ * Each account grows at its own `expectedReturn`, weighted by USD value — so a
+ * book that's mostly a 7% FD reads ~7%, not a one-size bucket blend. Returns
+ * null when there are no assets, so callers can fall back to an estimate.
+ */
+export function portfolioExpectedReturn(holdings: Holding[], rate: number): number | null {
+  let weighted = 0
+  let total = 0
+  for (const h of holdings) {
+    if (isLiability(h)) continue
+    const v = usdValue(h, rate) // assets are positive
+    if (v <= 0) continue
+    weighted += v * expectedReturn(h)
+    total += v
+  }
+  return total > 0 ? weighted / total : null
 }
 
 /** Illustrative future value of `baseUsd` invested at `alloc` for `years`. */

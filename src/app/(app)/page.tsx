@@ -238,6 +238,14 @@ export default function DashboardPage() {
               </div>
             </div>
 
+            {nw.liabilitiesUsd > 0 && filter === 'all' && (
+              <p className="mt-3 text-[13px] text-muted-foreground">
+                <span className="font-medium tabular-nums text-foreground">{formatUSD(nw.assetsUsd)}</span> in assets
+                {' − '}
+                <span className="font-medium tabular-nums text-foreground">{formatUSD(nw.liabilitiesUsd)}</span> in debt
+              </p>
+            )}
+
             {/* Where it lives: one thin split bar — hover either side to spotlight it */}
             <div className="mt-6">
               <div className="flex h-2.5 w-full gap-1 overflow-visible rounded-full">
@@ -473,8 +481,8 @@ export default function DashboardPage() {
                 </div>
               ) : (
                 <div key="total" className="animate-fade-in">
-                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Total</p>
-                  <Money usd={nw.totalUsd} className="tabular-nums text-[15px] font-semibold tabular-nums" />
+                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Assets</p>
+                  <Money usd={nw.assetsUsd} className="tabular-nums text-[15px] font-semibold tabular-nums" />
                 </div>
               )}
             </Donut>

@@ -6,11 +6,15 @@ import {
   pficHoldings,
   complianceItems,
   usdValue,
+  isLiability,
+  loansSecuredBy,
+  assetEquity,
   TYPE_LABELS,
   FBAR_THRESHOLD_USD,
   FATCA_THRESHOLD_USD,
   type Holding,
 } from '@/lib/portfolio'
+import { portfolioExpectedReturn, expectedReturn } from '@/lib/allocation'
 
 export const runtime = 'nodejs'
 
@@ -44,12 +48,34 @@ function buildSystemPrompt(holdings: Holding[], rate: number): string {
   const pfics = pficHoldings(holdings)
   const compliance = complianceItems(holdings, rate)
 
+  // Balance-weighted expected return from the user's own accounts (each grows at
+  // its contractual or estimated rate). Lets the copilot answer "what will my net
+  // worth be in N years" instead of refusing for lack of a growth assumption.
+  const blendedR = portfolioExpectedReturn(holdings, rate)
+
   const accountLines = holdings
     .map((h) => {
-      const flags = [h.isPfic ? 'PFIC' : null, h.source !== 'manual' ? h.source : null].filter(Boolean)
-      return `- [${h.country}] ${h.nickname} — ${h.institution}, ${TYPE_LABELS[h.accountType] ?? h.accountType}, ${usd(usdValue(h, rate))}${flags.length ? ` (${flags.join(', ')})` : ''}`
+      const flags = [isLiability(h) ? 'DEBT' : null, h.isPfic ? 'PFIC' : null, h.source !== 'manual' ? h.source : null].filter(Boolean)
+      let extra = ''
+      if (isLiability(h) && h.securedAgainstId) {
+        const asset = holdings.find((a) => a.id === h.securedAgainstId)
+        if (asset) extra = ` — secured by ${asset.nickname}`
+      } else if (!isLiability(h) && loansSecuredBy(h.id, holdings).length > 0) {
+        extra = ` — ${usd(assetEquity(h, holdings, rate))} equity after loans`
+      }
+      const rtn = isLiability(h) ? '' : `, ~${(expectedReturn(h) * 100).toFixed(1)}%/yr`
+      return `- [${h.country}] ${h.nickname} — ${h.institution}, ${TYPE_LABELS[h.accountType] ?? h.accountType}, ${usd(usdValue(h, rate))}${rtn}${flags.length ? ` (${flags.join(', ')})` : ''}${extra}`
     })
     .join('\n')
+
+  // Illustrative net-worth path: assets compound at the blended rate, debts held
+  // flat, no new contributions. The copilot can cite or refine these.
+  const projLines =
+    blendedR != null
+      ? [1, 2, 3, 5, 10]
+          .map((y) => `- ${y}yr: ${usd(nw.assetsUsd * Math.pow(1 + blendedR, y) - nw.liabilitiesUsd)}`)
+          .join('\n')
+      : null
 
   const complianceLines = compliance
     .map((c) => `- ${c.title}: [${c.level}] ${c.detail} (${c.meta})`)
@@ -58,7 +84,12 @@ function buildSystemPrompt(holdings: Holding[], rate: number): string {
   return `You are the NRIWB Wealth Copilot — a cross-border personal-finance assistant for NRIs (non-resident Indians) managing money in both the United States and India. You explain US↔India tax and compliance topics (FBAR/FinCEN 114, FATCA/Form 8938, PFIC/Form 8621, NRE/NRO/FCNR accounts, DTAA, the 182-day residency rule, repatriation) in plain English, grounded in the user's actual portfolio below.
 
 <portfolio>
-Net worth: ${usd(nw.totalUsd)} total — US ${usd(nw.usUsd)} (${nw.usPct}%), India ${usd(nw.inUsd)} (${nw.inPct}%)
+Net worth: ${usd(nw.totalUsd)} total — US ${usd(nw.usUsd)} (${nw.usPct}%), India ${usd(nw.inUsd)} (${nw.inPct}%)${nw.liabilitiesUsd > 0 ? `\n(${usd(nw.assetsUsd)} in assets less ${usd(nw.liabilitiesUsd)} in liabilities)` : ''}
+Blended expected return: ${blendedR != null ? `${(blendedR * 100).toFixed(1)}%/yr — balance-weighted from each account's own contractual or estimated rate` : 'n/a (no assets yet)'}${
+    projLines
+      ? `\nIllustrative net-worth path (assets compound at the blended rate, debts held flat, no new contributions):\n${projLines}`
+      : ''
+  }
 FX rate: 1 USD = ₹${rate.toFixed(2)}
 FBAR: India accounts peaked at ~${usd(fbar.peakUsd)} vs the ${usd(FBAR_THRESHOLD_USD)} threshold — ${fbar.crossed ? 'CROSSED, filing required' : `${Math.round(fbar.pctOfThreshold)}% of the limit`}
 FATCA: Form 8938 reporting threshold is ${usd(FATCA_THRESHOLD_USD)} in foreign assets
@@ -76,6 +107,7 @@ Guidelines:
 - Be concise: a few short paragraphs or a tight bullet list. This renders in a small chat panel.
 - Formatting is limited: plain text, **bold** for emphasis, and lines starting with "•" for bullets. No headers, tables, links, LaTeX, or nested lists.
 - You explain and inform; you do not give personalized tax, legal, or investment advice. For filings or elections (e.g. QEF vs mark-to-market), explain the options and recommend confirming with a cross-border CPA.
+- When asked to project or predict net worth, DO answer using the blended expected return and illustrative path above — they're derived from the user's own accounts. Always label it illustrative, state the assumptions (no new contributions, debts held flat), and note that real returns vary year to year. If they give a different rate or savings rate, recompute from it.
 - If asked something outside cross-border personal finance, answer briefly and steer back to what you can help with.`
 }
 

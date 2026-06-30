@@ -35,6 +35,8 @@ interface Props {
 const SUBTYPE_MAP: Record<string, AccountType> = {
   checking: 'checking',
   savings: 'savings',
+  cd: 'cd',
+  bond: 'bond',
   brokerage: 'brokerage',
   '401k': '401k',
   ira: 'ira',

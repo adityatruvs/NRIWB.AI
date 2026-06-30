@@ -1,6 +1,8 @@
 export type AccountType =
   | "checking"
   | "savings"
+  | "cd"
+  | "bond"
   | "brokerage"
   | "401k"
   | "ira"
@@ -13,7 +15,20 @@ export type AccountType =
   | "mutual_fund"
   | "property"
   | "gold"
+  | "vehicle"
+  | "notes_receivable"
   | "other"
+  // ── Liabilities (debts) ──
+  | "notes_payable"
+  | "mortgage"
+  | "heloc"
+  | "home_loan"
+  | "auto_loan"
+  | "student_loan"
+  | "education_loan"
+  | "personal_loan"
+  | "credit_card"
+  | "other_debt"
 
 export type AccountCountry = "US" | "IN"
 

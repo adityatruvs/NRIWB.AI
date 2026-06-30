@@ -7,6 +7,9 @@ import {
   pficHoldings,
   complianceItems,
   usdValue,
+  isLiability,
+  loansSecuredBy,
+  assetEquity,
   TYPE_LABELS,
   FBAR_THRESHOLD_USD,
   FATCA_THRESHOLD_USD,
@@ -41,20 +44,31 @@ function buildContext(holdings: Holding[], rate: number): string {
   const fbar = fbarStatus(holdings, rate)
   const pfics = pficHoldings(holdings)
   const assets = byAssetClass(holdings, rate)
+  // FATCA reports gross foreign assets, not net of India debt.
+  const indiaAssetsUsd = holdings
+    .filter((h) => h.country === 'IN' && !isLiability(h))
+    .reduce((s, h) => s + h.balanceInr / rate, 0)
 
   const accountLines = holdings
     .map((h) => {
-      const flags = [h.isPfic ? 'PFIC' : null, h.source !== 'manual' ? h.source : null].filter(Boolean)
-      return `- [${h.country}] ${h.nickname} — ${h.institution}, ${TYPE_LABELS[h.accountType] ?? h.accountType}, ${usd(usdValue(h, rate))}${flags.length ? ` (${flags.join(', ')})` : ''}`
+      const flags = [isLiability(h) ? 'DEBT' : null, h.isPfic ? 'PFIC' : null, h.source !== 'manual' ? h.source : null].filter(Boolean)
+      let extra = ''
+      if (isLiability(h) && h.securedAgainstId) {
+        const asset = holdings.find((a) => a.id === h.securedAgainstId)
+        if (asset) extra = ` — secured by ${asset.nickname}`
+      } else if (!isLiability(h) && loansSecuredBy(h.id, holdings).length > 0) {
+        extra = ` — ${usd(assetEquity(h, holdings, rate))} equity after loans`
+      }
+      return `- [${h.country}] ${h.nickname} — ${h.institution}, ${TYPE_LABELS[h.accountType] ?? h.accountType}, ${usd(usdValue(h, rate))}${flags.length ? ` (${flags.join(', ')})` : ''}${extra}`
     })
     .join('\n')
 
   const assetLines = assets.map((a) => `- ${a.label}: ${usd(a.usd)} (${a.pct.toFixed(0)}%)`).join('\n')
 
-  return `Net worth: ${usd(nw.totalUsd)} — US ${usd(nw.usUsd)} (${nw.usPct}%), India ${usd(nw.inUsd)} (${nw.inPct}%)
+  return `Net worth: ${usd(nw.totalUsd)} — US ${usd(nw.usUsd)} (${nw.usPct}%), India ${usd(nw.inUsd)} (${nw.inPct}%)${nw.liabilitiesUsd > 0 ? `\nGross: ${usd(nw.assetsUsd)} assets less ${usd(nw.liabilitiesUsd)} liabilities` : ''}
 FX: 1 USD = ₹${rate.toFixed(2)}
 FBAR: India accounts peaked at ${usd(fbar.peakUsd)} vs the ${usd(FBAR_THRESHOLD_USD)} threshold — ${fbar.crossed ? 'CROSSED, filing required' : `${Math.round(fbar.pctOfThreshold)}% of the limit`}
-FATCA: Form 8938 threshold is ${usd(FATCA_THRESHOLD_USD)} in foreign (India) assets; user holds ${usd(nw.inUsd)} there
+FATCA: Form 8938 threshold is ${usd(FATCA_THRESHOLD_USD)} in foreign (India) assets; user holds ${usd(indiaAssetsUsd)} there
 PFIC holdings: ${pfics.length > 0 ? pfics.map((p) => p.nickname).join(', ') : 'none'}
 
 Asset allocation:

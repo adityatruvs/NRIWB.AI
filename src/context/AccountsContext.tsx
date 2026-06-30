@@ -97,7 +97,12 @@ export function AccountsProvider({ children }: { children: React.ReactNode }) {
     updateAccount: (id, account) =>
       setHoldings((prev) => prev.map((h) => (h.id === id ? { ...account, id } : h))),
     removeAccount: (id) => {
-      setHoldings((prev) => prev.filter((h) => h.id !== id))
+      setHoldings((prev) =>
+        prev
+          .filter((h) => h.id !== id)
+          // Drop any now-dangling "secured against" link to the removed asset.
+          .map((h) => (h.securedAgainstId === id ? { ...h, securedAgainstId: undefined } : h)),
+      )
       setLinkedIds((prev) => {
         if (!prev.has(id)) return prev
         const next = new Set(prev)
