@@ -16,16 +16,22 @@ const CurrencyContext = createContext<CurrencyContextValue>({
 })
 
 const MODES: CurrencyMode[] = ['usd', 'inr', 'inr_lakhs']
-
-// Hardcoded for Phase 1. Replaced by ExchangeRate-API in Sprint 1 (S1-1).
-const FX_RATE = 95
+const FALLBACK_RATE = 95
 
 export function CurrencyProvider({ children }: { children: React.ReactNode }) {
   const [mode, setMode] = useState<CurrencyMode>('usd')
+  const [rate, setRate] = useState<number>(FALLBACK_RATE)
 
   useEffect(() => {
     const saved = localStorage.getItem('currency_mode') as CurrencyMode | null
     if (saved && MODES.includes(saved)) setMode(saved)
+  }, [])
+
+  useEffect(() => {
+    fetch('/api/fx')
+      .then((r) => r.json())
+      .then((d) => { if (typeof d.rate === 'number') setRate(d.rate) })
+      .catch(() => {})
   }, [])
 
   function selectMode(next: CurrencyMode) {
@@ -34,7 +40,7 @@ export function CurrencyProvider({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <CurrencyContext.Provider value={{ mode, rate: FX_RATE, setMode: selectMode }}>
+    <CurrencyContext.Provider value={{ mode, rate, setMode: selectMode }}>
       {children}
     </CurrencyContext.Provider>
   )
