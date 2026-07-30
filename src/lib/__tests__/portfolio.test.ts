@@ -16,9 +16,7 @@ import {
   type Holding,
 } from '@/lib/portfolio'
 
-// Mirrors the app's current hardcoded FX_RATE (src/context/CurrencyContext.tsx)
-// and the seed rate (src/data/mock/accounts.ts) — used here only as realistic
-// inputs to the conversion math, not as an assertion that 95/83.5 is correct.
+// Current application FX values used as test inputs.
 const HARDCODED_FX_RATE = 95
 const SEED_FX_RATE = 83.5
 
@@ -62,7 +60,6 @@ describe('isSecurableAsset', () => {
   })
 
   it('is false for a liability even if its type is in the securable set', () => {
-    // 'other' is securable, but kind: liability should override
     expect(isSecurableAsset(makeHolding({ accountType: 'other', kind: 'liability' }))).toBe(false)
   })
 
@@ -97,15 +94,13 @@ describe('usdValue', () => {
     expect(usdValue(makeHolding({ balanceUsd: 0 }), HARDCODED_FX_RATE)).toBe(0)
   })
 
-  // PLACEHOLDER-BEHAVIOR: documents current (undefended) behavior at rate=0, not
-  // a spec. rate=0 is not a value any live FX integration should ever produce;
-  // this exists so a future live-FX integration doesn't silently reintroduce it.
-  it('BUG-DOCUMENTING: an India holding at rate=0 produces Infinity, not an error', () => {
+  // Current behavior with an invalid FX rate.
+  it('returns Infinity when converting an INR holding with a zero FX rate', () => {
     const h = makeHolding({ country: 'IN', balanceInr: 100_000 })
     expect(usdValue(h, 0)).toBe(Infinity)
   })
 
-  it('BUG-DOCUMENTING: a negative rate silently flips the sign of an India holding', () => {
+  it('returns a negative USD value when the FX rate is negative', () => {
     const h = makeHolding({ country: 'IN', balanceInr: 100_000 })
     expect(usdValue(h, -83.5)).toBeLessThan(0)
   })
@@ -211,8 +206,6 @@ describe('netWorth', () => {
   })
 
   it('clamps usPct/inPct to [0,100] instead of going negative when a jurisdiction is net-debt', () => {
-    // US is entirely debt (net negative); India is a modest asset. Without the
-    // clamp in netWorth(), the percentage split could go outside [0,100].
     const holdings: Holding[] = [
       makeHolding({ id: 'us-debt', country: 'US', accountType: 'credit_card', balanceUsd: 20_000 }),
       makeHolding({ id: 'in-asset', country: 'IN', accountType: 'nro', balanceInr: 830_000 }),
@@ -289,14 +282,8 @@ describe('pficHoldings', () => {
   })
 })
 
-// ── FBAR peak-balance estimate ──────────────────────────────────────────────
-// PLACEHOLDER-BEHAVIOR: fbarStatus() approximates the yearly peak as
-// `currentUsd * 1.04`. The source comment in portfolio.ts says this is a stand-in
-// for "live demo data" until real daily balance history (the BalanceSnapshot
-// table) is tracked and a true running max is computed. These tests lock in the
-// *current* placeholder formula so a regression is caught — they are not an
-// assertion that 1.04x is a correct or production-ready FBAR peak calculation.
-describe('fbarStatus (PLACEHOLDER formula: peak = current * 1.04)', () => {
+// Current placeholder: peak balance is estimated as currentUsd * 1.04.
+describe('fbarStatus', () => {
   it('computes currentUsd only from non-liability India holdings', () => {
     const holdings: Holding[] = [
       makeHolding({ id: 'in-asset', country: 'IN', accountType: 'nro', balanceInr: 830_000 }),
@@ -307,7 +294,7 @@ describe('fbarStatus (PLACEHOLDER formula: peak = current * 1.04)', () => {
     expect(status.currentUsd).toBeCloseTo(830_000 / SEED_FX_RATE, 6)
   })
 
-  it('derives peakUsd as exactly 1.04x current (documented placeholder, not a true peak)', () => {
+  it('calculates peakUsd as 1.04x currentUsd', () => {
     const holdings: Holding[] = [
       makeHolding({ country: 'IN', accountType: 'nro', balanceInr: 830_000 }),
     ]
@@ -322,7 +309,7 @@ describe('fbarStatus (PLACEHOLDER formula: peak = current * 1.04)', () => {
   })
 
   it('flags crossed=true once peak reaches the $10,000 threshold', () => {
-    // peak = current*1.04 >= 10,000  =>  current >= 9615.38...
+    // Minimum current balance needed to cross the estimated peak threshold.
     const holdings: Holding[] = [
       makeHolding({ country: 'IN', accountType: 'nro', balanceInr: 9_616 * SEED_FX_RATE }),
     ]

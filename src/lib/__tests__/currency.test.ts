@@ -1,14 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { formatUSD, formatINR, formatLakhs, toINR, toUSD, formatAmount } from '@/lib/currency'
 
-// PLACEHOLDER-BEHAVIOR: every `rate` used below is a plain number passed in by the
-// caller. In the running app today this is always the app's hardcoded FX_RATE
-// (95, in src/context/CurrencyContext.tsx) — there is no live FX provider wired
-// up yet (see prisma's unused FxRate model + the "Replaced by ExchangeRate-API"
-// comment in that file). These tests validate the conversion/formatting MATH is
-// correct for whatever rate is supplied; they do not assert that 95 (or any other
-// value) is a correct *live* USD/INR rate. When a live FX integration lands, this
-// file's rate constants are the ones to revisit.
+// Current app behavior uses a hardcoded FX rate.
+
 const HARDCODED_FX_RATE = 95
 const SEED_FX_RATE = 83.5
 
@@ -109,9 +103,8 @@ describe('toINR / toUSD', () => {
     expect(toINR(-100, SEED_FX_RATE)).toBeCloseTo(-8_350, 6)
   })
 
-  // PLACEHOLDER-BEHAVIOR: documents current (undefended) behavior at rate=0. Not a
-  // spec — a live FX rate should never legitimately be 0.
-  it('BUG-DOCUMENTING: toUSD at rate=0 produces Infinity/NaN rather than throwing', () => {
+  // Current behavior with an invalid FX rate.
+  it('returns Infinity or NaN when rate is 0', () => {
     expect(toUSD(100, 0)).toBe(Infinity)
     expect(toUSD(0, 0)).toBeNaN()
   })

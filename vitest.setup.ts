@@ -1,3 +1,3 @@
-// Global test setup. jest-dom matchers are registered for when component tests
-// (none exist yet) start rendering with @testing-library/react.
+// Global test setup.
+
 import '@testing-library/jest-dom/vitest'

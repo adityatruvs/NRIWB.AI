@@ -1,13 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { complianceItems, type Holding } from '@/lib/portfolio'
 
-// ── Module-boundary mocks ────────────────────────────────────────────────────
-// We mock the two true external boundaries this route talks to:
-//   - '@anthropic-ai/sdk'   (the AI provider)
-//   - '@clerk/nextjs/server' (the auth provider, via its `auth()` function)
-// Our own code — src/lib/auth.ts's requireUserId()/unauthorized() glue, and all
-// of src/lib/portfolio.ts's prompt-context math — runs for real, so these tests
-// exercise the actual route + our own wrapper logic, not a re-implementation of it.
+// Mock external dependencies; exercise application logic normally.
+
 const { mockCreate } = vi.hoisted(() => ({ mockCreate: vi.fn() }))
 vi.mock('@anthropic-ai/sdk', () => ({
   default: class MockAnthropic {
@@ -54,7 +49,7 @@ beforeEach(() => {
   mockCreate.mockReset()
   mockAuth.mockReset()
   mockAuth.mockResolvedValue({ userId: 'user_123' }) // authenticated by default
-  vi.spyOn(console, 'error').mockImplementation(() => {})
+  vi.spyOn(console, 'error').mockImplementation(() => { })
 })
 
 afterEach(() => {
@@ -128,13 +123,13 @@ describe('POST /api/insights — prompt construction', () => {
     expect(typeof call.system).toBe('string')
     expect(call.system).toContain('NRIWB')
     const userContent: string = call.messages[0].content
-    // Account identity from the request shows up verbatim in the prompt.
+    // Includes supplied account details.
     expect(userContent).toContain('Zzyzx Test Checking')
     expect(userContent).toContain('Zzyzx Bank')
     expect(userContent).toContain('HDFC NRE FD')
-    // The supplied FX rate is echoed into the prompt, not a different value.
+    // Includes the supplied FX rate.
     expect(userContent).toContain('83.50')
-    // Net worth is computed from the supplied holdings (12,500 USD + 4,500,000/83.5 INR).
+    // Includes calculated net worth.
     expect(userContent).toContain('Net worth')
   })
 
@@ -146,11 +141,9 @@ describe('POST /api/insights — prompt construction', () => {
     expect(userContent).toContain('83.00')
   })
 
-  // BUG-DOCUMENTING: `body.rate || 83` uses `||`, not `??`, so an explicit rate of
-  // 0 is treated the same as "omitted" and silently replaced with 83. A rate of 0
-  // is nonsensical for FX, so this rarely matters in practice — documented so a
-  // future refactor doesn't unknowingly change this fallback behavior.
-  it('BUG-DOCUMENTING: an explicit rate of 0 is also replaced with the 83 default', async () => {
+  // Documents current behavior: rate 0 falls back to 83 because the route uses `||`.
+
+  it('uses the default rate when the supplied rate is 0', async () => {
     mockCreate.mockResolvedValue(anthropicTextResponse('{"insights":[]}'))
     const holdings: Holding[] = [makeHolding({ country: 'IN', accountType: 'nro', balanceInr: 100_000 })]
     await POST(jsonRequest({ holdings, rate: 0 }))
@@ -302,8 +295,6 @@ describe('POST /api/insights — malformed or empty AI responses fall back to ru
     const holdings = [makeHolding()]
     const res = await POST(jsonRequest({ holdings, rate: 83.5 }))
     const body = await res.json()
-    // `obj.insights ?? []` means a well-formed object without an `insights` key
-    // is treated as a valid empty result (source stays "ai"), not a parse failure.
     expect(body.source).toBe('ai')
     expect(body.insights).toEqual([])
   })
