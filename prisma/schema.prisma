@@ -23,7 +23,16 @@ model Account {
   isManual       Boolean   @default(true)
   source         String    @default("manual")
   // manual | plaid | setu | pdf_upload
+  kind           String    @default("asset")
+  // asset | liability — absent on the client Holding means asset
   isPfic         Boolean   @default(false)
+  // For a liability: the id of the Account it's secured against (e.g. a mortgage
+  // -> the home). App-managed reference (not a DB FK) so bulk-restore ordering is
+  // free and the DELETE handler unlinks explicitly. Nulled when the asset is deleted.
+  securedAgainstId String?
+  // Instrument-specific attributes (interestRate, maturityDate, tdsRate, ...).
+  // Mirrors the HoldingDetails shape; only fields relevant to the type are set.
+  details        Json?
   plaidAccountId String?   @unique
   setuConsentId  String?
   lastSyncedAt   DateTime?

@@ -66,10 +66,10 @@ export interface CopilotAnswer {
 }
 
 export const COPILOT_SUGGESTIONS = [
+  'Predict my net worth in 2 years',
+  'Am I on track for my retirement goal?',
   'Do I need to file FBAR this year?',
-  'What is a PFIC and does it affect me?',
   'How can I reduce tax on my NRO account?',
-  'Am I at risk of becoming an India tax resident?',
 ]
 
 export const COPILOT_ANSWERS: CopilotAnswer[] = [

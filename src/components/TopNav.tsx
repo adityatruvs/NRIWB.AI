@@ -1,8 +1,8 @@
 'use client'
 
 import Link from 'next/link'
-import { Moon, Sun } from 'lucide-react'
-import { useUser, UserButton } from '@clerk/nextjs'
+import { Moon, Sun, Trash2 } from 'lucide-react'
+import { useClerk, useUser, UserButton } from '@clerk/nextjs'
 import { useAccounts } from '@/context/AccountsContext'
 import { useCurrency } from '@/context/CurrencyContext'
 import { useTheme } from '@/context/ThemeContext'
@@ -22,8 +22,29 @@ export default function TopNav() {
   const { rate } = useCurrency()
   const { theme, toggle } = useTheme()
   const { user } = useUser()
+  const { signOut } = useClerk()
   const displayName = user?.fullName ?? user?.firstName ?? 'Your account'
   const email = user?.primaryEmailAddress?.emailAddress ?? ''
+
+  // Permanently delete the account + all financial data (revokes Plaid, purges
+  // our DB, deletes the Clerk identity). See app/api/user. Destructive + final.
+  const handleDeleteAccount = async () => {
+    const ok = window.confirm(
+      'Delete your account?\n\n' +
+        'This permanently erases all your accounts, balances, linked banks, and ' +
+        'history, and revokes access to your connected banks. This cannot be undone.',
+    )
+    if (!ok) return
+    try {
+      const res = await fetch('/api/user', { method: 'DELETE' })
+      if (!res.ok) throw new Error(`DELETE /api/user ${res.status}`)
+      // The Clerk identity is gone — clear the stale session and return to landing.
+      await signOut({ redirectUrl: '/' })
+    } catch (e) {
+      console.error('Failed to delete account:', e)
+      window.alert('Something went wrong deleting your account. Please try again.')
+    }
+  }
 
   const worst = complianceItems(holdings, rate).reduce<ComplianceLevel>(
     (acc, it) => (LEVEL_RANK[it.level] > LEVEL_RANK[acc] ? it.level : acc),
@@ -80,7 +101,15 @@ export default function TopNav() {
               <p className="max-w-[140px] truncate text-[11px] text-muted-foreground">{email}</p>
             )}
           </div>
-          <UserButton appearance={{ elements: { avatarBox: 'size-8' } }} />
+          <UserButton appearance={{ elements: { avatarBox: 'size-8' } }}>
+            <UserButton.MenuItems>
+              <UserButton.Action
+                label="Delete account & data"
+                labelIcon={<Trash2 size={14} />}
+                onClick={handleDeleteAccount}
+              />
+            </UserButton.MenuItems>
+          </UserButton>
         </div>
       </div>
     </header>

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { motion } from 'motion/react'
 import { Select } from '@base-ui/react/select'
 import {
@@ -19,6 +19,16 @@ import {
   Coins,
   Check,
   ChevronDown,
+  Sparkles,
+  RefreshCw,
+  Clock,
+  Zap,
+  ChevronRight,
+  ArrowUpDown,
+  Landmark,
+  TrendingUp,
+  PiggyBank,
+  Home,
 } from 'lucide-react'
 import { AccountsLogo } from '@/components/ui/logos'
 import { useCurrency } from '@/context/CurrencyContext'
@@ -28,10 +38,10 @@ import { formatUSD, formatINR } from '@/lib/currency'
 import {
   netWorth,
   byAssetClass,
+  byLiabilityClass,
   usdValue,
   isLiability,
   isSecurableAsset,
-  LIABILITY_TYPES,
   SECURABLE_ASSET_TYPES,
   loansSecuredBy,
   assetEquity,
@@ -41,13 +51,26 @@ import {
   type HoldingDetails,
 } from '@/lib/portfolio'
 import { typeExpectedReturn } from '@/lib/allocation'
+import { detailSpec } from '@/lib/account-details'
+import { ageInDays, freshnessOf, relativeAge, type Freshness } from '@/lib/freshness'
+import { provenanceOf, CONFIDENCE_LABELS } from '@/lib/provenance'
+import { rankStaleAccounts, rankPhrase, type RefreshSuggestion } from '@/lib/refresh-guidance'
+import {
+  categoryOf,
+  sortHoldings,
+  CATEGORY_ORDER,
+  CATEGORY_LABELS,
+  SORT_LABELS,
+  type AccountCategory,
+  type SortKey,
+} from '@/lib/account-category'
 import type { AccountType } from '@/types/accounts'
 import { Card, CardHeader } from '@/components/ui/Card'
 import { Donut } from '@/components/ui/charts'
 import { Money } from '@/components/ui/Money'
 import { Reveal } from '@/components/ui/Reveal'
-import { PlaidConnect } from '@/components/PlaidConnect'
 import { AddAccountChooser } from '@/components/AddAccountChooser'
+import { AiAdd } from '@/components/copilot/AiAddPanel'
 import { cn } from '@/lib/utils'
 
 type CountryFilter = 'all' | 'US' | 'IN'
@@ -59,7 +82,73 @@ const COUNTRY_META = {
 
 export default function AccountsPage() {
   const { rate } = useCurrency()
-  const { holdings, addLinked, addManual, updateAccount, removeAccount } = useAccounts()
+  const { holdings, loading, demo, hasLinked, addLinked, addManual, updateAccount, removeAccount, refresh, loadDemoData, exitDemo } =
+    useAccounts()
+
+  // Manual balance refresh — pulls live balances from linked banks via /api/plaid/sync.
+  const [syncing, setSyncing] = useState(false)
+  const [reauthNeeded, setReauthNeeded] = useState(false)
+  async function handleRefresh() {
+    if (syncing) return
+    setSyncing(true)
+    setReauthNeeded(false)
+    try {
+      const res = await fetch('/api/plaid/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rate }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (Array.isArray(data.reauth) && data.reauth.length > 0) setReauthNeeded(true)
+      await refresh()
+    } catch (e) {
+      console.error('Balance refresh failed:', e)
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  // "Mark updated" — bump a manual account's lastSyncedAt to now (re-save as-is).
+  const markUpdated = (h: Holding) => {
+    if (h.id) updateAccount(h.id, { ...h, lastSyncedAt: new Date().toISOString() })
+  }
+
+  // Sort key + collapsed category folders, both persisted so the layout sticks.
+  const [sort, setSort] = useState<SortKey>('balance')
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
+  useEffect(() => {
+    try {
+      const s = localStorage.getItem('nriwb:accounts-sort')
+      if (s === 'balance' || s === 'name' || s === 'freshness') setSort(s)
+      const c = localStorage.getItem('nriwb:accounts-collapsed')
+      if (c) {
+        const arr = JSON.parse(c)
+        if (Array.isArray(arr)) setCollapsed(new Set(arr))
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [])
+  useEffect(() => {
+    try {
+      localStorage.setItem('nriwb:accounts-sort', sort)
+    } catch {
+      /* ignore */
+    }
+  }, [sort])
+  const toggleCollapse = useCallback((key: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      try {
+        localStorage.setItem('nriwb:accounts-collapsed', JSON.stringify([...next]))
+      } catch {
+        /* ignore */
+      }
+      return next
+    })
+  }, [])
   const { goals } = useGoals()
 
   // accountId → name of the goal it funds, so each account shows where it's earmarked.
@@ -77,6 +166,8 @@ export default function AccountsPage() {
   const [jurHover, setJurHover] = useState<number | null>(null) // 0 = US, 1 = India
 
   const nw = netWorth(holdings, rate)
+  // Highest-impact stale account to nudge the user to refresh first (age × size).
+  const guidance = useMemo(() => rankStaleAccounts(holdings, rate), [holdings, rate])
   const usCount = holdings.filter((h) => h.country === 'US').length
   const inCount = holdings.filter((h) => h.country === 'IN').length
   const pfics = pficHoldings(holdings)
@@ -132,45 +223,60 @@ export default function AccountsPage() {
         </button>
       </div>
 
+      {demo && <DemoBanner onExit={exitDemo} />}
+
+      {loading ? (
+        <LedgerSkeleton />
+      ) : holdings.length === 0 ? (
+        <EmptyLedger onAdd={() => setChoosing(true)} onLoadDemo={loadDemoData} />
+      ) : (
+        <>
+      {reauthNeeded && <ReauthBanner />}
       {/* ── Summary strip — three quiet figures + the split, one card ──── */}
       <Reveal delay={0.04}>
-        <Card className="grid divide-y divide-border/60 p-0 sm:grid-cols-3 sm:divide-x sm:divide-y-0 sm:p-0">
-          <div className="flex items-center justify-between gap-4 px-6 py-5">
-            <div className="min-w-0">
-              <p className="text-[13px] font-medium text-muted-foreground">{nw.liabilitiesUsd > 0 ? 'Net worth' : 'Total balance'}</p>
-              <Money usd={nw.totalUsd} className="mt-1.5 block tabular-nums text-[1.7rem] font-semibold leading-none tracking-tight tabular-nums" />
-              <p className="mt-2 text-[13px] text-muted-foreground">
-                {holdings.length} accounts
-                {nw.liabilitiesUsd > 0 && (
-                  <> · {formatUSD(nw.assetsUsd)} assets − {formatUSD(nw.liabilitiesUsd)} debt</>
-                )}
-              </p>
-            </div>
-            <Donut
-              size={72}
-              thickness={9}
-              segments={[
-                { value: nw.usUsd, color: 'var(--us)' },
-                { value: nw.inUsd, color: 'var(--india)' },
-              ]}
-              activeIndex={jurHover}
-              onHover={setJurHover}
-            >
-              {jurHover !== null ? (
-                <span
-                  key={jurHover}
-                  className="animate-fade-in tabular-nums text-[12px] font-bold tabular-nums"
-                  style={{ color: jurHover === 0 ? 'var(--us)' : 'var(--india)' }}
-                >
-                  {jurHover === 0 ? nw.usPct : nw.inPct}%
-                </span>
-              ) : (
-                <span key="split" className="animate-fade-in tabular-nums text-[11px] font-bold tabular-nums text-muted-foreground">
-                  {nw.usPct}/{nw.inPct}
-                </span>
-              )}
-            </Donut>
+        <Card className="p-0 sm:p-0">
+          {/* Assets − Less debt = Net worth — three explicit, equally-weighted figures */}
+          <div className="grid grid-cols-3 divide-x divide-border/60">
+            <EquationCell label="Assets" usd={nw.assetsUsd} />
+            <EquationCell label="Less debt" usd={nw.liabilitiesUsd} op="−" tone="debt" />
+            <EquationCell
+              label="Net worth"
+              usd={nw.totalUsd}
+              op="="
+              emphasis
+              sub={`${holdings.length} account${holdings.length === 1 ? '' : 's'}`}
+            />
           </div>
+
+          {/* Cross-border split — the same net worth, seen by jurisdiction */}
+          <div className="grid divide-y divide-border/60 border-t border-border/60 sm:grid-cols-[9rem_1fr_1fr] sm:divide-x sm:divide-y-0">
+            <div className="flex flex-col items-center justify-center gap-1.5 px-6 py-5">
+              <Donut
+                size={72}
+                thickness={9}
+                segments={[
+                  { value: nw.usUsd, color: 'var(--us)' },
+                  { value: nw.inUsd, color: 'var(--india)' },
+                ]}
+                activeIndex={jurHover}
+                onHover={setJurHover}
+              >
+                {jurHover !== null ? (
+                  <span
+                    key={jurHover}
+                    className="animate-fade-in tabular-nums text-[12px] font-bold tabular-nums"
+                    style={{ color: jurHover === 0 ? 'var(--us)' : 'var(--india)' }}
+                  >
+                    {jurHover === 0 ? nw.usPct : nw.inPct}%
+                  </span>
+                ) : (
+                  <span key="split" className="animate-fade-in tabular-nums text-[11px] font-bold tabular-nums text-muted-foreground">
+                    {nw.usPct}/{nw.inPct}
+                  </span>
+                )}
+              </Donut>
+              <span className="text-[11px] font-medium text-muted-foreground">US / India</span>
+            </div>
           <SummaryCell
             label="🇺🇸 United States"
             usd={nw.usUsd}
@@ -191,6 +297,7 @@ export default function AccountsPage() {
             onEnter={() => setJurHover(1)}
             onLeave={() => setJurHover(null)}
           />
+          </div>
         </Card>
       </Reveal>
 
@@ -221,23 +328,52 @@ export default function AccountsPage() {
           ))}
         </div>
 
-        <div className="relative">
-          <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/70" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search accounts…"
-            className="h-9 w-56 rounded-xl border border-input bg-card pl-8.5 pr-3 text-[13px] shadow-[0_1px_2px_hsl(var(--shadow-color)/0.04)] outline-none transition-all placeholder:text-muted-foreground/60 focus:border-brand/60 focus:ring-[3px] focus:ring-brand/12 sm:w-64"
-          />
-          {query && (
-            <button
-              onClick={() => setQuery('')}
-              aria-label="Clear search"
-              className="absolute right-2 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <ArrowUpDown size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <select
+              value={sort}
+              onChange={(e) => setSort(e.target.value as SortKey)}
+              aria-label="Sort accounts"
+              className="h-9 cursor-pointer appearance-none rounded-xl border border-border/70 bg-card pl-7 pr-7 text-[13px] font-medium outline-none transition-colors hover:bg-accent/40 focus:border-brand/60"
             >
-              <X size={12} />
+              {(Object.keys(SORT_LABELS) as SortKey[]).map((k) => (
+                <option key={k} value={k}>
+                  {SORT_LABELS[k]}
+                </option>
+              ))}
+            </select>
+            <ChevronDown size={13} className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          </div>
+          {!demo && hasLinked && (
+            <button
+              onClick={handleRefresh}
+              disabled={syncing}
+              title="Pull the latest balances from your linked banks"
+              className="btn-ghost inline-flex h-9 items-center gap-1.5 rounded-xl border border-border/70 px-3 text-[13px] font-medium disabled:opacity-60"
+            >
+              <RefreshCw size={13} className={cn(syncing && 'animate-spin')} />
+              {syncing ? 'Refreshing…' : 'Refresh'}
             </button>
           )}
+          <div className="relative">
+            <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/70" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search accounts…"
+              className="h-9 w-56 rounded-xl border border-input bg-card pl-8.5 pr-3 text-[13px] shadow-[0_1px_2px_hsl(var(--shadow-color)/0.04)] outline-none transition-all placeholder:text-muted-foreground/60 focus:border-brand/60 focus:ring-[3px] focus:ring-brand/12 sm:w-64"
+            />
+            {query && (
+              <button
+                onClick={() => setQuery('')}
+                aria-label="Clear search"
+                className="absolute right-2 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+              >
+                <X size={12} />
+              </button>
+            )}
+          </div>
         </div>
       </Reveal>
 
@@ -262,8 +398,12 @@ export default function AccountsPage() {
                 rate={rate}
                 grandTotalUsd={nw.totalUsd}
                 accountToGoal={accountToGoal}
+                sort={sort}
+                collapsed={collapsed}
+                onToggleCollapse={toggleCollapse}
                 onEdit={setEditing}
                 onDelete={setDeleting}
+                onMarkUpdated={demo ? undefined : markUpdated}
               />
             ))
           )}
@@ -271,6 +411,14 @@ export default function AccountsPage() {
 
         {/* Side rail — insights & intake, nothing else */}
         <div className="flex flex-col gap-6">
+          {!demo && guidance.top && (
+            <RefreshGuidanceCard
+              top={guidance.top}
+              syncing={syncing}
+              onRefresh={handleRefresh}
+              onEdit={() => setEditing(guidance.top!.holding)}
+            />
+          )}
           {showInsights && (
             <Card>
               <CardHeader title="Insights" subtitle="Ways to save & stay compliant" icon={<Lightbulb size={15} />} />
@@ -302,32 +450,11 @@ export default function AccountsPage() {
             </Card>
           )}
 
-          <Card>
-            <CardHeader title="Add more" subtitle="Link, upload, or type it in" icon={<Link2 size={15} />} />
-            <div className="flex flex-col gap-2">
-              <PlaidConnect fxRate={rate} onLinked={addLinked} />
-              <button
-                disabled
-                title="India bank linking is coming soon"
-                className="flex w-full cursor-not-allowed items-center justify-center gap-1.5 rounded-xl border border-dashed border-border px-3 py-3 text-xs font-medium text-muted-foreground opacity-55"
-              >
-                <Link2 size={13} />
-                Link India accounts
-                <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide">
-                  Coming soon
-                </span>
-              </button>
-              <button
-                onClick={() => setAdding(true)}
-                className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-border px-3 py-3 text-xs font-medium text-muted-foreground transition-all hover:border-foreground/30 hover:bg-muted hover:text-foreground"
-              >
-                <Wallet size={13} />
-                Add anything manually
-              </button>
-            </div>
-          </Card>
+          <AiAdd />
         </div>
       </Reveal>
+        </>
+      )}
 
       {choosing && (
         <AddAccountChooser
@@ -374,7 +501,230 @@ export default function AccountsPage() {
   )
 }
 
-/* ── Summary strip cell ────────────────────────────────────────────────────── */
+/* ── Loading / empty / demo states ─────────────────────────────────────────── */
+
+function LedgerSkeleton() {
+  return (
+    <div className="flex flex-col gap-6">
+      <Card className="h-28 animate-pulse bg-muted/40" />
+      <Card className="h-64 animate-pulse bg-muted/40" />
+    </div>
+  )
+}
+
+/** Shown when the user has no accounts yet — add the first, or opt into demo data. */
+function EmptyLedger({ onAdd, onLoadDemo }: { onAdd: () => void; onLoadDemo: () => void }) {
+  return (
+    <Reveal delay={0.04}>
+      <Card className="flex flex-col items-center gap-3 py-16 text-center">
+        <span className="flex size-12 items-center justify-center rounded-2xl bg-brand/10 text-brand ring-1 ring-brand/20">
+          <Wallet size={22} />
+        </span>
+        <div>
+          <h2 className="font-serif text-lg font-medium tracking-tight">Start your ledger</h2>
+          <p className="mx-auto mt-1 max-w-sm text-[13px] leading-relaxed text-muted-foreground">
+            Add your first account — US or India, asset or liability — and everything else
+            (net worth, allocation, compliance) builds from it.
+          </p>
+        </div>
+        <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
+          <button
+            onClick={onAdd}
+            className="btn-primary inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-[13px] font-medium"
+          >
+            <Plus size={14} />
+            Add account
+          </button>
+          <button
+            onClick={onLoadDemo}
+            className="btn-ghost inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-[13px] font-medium"
+          >
+            <Sparkles size={14} />
+            Load demo data
+          </button>
+        </div>
+        <p className="text-[11px] text-muted-foreground/70">
+          Demo data is a sample portfolio — it’s never saved to your account.
+        </p>
+      </Card>
+    </Reveal>
+  )
+}
+
+/** Shown after a sync when one or more linked banks need to be reconnected. */
+function ReauthBanner() {
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-warning/25 bg-warning-muted/40 px-4 py-3 text-[13px] animate-fade-in">
+      <AlertTriangle size={15} className="shrink-0 text-warning" />
+      <span className="text-muted-foreground">
+        <span className="font-medium text-foreground">A bank needs reconnecting.</span> Its login expired, so those
+        balances couldn’t refresh — reconnect it to resume syncing.
+      </span>
+    </div>
+  )
+}
+
+/** Persistent banner while demo data is active, with a one-click exit back to real data. */
+function DemoBanner({ onExit }: { onExit: () => void }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-brand/25 bg-brand/[0.06] px-4 py-3 animate-fade-in">
+      <p className="flex items-center gap-2 text-[13px] text-foreground">
+        <Sparkles size={15} className="shrink-0 text-brand" />
+        <span>
+          <span className="font-medium">Viewing demo data</span> — a sample portfolio, not saved to your account.
+        </span>
+      </p>
+      <button
+        onClick={onExit}
+        className="btn-ghost inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-medium"
+      >
+        <X size={13} />
+        Exit demo
+      </button>
+    </div>
+  )
+}
+
+/* ── Freshness indicators ──────────────────────────────────────────────────── */
+
+/** Per-row age chip. Plaid rows read as auto-synced (⚡); manual rows as user-updated (●). */
+function FreshnessPill({
+  days,
+  fresh,
+  source,
+}: {
+  days: number | null
+  fresh: Freshness
+  source: Holding['source']
+}) {
+  if (days === null) return null
+  const auto = source !== 'manual'
+  const verb = auto ? 'Synced' : 'Updated'
+  const tone = fresh === 'stale' ? 'text-warning' : fresh === 'aging' ? 'text-muted-foreground' : 'text-success'
+  const dot = fresh === 'stale' ? 'bg-warning' : fresh === 'aging' ? 'bg-muted-foreground/50' : 'bg-success'
+  return (
+    <span
+      className={cn('inline-flex shrink-0 items-center gap-1 text-[11px] font-medium', tone)}
+      title={`${verb} ${relativeAge(days)}${days > 0 ? ' ago' : ''}${auto ? ' · auto via Plaid' : ''}`}
+    >
+      {auto ? (
+        <Zap size={10} className="shrink-0" />
+      ) : (
+        <span className={cn('size-1.5 shrink-0 rounded-full', dot)} />
+      )}
+      {relativeAge(days)}
+    </span>
+  )
+}
+
+/** Group-header rollup: "All live" when every synced row is fresh, else "N stale". */
+function FreshnessSummary({ accounts }: { accounts: Holding[] }) {
+  const known = accounts.filter((h) => h.lastSyncedAt)
+  if (known.length === 0) return null
+  const stale = known.filter((h) => freshnessOf(ageInDays(h.lastSyncedAt)) === 'stale').length
+  if (stale === 0) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-success-muted/70 px-2 py-0.5 text-[10.5px] font-semibold text-success ring-1 ring-success/20">
+        <span className="size-1.5 rounded-full bg-success" />
+        All live
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-warning-muted/70 px-2 py-0.5 text-[10.5px] font-semibold text-warning ring-1 ring-warning/20">
+      <AlertTriangle size={10} />
+      {stale} stale
+    </span>
+  )
+}
+
+/** Nudge card: the single stale account whose refresh moves net worth most. */
+function RefreshGuidanceCard({
+  top,
+  syncing,
+  onRefresh,
+  onEdit,
+}: {
+  top: RefreshSuggestion
+  syncing: boolean
+  onRefresh: () => void
+  onEdit: () => void
+}) {
+  const h = top.holding
+  const auto = h.source !== 'manual'
+  return (
+    <Card>
+      <CardHeader title="Refresh first" subtitle="Your highest-impact stale account" icon={<Clock size={15} />} />
+      <p className="text-[13px] leading-relaxed text-muted-foreground">
+        Your <span className="font-medium text-foreground">{h.nickname}</span> is the{' '}
+        <span className="font-medium text-foreground">{rankPhrase(top.ageRank, 'oldest')}</span> and{' '}
+        <span className="font-medium text-foreground">{rankPhrase(top.sizeRank, 'largest')}</span> account, last{' '}
+        {auto ? 'synced' : 'updated'}{' '}
+        <span className="font-medium text-foreground">{relativeAge(top.days)} ago</span>. Refreshing it moves your net
+        worth most.
+      </p>
+      <button
+        onClick={auto ? onRefresh : onEdit}
+        disabled={auto && syncing}
+        className="btn-primary mt-3 inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-[13px] font-medium disabled:opacity-60"
+      >
+        {auto ? (
+          <>
+            <RefreshCw size={13} className={cn(syncing && 'animate-spin')} />
+            {syncing ? 'Refreshing…' : 'Refresh now'}
+          </>
+        ) : (
+          <>
+            <Pencil size={13} />
+            Update balance
+          </>
+        )}
+      </button>
+    </Card>
+  )
+}
+
+/* ── Summary strip cells ───────────────────────────────────────────────────── */
+
+/**
+ * One figure of the Assets − Less debt = Net worth equation. Debt always renders
+ * (even $0), tinted only when there's debt; the operator sits on the divider.
+ */
+function EquationCell({
+  label,
+  usd,
+  op,
+  tone,
+  emphasis,
+  sub,
+}: {
+  label: string
+  usd: number
+  op?: string
+  tone?: 'debt'
+  emphasis?: boolean
+  sub?: string
+}) {
+  return (
+    <div className="relative px-3 py-5 text-center sm:px-6">
+      {op && (
+        <span className="absolute left-0 top-1/2 z-10 hidden -translate-x-1/2 -translate-y-1/2 rounded-full bg-card px-1 text-base font-light text-muted-foreground sm:block">
+          {op}
+        </span>
+      )}
+      <p className="text-[12px] font-medium text-muted-foreground sm:text-[13px]">{label}</p>
+      <Money
+        usd={usd}
+        className={cn(
+          'mt-1.5 block tabular-nums font-semibold leading-none tracking-tight tabular-nums',
+          emphasis ? 'text-[1.35rem] sm:text-[1.9rem]' : 'text-[1.1rem] sm:text-[1.5rem]',
+          tone === 'debt' && usd > 0 && 'text-danger',
+        )}
+      />
+      {sub && <p className="mt-2 text-[12px] text-muted-foreground">{sub}</p>}
+    </div>
+  )
+}
 
 function SummaryCell({
   label,
@@ -455,14 +805,46 @@ function InsightItem({
 
 /* ── Account group (country ledger) ────────────────────────────────────────── */
 
+const CATEGORY_ICONS: Record<AccountCategory, React.ReactNode> = {
+  banking: <Landmark size={14} />,
+  investments: <TrendingUp size={14} />,
+  retirement: <PiggyBank size={14} />,
+  real_estate: <Home size={14} />,
+  liabilities: <CreditCard size={14} />,
+  other: <Coins size={14} />,
+}
+
+/**
+ * Secured-loan context as an inline note, now that category folders replace the
+ * old nested layout: an asset shows its equity-after-loans; a loan shows what it's
+ * secured against.
+ */
+function securedNote(a: Holding, accounts: Holding[], rate: number): string | undefined {
+  if (!isLiability(a)) {
+    if (a.id && loansSecuredBy(a.id, accounts).length > 0) {
+      return `${formatUSD(assetEquity(a, accounts, rate))} equity`
+    }
+    return undefined
+  }
+  if (a.securedAgainstId) {
+    const asset = accounts.find((x) => x.id === a.securedAgainstId)
+    if (asset) return `secured by ${asset.nickname}`
+  }
+  return undefined
+}
+
 function AccountGroup({
   country,
   accounts,
   rate,
   grandTotalUsd,
   accountToGoal,
+  sort,
+  collapsed,
+  onToggleCollapse,
   onEdit,
   onDelete,
+  onMarkUpdated,
 }: {
   country: 'US' | 'IN'
   accounts: Holding[]
@@ -470,29 +852,38 @@ function AccountGroup({
   grandTotalUsd: number
   /** accountId → name of the goal it funds (shown as a tag on the row). */
   accountToGoal: Map<string, string>
+  sort: SortKey
+  /** Set of collapsed folder keys ("US:banking"). */
+  collapsed: ReadonlySet<string>
+  onToggleCollapse: (key: string) => void
   onEdit: (h: Holding) => void
   onDelete: (h: Holding) => void
+  /** When set, manual rows can be marked freshly-updated. Omitted in demo mode. */
+  onMarkUpdated?: (h: Holding) => void
 }) {
   const { flag, name, color } = COUNTRY_META[country]
   const [activeSlice, setActiveSlice] = useState<number | null>(null)
   const total = accounts.reduce((s, h) => s + usdValue(h, rate), 0)
   const share = grandTotalUsd > 0 ? Math.round((total / grandTotalUsd) * 100) : 0
   const slices = useMemo(() => byAssetClass(accounts, rate), [accounts, rate])
-  const sorted = useMemo(
-    () => [...accounts].sort((a, b) => usdValue(b, rate) - usdValue(a, rate)),
-    [accounts, rate],
+  // Debt broken out by category too, so the breakdown reconciles to net worth.
+  const debtSlices = useMemo(() => byLiabilityClass(accounts, rate), [accounts, rate])
+  const assetsUsd = slices.reduce((s, x) => s + x.usd, 0)
+  const debtUsd = debtSlices.reduce((s, x) => s + x.usd, 0)
+  // Group into category folders (Banking / Investments / … / Liabilities), each
+  // sorted by the chosen key. Empty categories are dropped.
+  const folders = useMemo(
+    () =>
+      CATEGORY_ORDER.map((category) => ({
+        category,
+        rows: sortHoldings(
+          accounts.filter((a) => categoryOf(a) === category),
+          sort,
+          rate,
+        ),
+      })).filter((f) => f.rows.length > 0),
+    [accounts, sort, rate],
   )
-  // Loans secured against an asset in this group render nested under it, not standalone.
-  const nestedLoanIds = useMemo(() => {
-    const ids = new Set<string>()
-    for (const h of accounts) {
-      if (isLiability(h) && h.id && h.securedAgainstId && accounts.some((a) => a.id === h.securedAgainstId)) {
-        ids.add(h.id)
-      }
-    }
-    return ids
-  }, [accounts])
-  const topLevel = sorted.filter((h) => !(h.id && nestedLoanIds.has(h.id)))
 
   return (
     <Card className="overflow-hidden p-0 sm:p-0">
@@ -517,11 +908,13 @@ function AccountGroup({
         >
           {accounts.length}
         </span>
+        <FreshnessSummary accounts={accounts} />
         <Money usd={total} className="ml-auto tabular-nums text-[15px] font-semibold tabular-nums" />
       </div>
 
-      {/* Jurisdiction mix — what this money actually is */}
-      <div className="flex items-center gap-5 border-b border-border/60 bg-muted/30 px-5 py-4">
+      {/* Breakdown — assets by class, debts by category, reconciled to net worth */}
+      <div className="border-b border-border/60 bg-muted/30 px-5 py-4">
+        <div className="flex items-center gap-5">
         <Donut
           size={88}
           thickness={11}
@@ -577,54 +970,80 @@ function AccountGroup({
             </div>
           ))}
         </div>
+        </div>
+
+        {debtSlices.length > 0 && (
+          <div className="mt-4 border-t border-border/50 pt-3">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Liabilities
+              </span>
+              <span className="tabular-nums text-[12px] font-semibold text-danger">−{formatUSD(debtUsd)}</span>
+            </div>
+            <div className="grid grid-cols-2 gap-x-5 gap-y-1.5 sm:grid-cols-3">
+              {debtSlices.map((l) => (
+                <div key={l.key} className="flex items-center gap-1.5 text-[13px]">
+                  <span className="size-2 shrink-0 rounded-[4px]" style={{ background: l.colorVar }} />
+                  <span className="truncate font-medium">{l.label}</span>
+                  <span className="ml-auto tabular-nums text-[11px] text-muted-foreground">−{formatUSD(l.usd)}</span>
+                </div>
+              ))}
+            </div>
+            {/* Reconciliation — assets − debt = this country's net worth */}
+            <div className="mt-3 flex flex-wrap items-center justify-end gap-x-1.5 gap-y-1 border-t border-border/40 pt-2.5 text-[12px] text-muted-foreground">
+              <span className="tabular-nums">{formatUSD(assetsUsd)} assets</span>
+              <span>−</span>
+              <span className="tabular-nums text-danger">{formatUSD(debtUsd)} debt</span>
+              <span>=</span>
+              <span className="tabular-nums font-semibold text-foreground">{formatUSD(total)} net worth</span>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Rows */}
-      <div className="divide-y divide-border/40">
-        {topLevel.map((a) => {
-          const secured = isLiability(a) ? [] : loansSecuredBy(a.id, accounts)
-          if (secured.length === 0) {
-            return (
-              <AccountRow
-                key={a.id ?? a.nickname}
-                a={a}
-                color={color}
-                rate={rate}
-                accountToGoal={accountToGoal}
-                onEdit={onEdit}
-                onDelete={onDelete}
-              />
-            )
-          }
+      {/* Category folders — collapsible, sorted, scale to 30+ rows */}
+      <div>
+        {folders.map(({ category, rows }) => {
+          const key = `${country}:${category}`
+          const open = !collapsed.has(key)
+          const subtotal = rows.reduce((s, a) => s + usdValue(a, rate), 0)
           return (
-            <div key={a.id ?? a.nickname}>
-              <AccountRow
-                a={a}
-                color={color}
-                rate={rate}
-                accountToGoal={accountToGoal}
-                onEdit={onEdit}
-                onDelete={onDelete}
-              />
-              {secured.map((loan) => (
-                <AccountRow
-                  key={loan.id}
-                  a={loan}
-                  color={color}
-                  rate={rate}
-                  accountToGoal={accountToGoal}
-                  onEdit={onEdit}
-                  onDelete={onDelete}
-                  indent
+            <div key={category} className="border-b border-border/40 last:border-b-0">
+              <button
+                onClick={() => onToggleCollapse(key)}
+                aria-expanded={open}
+                className="flex w-full items-center gap-2 bg-muted/20 px-5 py-2.5 text-left transition-colors hover:bg-accent/30"
+              >
+                <ChevronRight
+                  size={14}
+                  className={cn('shrink-0 text-muted-foreground transition-transform duration-200', open && 'rotate-90')}
                 />
-              ))}
-              <div className="flex items-center justify-between gap-3.5 bg-muted/25 py-2 pl-[4.5rem] pr-5">
-                <span className="text-[12px] font-medium text-muted-foreground">Equity</span>
-                <Money
-                  usd={assetEquity(a, accounts, rate)}
-                  className="shrink-0 text-right tabular-nums text-[13px] font-semibold tabular-nums"
-                />
-              </div>
+                <span className="flex size-5 items-center justify-center text-muted-foreground">
+                  {CATEGORY_ICONS[category]}
+                </span>
+                <span className="text-[13px] font-semibold">{CATEGORY_LABELS[category]}</span>
+                <span className="rounded-full bg-muted px-1.5 py-px tabular-nums text-[10px] font-bold tabular-nums text-muted-foreground">
+                  {rows.length}
+                </span>
+                <Money usd={subtotal} className="ml-auto tabular-nums text-[13px] font-semibold tabular-nums" />
+              </button>
+              {open && (
+                <div className="divide-y divide-border/40">
+                  {rows.map((a) => (
+                    <AccountRow
+                      key={a.id ?? a.nickname}
+                      a={a}
+                      color={color}
+                      rate={rate}
+                      accountToGoal={accountToGoal}
+                      note={securedNote(a, accounts, rate)}
+                      onEdit={onEdit}
+                      onDelete={onDelete}
+                      onMarkUpdated={onMarkUpdated}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           )
         })}
@@ -638,23 +1057,33 @@ function AccountRow({
   color,
   rate,
   accountToGoal,
+  note,
   onEdit,
   onDelete,
+  onMarkUpdated,
   indent = false,
 }: {
   a: Holding
   color: string
   rate: number
   accountToGoal: Map<string, string>
+  /** Optional trailing note on the meta line (e.g. equity / "secured by …"). */
+  note?: string
   onEdit: (h: Holding) => void
   onDelete: (h: Holding) => void
+  onMarkUpdated?: (h: Holding) => void
   indent?: boolean
 }) {
+  const days = ageInDays(a.lastSyncedAt)
+  const fresh = freshnessOf(days)
+  const canMark = !!onMarkUpdated && a.source === 'manual'
   return (
     <div
       className={cn(
         'group flex items-center gap-3.5 transition-colors hover:bg-accent/35',
         indent ? 'py-2.5 pl-[4.5rem] pr-5' : 'px-5 py-3.5',
+        // Colour stale rows so they stand out from fresh ones at a glance.
+        fresh === 'stale' && 'bg-warning-muted/20',
       )}
     >
       {!indent && <Monogram institution={a.institution} color={color} />}
@@ -671,12 +1100,13 @@ function AccountRow({
               PFIC
             </span>
           )}
-          <SourceBadge source={a.source} />
+          <ProvenanceBadge holding={a} />
         </div>
         <p className="mt-0.5 flex items-center gap-1.5 truncate text-[13px] text-muted-foreground">
           <span className="truncate">
             {a.institution} · {TYPE_LABELS[a.accountType] ?? a.accountType}
             {detailSummary(a.details) ? ` · ${detailSummary(a.details)}` : ''}
+            {note ? ` · ${note}` : ''}
           </span>
           {a.id && accountToGoal.has(a.id) && (
             <span
@@ -687,9 +1117,20 @@ function AccountRow({
               {accountToGoal.get(a.id)}
             </span>
           )}
+          <FreshnessPill days={days} fresh={fresh} source={a.source} />
         </p>
       </div>
       <div className="flex shrink-0 items-center gap-0.5 opacity-100 transition-opacity focus-within:opacity-100 sm:opacity-0 sm:group-hover:opacity-100">
+        {canMark && (
+          <button
+            onClick={() => onMarkUpdated!(a)}
+            aria-label={`Mark ${a.nickname} updated`}
+            title="Mark as updated today"
+            className="flex size-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <Clock size={13} />
+          </button>
+        )}
         <button
           onClick={() => onEdit(a)}
           aria-label={`Edit ${a.nickname}`}
@@ -736,18 +1177,28 @@ function Monogram({ institution, color }: { institution: string; color: string }
   )
 }
 
-function SourceBadge({ source }: { source: Holding['source'] }) {
-  if (source === 'manual') return null
-  const map: Record<string, { label: string }> = {
-    plaid: { label: 'Plaid' },
-    setu: { label: 'Setu' },
-    pdf_upload: { label: 'PDF' },
+/**
+ * Provenance + confidence badge on every row — where the number came from and how
+ * much to trust it. Colour tracks confidence (green/neutral/amber), consistent with
+ * the freshness pill; estimates carry a warning icon.
+ */
+function ProvenanceBadge({ holding }: { holding: Holding }) {
+  const p = provenanceOf(holding)
+  const styles: Record<typeof p.confidence, string> = {
+    high: 'bg-success-muted/60 text-success ring-success/20',
+    medium: 'bg-accent text-accent-foreground/80 ring-border/60',
+    low: 'bg-warning-muted/70 text-warning ring-warning/20',
   }
-  const m = map[source]
-  if (!m) return null
   return (
-    <span className="shrink-0 rounded bg-accent px-1 py-px text-[10px] font-medium uppercase tracking-wide text-accent-foreground/80 ring-1 ring-border/60">
-      {m.label}
+    <span
+      title={`${p.label} · ${CONFIDENCE_LABELS[p.confidence]}`}
+      className={cn(
+        'inline-flex shrink-0 items-center gap-0.5 rounded px-1 py-px text-[10px] font-medium uppercase tracking-wide ring-1',
+        styles[p.confidence],
+      )}
+    >
+      {p.confidence === 'low' && <AlertTriangle size={9} className="shrink-0" />}
+      {p.label}
     </span>
   )
 }
@@ -886,62 +1337,6 @@ const FCNR_CURRENCIES: NonNullable<HoldingDetails['depositCurrency']>[] = ['USD'
  * because a Sovereign Gold Bond reveals interest + maturity that physical gold
  * doesn't. Returning plain booleans keeps the form's conditional rendering flat.
  */
-function detailSpec(country: 'US' | 'IN', t: AccountType, isSgb: boolean, fdScheme: 'NRE' | 'NRO') {
-  // Liabilities: APR for all, a payoff date for term loans, and a min. payment.
-  if (LIABILITY_TYPES.has(t)) {
-    const termLoan = t !== 'credit_card' && t !== 'other_debt'
-    return {
-      interestRate: true,
-      expectedReturn: false,
-      maturityDate: termLoan,
-      minPayment: true,
-      compounding: false,
-      depositCurrency: false,
-      tdsRate: false,
-      schemeToggle: false,
-      goldToggle: false,
-      get any() {
-        return true
-      },
-    }
-  }
-  const sgbGold = country === 'IN' && t === 'gold' && isSgb
-  const inFd = country === 'IN' && t === 'fd'
-  // A note receivable is a loan you've made — it carries an interest rate and a
-  // repayment (due) date, just like the loans on the liability side.
-  const interestRate = ['savings', 'nre', 'nro', 'fcnr', 'fd', 'cd', 'bond', 'notes_receivable'].includes(t) || sgbGold
-  const maturityDate = ['fcnr', 'fd', 'cd', 'bond', 'notes_receivable'].includes(t) || sgbGold
-  // Growth assets have no fixed coupon, so projections lean on a per-type default
-  // return — let the user override it with their own estimate for this account.
-  const expectedReturn =
-    ['brokerage', '401k', 'ira', 'roth_ira', 'mutual_fund', 'real_estate', 'property', 'gold'].includes(t) && !sgbGold
-  return {
-    interestRate,
-    expectedReturn,
-    maturityDate,
-    minPayment: false,
-    compounding: ['fcnr', 'fd', 'cd'].includes(t),
-    depositCurrency: t === 'fcnr',
-    // NRO interest is taxable (TDS). An NRE FD is tax-free, so no TDS field.
-    tdsRate: (country === 'IN' && t === 'nro') || (inFd && fdScheme === 'NRO'),
-    schemeToggle: inFd,
-    goldToggle: country === 'IN' && t === 'gold',
-    /** True when the type carries any detail field worth a section header. */
-    get any() {
-      return (
-        this.interestRate ||
-        this.expectedReturn ||
-        this.maturityDate ||
-        this.compounding ||
-        this.depositCurrency ||
-        this.tdsRate ||
-        this.schemeToggle ||
-        this.goldToggle
-      )
-    },
-  }
-}
-
 /** Compact, human one-liner of a holding's populated details — for the row. */
 function detailSummary(d: HoldingDetails | undefined): string | null {
   if (!d) return null

@@ -9,6 +9,10 @@
  */
 
 import { usdValue, type Holding } from '@/lib/portfolio'
+import { portfolioExpectedReturn } from '@/lib/allocation'
+
+/** Fallback growth rate when there are no holdings to derive one from. */
+export const DEFAULT_GOAL_RETURN = 0.06
 
 export type GoalCategory =
   | 'retirement'
@@ -127,6 +131,27 @@ export function goalRemaining(g: Goal): number {
 }
 
 /**
+ * The annual return to grow a goal at — derived from *how its money is actually
+ * invested*, not a flat guess:
+ *  • Linked to accounts → the balance-weighted expected return of just those
+ *    accounts (the dollars earmarked to this goal). A 401k-funded retirement
+ *    pot projects higher than an FD-funded property goal.
+ *  • Unlinked → the whole-portfolio blend, so the number still reflects the
+ *    user's real holdings.
+ *  • No holdings yet → a moderate default.
+ * Mirrors the basis the analyzer + copilot already use, so Goals agrees with them.
+ */
+export function goalExpectedReturn(g: Goal, holdings: Holding[], rate: number): number {
+  if (isGoalLinked(g)) {
+    const ids = new Set(g.linkedAccountIds)
+    const linked = holdings.filter((h) => h.id && ids.has(h.id))
+    const r = portfolioExpectedReturn(linked, rate)
+    if (r != null) return r
+  }
+  return portfolioExpectedReturn(holdings, rate) ?? DEFAULT_GOAL_RETURN
+}
+
+/**
  * Monthly contribution needed to reach the target by its year — crediting both
  * the money already saved *and* the growth it (plus future contributions) earns
  * along the way. Solves the annuity payment that closes the gap:
@@ -135,12 +160,13 @@ export function goalRemaining(g: Goal): number {
  *
  * where r is the monthly return and n the months left. Returns 0 once the goal
  * is met, its year has passed, or the existing savings alone will get there.
- * Illustrative, not a financial projection.
+ * Pass `annualReturn` from `goalExpectedReturn` so the growth reflects the real
+ * accounts funding the goal. Illustrative, not a financial projection.
  */
 export function goalMonthlyNeeded(
   g: Goal,
   currentYear: number,
-  annualReturn = 0.06,
+  annualReturn = DEFAULT_GOAL_RETURN,
 ): number {
   const months = (g.targetYear - currentYear) * 12
   if (months <= 0) return 0

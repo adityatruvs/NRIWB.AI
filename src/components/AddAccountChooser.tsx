@@ -3,11 +3,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { usePlaidLink, type PlaidLinkOnSuccessMetadata } from 'react-plaid-link'
 import { Landmark, Building2, PencilLine, X, ChevronRight } from 'lucide-react'
-import { buildLinkedAccounts, type LinkedAccount, type RawPlaidAccount } from '@/components/PlaidConnect'
+import type { Holding } from '@/lib/portfolio'
 
 interface Props {
   fxRate: number
-  onLinked: (accounts: LinkedAccount[]) => void
+  onLinked: (accounts: Holding[]) => void
   onManual: () => void
   onClose: () => void
 }
@@ -24,14 +24,14 @@ export function AddAccountChooser({ fxRate, onLinked, onManual, onClose }: Props
 
   const onSuccess = useCallback(
     async (public_token: string, metadata: PlaidLinkOnSuccessMetadata) => {
+      const institutionName = metadata.institution?.name ?? 'Bank'
       const res = await fetch('/api/plaid/exchange-public-token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ public_token }),
+        body: JSON.stringify({ public_token, institutionName, rate: fxRate }),
       })
       const data = await res.json()
-      const institutionName = metadata.institution?.name ?? 'Bank'
-      onLinked(buildLinkedAccounts(data.accounts as RawPlaidAccount[], institutionName, fxRate))
+      if (Array.isArray(data.accounts)) onLinked(data.accounts as Holding[])
       onClose()
     },
     [onLinked, fxRate, onClose],

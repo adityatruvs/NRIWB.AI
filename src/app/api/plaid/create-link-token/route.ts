@@ -16,6 +16,9 @@ export async function POST() {
     user: { client_user_id: userId },
     client_name: 'NRIWB',
     products: [Products.Auth],
+    // Requested but not required — lets the balance sync pull loan interest rates
+    // from institutions that support Liabilities, without blocking the Auth link.
+    optional_products: [Products.Liabilities],
     country_codes: [CountryCode.Us],
     language: 'en',
     ...(process.env.PLAID_REDIRECT_URI

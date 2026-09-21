@@ -67,6 +67,12 @@ export interface Holding {
   securedAgainstId?: string
   /** Instrument-specific attributes (interest rate, maturity, …). Optional. */
   details?: HoldingDetails
+  /**
+   * ISO timestamp of when this balance was last confirmed — a Plaid sync for
+   * linked accounts, or a manual save/"mark updated" for manual ones. Absent for
+   * demo/seed rows. Drives the freshness indicator (see `@/lib/freshness`).
+   */
+  lastSyncedAt?: string
 }
 
 /** Account types that represent debt. Used to set `kind` and drive the form. */
@@ -243,6 +249,69 @@ export function byAssetClass(holdings: Holding[], rate: number): AssetSlice[] {
       key,
       label: ASSET_CLASS_META[key].label,
       colorVar: ASSET_CLASS_META[key].colorVar,
+      usd,
+      pct: (usd / grand) * 100,
+    }))
+    .sort((a, b) => b.usd - a.usd)
+}
+
+/* ── Liability breakdown ──────────────────────────────────────────────────── */
+
+/** Debt categories — the liability-side counterpart to AssetClass. */
+export type LiabilityClass = 'mortgage' | 'auto' | 'student' | 'creditCard' | 'personal' | 'other'
+
+export const LIABILITY_CLASS_META: Record<
+  LiabilityClass,
+  { label: string; colorVar: string }
+> = {
+  mortgage: { label: 'Mortgage & Home', colorVar: 'oklch(0.58 0.18 25)' },
+  auto: { label: 'Auto', colorVar: 'oklch(0.65 0.16 45)' },
+  student: { label: 'Student & Education', colorVar: 'oklch(0.62 0.15 8)' },
+  creditCard: { label: 'Credit Cards', colorVar: 'oklch(0.55 0.2 12)' },
+  personal: { label: 'Personal', colorVar: 'oklch(0.6 0.13 32)' },
+  other: { label: 'Other Debt', colorVar: 'var(--muted-foreground)' },
+}
+
+const TYPE_TO_LIABILITY: Partial<Record<AccountType, LiabilityClass>> = {
+  mortgage: 'mortgage',
+  home_loan: 'mortgage',
+  heloc: 'mortgage',
+  auto_loan: 'auto',
+  student_loan: 'student',
+  education_loan: 'student',
+  credit_card: 'creditCard',
+  personal_loan: 'personal',
+  notes_payable: 'other',
+  other_debt: 'other',
+}
+
+export interface LiabilitySlice {
+  key: LiabilityClass
+  label: string
+  colorVar: string
+  /** Positive amount owed, in USD. */
+  usd: number
+  pct: number
+}
+
+/**
+ * Summarise debts by category — the liability counterpart to `byAssetClass`, so the
+ * per-country breakdown can show *what kind* of debt a user carries instead of one
+ * lump number. `usd` is the positive amount owed; `pct` is share of total debt.
+ */
+export function byLiabilityClass(holdings: Holding[], rate: number): LiabilitySlice[] {
+  const totals = new Map<LiabilityClass, number>()
+  for (const h of holdings) {
+    if (!isLiability(h)) continue
+    const cls = TYPE_TO_LIABILITY[h.accountType] ?? 'other'
+    totals.set(cls, (totals.get(cls) ?? 0) + Math.abs(usdValue(h, rate)))
+  }
+  const grand = [...totals.values()].reduce((s, v) => s + v, 0) || 1
+  return [...totals.entries()]
+    .map(([key, usd]) => ({
+      key,
+      label: LIABILITY_CLASS_META[key].label,
+      colorVar: LIABILITY_CLASS_META[key].colorVar,
       usd,
       pct: (usd / grand) * 100,
     }))

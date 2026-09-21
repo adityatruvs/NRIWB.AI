@@ -674,7 +674,7 @@ function AnalyzerTeaser({
     .sort((x, y) => Math.abs(y.delta) - Math.abs(x.delta))[0]
 
   return (
-    <Card hover className="relative overflow-hidden">
+    <Card className="ai-ring">
       <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:gap-6">
         <div className="flex min-w-0 flex-1 items-start gap-3">
           <span className="ai-chip relative flex size-10 shrink-0 items-center justify-center rounded-xl shadow-[0_2px_10px_-3px_rgba(80,120,255,0.5)]">

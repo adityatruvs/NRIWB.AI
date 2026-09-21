@@ -121,6 +121,19 @@
   --india-muted: oklch(0.94 0.05 152);
   --saffron: oklch(0.74 0.14 70);
 
+  /* AI accent — two on-brand greens (emerald → fresh mint). The rim is a
+     diagonal multi-band gradient that sweeps back and forth like a wave. */
+  --ai-accent: oklch(0.55 0.13 162);
+  --ai-accent-2: oklch(0.70 0.14 170);
+  --ai-rim: linear-gradient(
+    115deg,
+    var(--ai-accent),
+    var(--ai-accent-2),
+    var(--ai-accent),
+    var(--ai-accent-2),
+    var(--ai-accent)
+  );
+
   --success: oklch(0.565 0.13 162);
   --success-muted: oklch(0.94 0.05 162);
   --warning: oklch(0.715 0.15 72);
@@ -176,6 +189,10 @@
   --india: oklch(0.72 0.13 152);
   --india-muted: oklch(0.32 0.06 152);
   --saffron: oklch(0.80 0.13 72);
+
+  /* AI accent (dark) — brighter greens so the wave reads on dark surfaces. */
+  --ai-accent: oklch(0.68 0.13 162);
+  --ai-accent-2: oklch(0.78 0.13 170);
 
   --success: oklch(0.74 0.14 162);
   --success-muted: oklch(0.32 0.07 162);
@@ -343,38 +360,26 @@
     border: 2px solid transparent;
     border-radius: 0.5rem;
     color: oklch(0.99 0.02 250);
-    background:
-      linear-gradient(
-        135deg,
-        oklch(0.68 0.16 244) 0%,
-        oklch(0.60 0.17 258) 52%,
-        oklch(0.64 0.15 232) 100%
-      ) padding-box,
-      conic-gradient(
-        from var(--ai-angle, 0deg),
-        oklch(0.92 0.09 216),
-        oklch(0.72 0.18 252),
-        oklch(0.98 0.02 250),
-        oklch(0.76 0.16 288),
-        oklch(0.92 0.09 216)
-      ) border-box;
+    background: linear-gradient(
+      135deg,
+      var(--ai-accent),
+      color-mix(in oklch, var(--ai-accent) 86%, black)
+    );
     box-shadow:
-      inset 0 1px 0 oklch(1 0 0 / 28%),
-      0 2px 8px -2px color-mix(in oklch, oklch(0.62 0.18 252) 60%, transparent),
-      0 8px 24px -6px color-mix(in oklch, oklch(0.62 0.18 252) 52%, transparent);
-    animation: ai-spin 3.5s linear infinite;
+      inset 0 1px 0 oklch(1 0 0 / 22%),
+      0 2px 8px -2px color-mix(in oklch, var(--ai-accent) 50%, transparent);
     transition: box-shadow 0.25s ease, transform 0.1s ease, filter 0.2s ease;
   }
-  /* Constant soft aura — always on, blooms on hover. */
+  /* Soft static accent glow — solid button, no spin; blooms a touch on hover. */
   .btn-ai::after {
     content: "";
     position: absolute;
     inset: -3px;
     z-index: -1;
     border-radius: inherit;
-    background: linear-gradient(135deg, oklch(0.64 0.18 248), oklch(0.6 0.18 272));
+    background: var(--ai-accent);
     filter: blur(14px);
-    opacity: 0.5;
+    opacity: 0.3;
     transition: opacity 0.25s ease;
     pointer-events: none;
   }
@@ -393,12 +398,64 @@
     animation: ai-twinkle 2.6s ease-in-out infinite;
   }
 
-  /* AI badge pill — same cool identity as the AI buttons, in miniature. */
+  /* AI badge pill — same cool identity as the AI buttons, with the rotating
+     multi-colour rim in miniature. */
   .ai-chip {
-    background: linear-gradient(135deg, oklch(0.64 0.17 248), oklch(0.58 0.17 264));
+    background:
+      linear-gradient(135deg, var(--ai-accent), color-mix(in oklch, var(--ai-accent) 80%, black))
+        padding-box,
+      var(--ai-rim) border-box;
+    background-size: auto, 200% 200%;
     color: oklch(0.99 0.02 250);
-    border: 1px solid transparent;
-    box-shadow: 0 1px 3px -1px color-mix(in oklch, oklch(0.62 0.18 252) 55%, transparent);
+    border: 1.5px solid transparent;
+    box-shadow: 0 1px 3px -1px color-mix(in oklch, var(--ai-accent) 50%, transparent);
+    animation: ai-wave-rim 7s ease-in-out infinite;
+  }
+
+  /* AI surface — a calm WHITE card with a steady green hairline border and a
+     soft green hue that breathes: fades in and out in place on a slow loop.
+     The card body stays mostly white; the green is an ambient pulse of light,
+     never a fill. Replaces .card-surface for AI surfaces; keep normal padding. */
+  .ai-ring {
+    position: relative;
+    isolation: isolate;
+    border: 1.5px solid transparent;
+    border-radius: var(--radius-2xl);
+    background:
+      linear-gradient(var(--card), var(--card)) padding-box,
+      var(--ai-rim) border-box;
+    background-size: auto, 200% 200%;
+    box-shadow: 0 1px 2px hsl(var(--shadow-color) / 0.06);
+    /* Slow, gentle sweep keeps the border alive without shouting. */
+    animation: ai-wave-rim 11s ease-in-out infinite;
+  }
+  /* The breathing hue — a soft green bloom hugging the card that fades in and
+     out in place. Base opacity keeps a whisper of green so it never fully dies;
+     the peak stays low so the surface reads white, not green. */
+  .ai-ring::after {
+    content: "";
+    position: absolute;
+    inset: -5px;
+    z-index: -1;
+    border-radius: inherit;
+    background: radial-gradient(
+      130% 130% at 50% 0%,
+      color-mix(in oklch, var(--ai-accent) 60%, transparent),
+      transparent 72%
+    );
+    filter: blur(18px);
+    opacity: 0.05;
+    animation: ai-breathe 6s ease-in-out infinite;
+    pointer-events: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ai-ring,
+    .ai-ring::after,
+    .btn-ai,
+    .btn-ai::after,
+    .ai-chip {
+      animation: none;
+    }
   }
 
   /* Both button utilities own their radius (~8px, Origin/Robinhood-tight) and
@@ -608,6 +665,22 @@
 @keyframes ai-twinkle {
   0%, 100% { opacity: 0.85; transform: scale(1) rotate(0deg); }
   50%      { opacity: 1; transform: scale(1.14) rotate(12deg); }
+}
+/* Flowing "wave" — sweeps the rim gradient across and back. */
+@keyframes ai-wave {
+  0%, 100% { background-position: 0% 50%; }
+  50%      { background-position: 100% 50%; }
+}
+/* Breathing hue — the green glow fades in and out in place. Never hits 0, so a
+   faint green whisper always lingers; the peak is kept low to stay mostly white. */
+@keyframes ai-breathe {
+  0%, 100% { opacity: 0.05; }
+  50%      { opacity: 0.30; }
+}
+/* Same wave for the two-layer card+rim surfaces (card layer stays put). */
+@keyframes ai-wave-rim {
+  0%, 100% { background-position: 0 0, 0% 50%; }
+  50%      { background-position: 0 0, 100% 50%; }
 }
 
 @keyframes drift {

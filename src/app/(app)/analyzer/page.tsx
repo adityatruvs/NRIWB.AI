@@ -13,9 +13,8 @@ import {
   Plus,
   ShieldCheck,
   AlertTriangle,
-  Wallet,
-  Trash2,
 } from 'lucide-react'
+import Link from 'next/link'
 import { useCurrency } from '@/context/CurrencyContext'
 import { useAccounts } from '@/context/AccountsContext'
 import { useProfile } from '@/context/ProfileContext'
@@ -46,13 +45,19 @@ import {
   type RiskLevel,
 } from '@/lib/allocation'
 import { formatAmount } from '@/lib/currency'
-import { useBudget, BUDGET_COLORS, type BudgetCategory } from '@/context/BudgetContext'
+import { useBudget, BUDGET_COLORS } from '@/context/BudgetContext'
 
 /** Moderate long-run rate used until we have ≥3 months of tracked history. */
 const MODERATE_RATE = 0.07
 /** Minimum months of real net-worth history before we project from actuals. */
 const MIN_HISTORY_MONTHS = 3
 const END_AGE = 90
+/**
+ * Safe withdrawal rate (the "4% rule"): the share of the retirement pot you can
+ * draw each year and reasonably expect it to last. Drives both the retirement
+ * income figure and the drawdown phase of the projection.
+ */
+const SAFE_WITHDRAWAL_RATE = 0.04
 
 /** Annualized growth rate from a monthly net-worth series, clamped to a sane band. */
 function annualizedRate(history: number[]): number {
@@ -78,9 +83,15 @@ export default function AnalyzerPage() {
 
   const { user } = useUser()
   // Monthly income lives in the shared budget context, so it's connected
-  // everywhere (the projection here, the budget panel, and anywhere else).
-  const { income: monthlyIncome, setIncome, categories: budgetCategories } = useBudget()
-  const { goals } = useGoals()
+  // everywhere (the projection here and the dedicated Budget page). Income is
+  // edited on the Budget page now; here we just read it for the projection.
+  const {
+    income: monthlyIncome,
+    categories: budgetCategories,
+    updateCategory,
+    addCategory,
+  } = useBudget()
+  const { goals, addGoal, updateGoal } = useGoals()
 
   const buckets = useMemo(() => activeBuckets(includeHome), [includeHome])
   const recommended = useMemo(
@@ -151,6 +162,11 @@ export default function AnalyzerPage() {
     .filter((c) => /invest/i.test(c.label))
     .reduce((s, c) => s + (c.amount > 0 ? c.amount : 0), 0)
 
+  // Optional yearly step-up: each working year you invest this much % more than
+  // the year before (raises track income growth). 0 = a flat contribution.
+  const [contribGrowthPct, setContribGrowthPct] = useState(0)
+  const contribGrowth = contribGrowthPct / 100
+
   // Opt-in: subtract goal *costs* (education, travel — money that leaves your
   // wealth) from the curve at the year they're paid. Investment goals (property,
   // the retirement pot) convert wealth rather than spend it, so they never dip.
@@ -166,25 +182,166 @@ export default function AnalyzerPage() {
     [goals, age, currentYear],
   )
 
-  // Year-by-year cash-flow: grow the balance, add contributions, and (when the
-  // toggle is on) pay each cost goal in its year. A balance that drops below 0
-  // is a shortfall — we flag the age and clamp the plotted curve at 0.
+  // Year-by-year cash-flow with two phases:
+  //  • Accumulation (now → retirement): grow at the rate, add contributions.
+  //  • Drawdown (after retirement): stop contributing and withdraw a safe-
+  //    withdrawal income (4% of the pot at retirement) each year.
+  // (When the toggle is on, cost goals are also paid in their year.) A balance
+  // that drops below 0 is a shortfall — we flag the age and clamp the curve at 0.
   const projection = useMemo(() => {
     const raw: number[] = [investableUsd]
     let bal = investableUsd
     let shortfallAge: number | null = null
+    let balAtRetire = investableUsd
+    let annualWithdrawal = 0
+    let workedYears = 0 // how many contributing years so far (for the step-up)
     for (let t = age + 1; t <= END_AGE; t++) {
-      bal = bal * (1 + annualRate) + monthlyContribution * 12
+      bal = bal * (1 + annualRate)
+      if (t <= clampedRetire) {
+        // Still working: invest this year's contribution, stepped up each year.
+        bal += monthlyContribution * 12 * Math.pow(1 + contribGrowth, workedYears)
+        workedYears++
+      } else {
+        bal -= annualWithdrawal // retired: live off the safe-withdrawal income
+      }
       if (accountForGoals) {
         for (const o of goalOutflows) if (o.age === t) bal -= o.amount
+      }
+      // Lock in the retirement pot + the income it sustains the year we retire.
+      if (t === clampedRetire) {
+        balAtRetire = bal
+        annualWithdrawal = Math.max(0, balAtRetire * SAFE_WITHDRAWAL_RATE)
       }
       if (bal < 0 && shortfallAge === null) shortfallAge = t
       raw.push(bal)
     }
-    return { series: raw.map((v) => Math.max(0, v)), shortfallAge }
-  }, [age, investableUsd, annualRate, monthlyContribution, accountForGoals, goalOutflows])
+    return { series: raw.map((v) => Math.max(0, v)), shortfallAge, balAtRetire, annualWithdrawal }
+  }, [age, investableUsd, annualRate, monthlyContribution, contribGrowth, clampedRetire, accountForGoals, goalOutflows])
   const projSeries = projection.series
-  const valueAtRetire = projSeries[Math.max(0, Math.min(projSeries.length - 1, clampedRetire - age))]
+  const valueAtRetire = projection.balAtRetire
+  const retireIncomeAnnual = projection.annualWithdrawal
+
+  // The retirement target lives on the Retirement goal (shared state), so the
+  // amount set here and on the Goals page are one and the same. We edit the first
+  // retirement-category goal; if there isn't one yet, typing a target creates it.
+  const retireGoal = useMemo(() => goals.find((g) => g.category === 'retirement') ?? null, [goals])
+  const retireTarget = retireGoal?.targetUsd ?? 0
+
+  const setRetireTarget = useCallback(
+    (n: number) => {
+      const amt = Number.isFinite(n) && n > 0 ? Math.round(n) : 0
+      if (retireGoal?.id) {
+        const { id, ...rest } = retireGoal
+        updateGoal(id, { ...rest, targetUsd: amt })
+      } else if (amt > 0) {
+        addGoal({
+          name: 'Retirement',
+          category: 'retirement',
+          targetUsd: amt,
+          currentUsd: 0,
+          targetYear: currentYear + (clampedRetire - age),
+        })
+      }
+    },
+    [retireGoal, updateGoal, addGoal, currentYear, clampedRetire, age],
+  )
+
+  // ── Reconcile against the Retirement goal ──────────────────────────────────
+  // The projection answers "what will you have at retirement?"; the target above
+  // answers "what do you want?". Compare them at the chosen retirement age, and
+  // (when short) the extra monthly contribution that would close the gap.
+  const retireReconcile = useMemo(() => {
+    if (retireTarget <= 0) return null
+    const delta = valueAtRetire - retireTarget
+    const months = Math.max(0, (clampedRetire - age) * 12)
+    let extraMonthly = 0
+    if (delta < 0 && months > 0) {
+      const gap = -delta
+      const r = annualRate / 12
+      extraMonthly = r > 0 ? gap / ((Math.pow(1 + r, months) - 1) / r) : gap / months
+    }
+    return { target: retireTarget, delta, onTrack: delta >= 0, extraMonthly }
+  }, [retireTarget, valueAtRetire, clampedRetire, age, annualRate])
+
+  // ── AI assist: describe your retirement, fill age + target ──────────────────
+  // Grounded server-side in the numbers we already pull (savings, contribution,
+  // return) so it can convert an income wish via the 4% rule and flag feasibility.
+  const [retireAiInput, setRetireAiInput] = useState('')
+  const [retireAiLoading, setRetireAiLoading] = useState(false)
+  const [retireAiError, setRetireAiError] = useState('')
+  const [retireAiRationale, setRetireAiRationale] = useState('')
+
+  async function runRetirePlan() {
+    const description = retireAiInput.trim()
+    if (!description || retireAiLoading) return
+    setRetireAiLoading(true)
+    setRetireAiError('')
+    setRetireAiRationale('')
+    try {
+      const res = await fetch('/api/retirement/plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          description,
+          currentAge: age,
+          savingsUsd: investableUsd,
+          monthlyContribution,
+          expectedReturnPct: baseRate * 100, // the grounded account rate (pre-±)
+          safeWithdrawalPct: SAFE_WITHDRAWAL_RATE * 100,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok || !data.plan) throw new Error(data.error || 'Could not reach the assistant.')
+      const plan = data.plan as {
+        retireAge: number
+        targetUsd: number
+        expectedReturnPct: number
+        contribGrowthPct: number
+        rationale: string
+      }
+
+      const newAge = Math.min(END_AGE, Math.max(age + 1, plan.retireAge))
+      setRetireAge(newAge)
+      if (plan.targetUsd > 0) setRetireTarget(plan.targetUsd)
+
+      // Fill the return %/yr: nudge the ± adjustment so the rate hits the plan's.
+      const effRate = Math.min(0.4, Math.max(0, plan.expectedReturnPct / 100))
+      setRateAdjust(Math.round((effRate - baseRate) * 100) / 100)
+
+      // Fill the yearly contribution step-up.
+      const g = Math.min(0.25, Math.max(0, plan.contribGrowthPct / 100))
+      setContribGrowthPct(Math.round(g * 100))
+
+      // Solve the *initial* monthly investing needed to reach the target by the new
+      // age — as a growing annuity (contributions step up by g each year), matching
+      // the projection exactly — then write it to the budget's "Investments" line so
+      // the contributions figure fills too (the projection reads it back from there).
+      const years = Math.max(1, newAge - age)
+      const growth = Math.pow(1 + effRate, years)
+      const fvSavings = investableUsd * growth
+      let monthly = 0
+      if (plan.targetUsd > fvSavings) {
+        const k = (1 + g) / (1 + effRate)
+        const series = Math.abs(k - 1) < 1e-9 ? years : (Math.pow(k, years) - 1) / (k - 1)
+        // FV per $1/yr of initial contribution = (1+r)^(n-1) · Σ k^(t-1).
+        const factorAnnual = Math.pow(1 + effRate, years - 1) * series
+        monthly = Math.max(0, Math.round((plan.targetUsd - fvSavings) / factorAnnual / 12))
+      }
+      const investCat = budgetCategories.find((c) => /invest/i.test(c.label))
+      if (investCat) updateCategory(investCat.id, { amount: monthly })
+      else addCategory({ label: 'Investments', amount: monthly, color: BUDGET_COLORS[0] })
+
+      const contribNote =
+        monthly > 0
+          ? ` Set your investing to ${formatAmount(monthly, mode, rate)}/mo to reach it.`
+          : ' Your current savings alone reach it — no monthly investing needed.'
+      setRetireAiRationale((plan.rationale ?? '') + contribNote)
+    } catch (e) {
+      setRetireAiError(e instanceof Error ? e.message : 'Could not reach the assistant.')
+    } finally {
+      setRetireAiLoading(false)
+    }
+  }
 
   // The dragged bucket holds its value; every other bucket rebalances
   // proportionally so the total is always 100 — no bucket is ever "stuck".
@@ -463,8 +620,8 @@ export default function AnalyzerPage() {
         </Card>
       </Reveal>
 
-      {/* ── Projection + rebalance plan ─────────────────────────────────── */}
-      <Reveal className="grid gap-6 lg:grid-cols-2" delay={0.16}>
+      {/* ── Projection ──────────────────────────────────────────────────── */}
+      <Reveal delay={0.16}>
         {/* Projection — compounds the current balance to age 90, with a
             retirement marker. Switches to actual growth once ≥3 months tracked. */}
         <Card className="flex flex-col">
@@ -479,6 +636,48 @@ export default function AnalyzerPage() {
           />
           {hasHoldings ? (
             <div className="flex flex-1 flex-col gap-4">
+              {/* AI assist — describe your retirement; it sets age + target,
+                  grounded in your savings, contributions and expected return. */}
+              <div className="ai-ring p-2.5">
+                <div className="mb-1.5 flex items-center gap-1.5">
+                  <Sparkles size={13} className="text-brand" />
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-brand">
+                    Describe your retirement — AI sets it
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    value={retireAiInput}
+                    onChange={(e) => setRetireAiInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        runRetirePlan()
+                      }
+                    }}
+                    placeholder="e.g. retire at 65 with $10M at 10%/yr and 5% yearly contribution raises"
+                    className="w-full rounded-xl border border-input bg-card px-3 py-2 text-sm outline-none transition-all placeholder:text-muted-foreground/60 focus:border-brand/60 focus:ring-[3px] focus:ring-brand/12"
+                  />
+                  <button
+                    type="button"
+                    onClick={runRetirePlan}
+                    disabled={retireAiLoading || !retireAiInput.trim()}
+                    className="btn-primary inline-flex shrink-0 items-center gap-1 rounded-xl px-3 py-2 text-[12px] font-medium disabled:pointer-events-none disabled:opacity-50"
+                  >
+                    <Sparkles size={12} className={cn(retireAiLoading && 'animate-pulse')} />
+                    {retireAiLoading ? 'Thinking…' : 'Fill'}
+                  </button>
+                </div>
+                {retireAiError ? (
+                  <p className="mt-1.5 text-[11px] text-danger">{retireAiError}</p>
+                ) : retireAiRationale ? (
+                  <p className="mt-1.5 flex items-start gap-1 text-[11px] text-muted-foreground">
+                    <Sparkles size={11} className="mt-0.5 shrink-0 text-brand" />
+                    {retireAiRationale}
+                  </p>
+                ) : null}
+              </div>
+
               {!usingHistorical && (
                 <div className="flex items-start gap-2 rounded-xl border border-warning/25 bg-warning-muted/40 px-3.5 py-2.5 text-[12px] leading-snug">
                   <Info size={13} className="mt-0.5 shrink-0 text-warning" />
@@ -491,39 +690,72 @@ export default function AnalyzerPage() {
                 </div>
               )}
 
-              {/* Monthly income (optional) — feeds contributions + AI analysis */}
-              <div>
-                <div className="mb-1.5 flex items-center justify-between">
-                  <span className="eyebrow">Monthly income</span>
-                  <span className="text-[11px] text-muted-foreground">USD · optional</span>
-                </div>
-                <div className="relative">
-                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-                    $
+              {/* Contributions come from your budget — edit them there. */}
+              <Link
+                href="/budget"
+                className="group flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-muted/40 px-3.5 py-2.5 transition-colors hover:bg-accent/50"
+              >
+                <span className="min-w-0">
+                  {monthlyContribution > 0 ? (
+                    <span className="text-[12px] font-medium text-foreground">
+                      Investing <Money usd={monthlyContribution} className="tabular-nums" />/mo
+                      {monthlyIncome > 0 && (
+                        <span className="font-normal text-muted-foreground">
+                          {' '}· {Math.round((monthlyContribution / monthlyIncome) * 100)}% of income
+                        </span>
+                      )}
+                    </span>
+                  ) : (
+                    <span className="text-[12px] font-medium text-foreground">
+                      No monthly contributions yet
+                    </span>
+                  )}
+                  <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                    {monthlyContribution > 0
+                      ? 'From your budget — feeds this projection'
+                      : 'Add an “Investments” line in your budget'}
                   </span>
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    min={0}
-                    value={monthlyIncome || ''}
-                    onChange={(e) => setIncome(Number(e.target.value))}
-                    placeholder="e.g. 8000"
-                    className="w-full rounded-xl border border-input bg-card py-2.5 pl-7 pr-3 text-sm tabular-nums shadow-[inset_0_1px_2px_hsl(var(--shadow-color)/0.04)] outline-none transition-all placeholder:text-muted-foreground/60 focus:border-brand/60 focus:ring-[3px] focus:ring-brand/12"
-                  />
+                </span>
+                <ArrowUpRight
+                  size={15}
+                  className="shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5"
+                />
+              </Link>
+
+              {/* Yearly contribution step-up — "I'll invest X% more each year" */}
+              {monthlyContribution > 0 && (
+                <div className="flex items-center justify-between gap-2 rounded-xl border border-border/70 bg-muted/40 px-3.5 py-2.5">
+                  <span className="min-w-0">
+                    <span className="block text-[12px] font-medium text-foreground">
+                      Raise contributions yearly
+                    </span>
+                    <span className="block text-[11px] text-muted-foreground">
+                      {contribGrowthPct > 0
+                        ? `+${contribGrowthPct}%/yr — next year you invest ${formatAmount(
+                            monthlyContribution * (1 + contribGrowth),
+                            mode,
+                            rate,
+                          )}/mo`
+                        : 'Model a raise — invest more each year than the last'}
+                    </span>
+                  </span>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <Stepper
+                      icon={<Minus size={12} />}
+                      onClick={() => setContribGrowthPct((p) => Math.max(0, p - 1))}
+                      disabled={contribGrowthPct <= 0}
+                    />
+                    <span className="w-9 text-center text-sm font-semibold tabular-nums">
+                      {contribGrowthPct}%
+                    </span>
+                    <Stepper
+                      icon={<Plus size={12} />}
+                      onClick={() => setContribGrowthPct((p) => Math.min(25, p + 1))}
+                      disabled={contribGrowthPct >= 25}
+                    />
+                  </div>
                 </div>
-                {monthlyIncome > 0 && (
-                  <p className="mt-2 flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
-                    Investing{' '}
-                    <Money usd={monthlyContribution} className="tabular-nums font-medium text-foreground" />
-                    /mo
-                    {monthlyContribution > 0 ? (
-                      <> ({Math.round((monthlyContribution / monthlyIncome) * 100)}% of income) — from your budget →</>
-                    ) : (
-                      <> — add an &ldquo;Investments&rdquo; line in your budget →</>
-                    )}
-                  </p>
-                )}
-              </div>
+              )}
 
               {/* Retirement age */}
               <div>
@@ -545,6 +777,30 @@ export default function AnalyzerPage() {
                   className="allocation-range w-full"
                   style={{ ['--accent' as string]: 'var(--brand)' }}
                 />
+              </div>
+
+              {/* Retirement target ($) — the same Retirement goal as the Goals page */}
+              <div>
+                <div className="mb-1.5 flex items-center justify-between">
+                  <span className="eyebrow">Retirement target</span>
+                  <span className="text-[11px] text-muted-foreground">
+                    USD{retireGoal ? ' · shared with your goal' : ''}
+                  </span>
+                </div>
+                <div className="relative">
+                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+                    $
+                  </span>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={0}
+                    value={retireTarget || ''}
+                    onChange={(e) => setRetireTarget(Number(e.target.value))}
+                    placeholder="e.g. 2000000"
+                    className="w-full rounded-xl border border-input bg-card py-2.5 pl-7 pr-3 text-sm tabular-nums shadow-[inset_0_1px_2px_hsl(var(--shadow-color)/0.04)] outline-none transition-all placeholder:text-muted-foreground/60 focus:border-brand/60 focus:ring-[3px] focus:ring-brand/12"
+                  />
+                </div>
               </div>
 
               {/* Headline: projected value at the chosen retirement age */}
@@ -572,7 +828,71 @@ export default function AnalyzerPage() {
                     />
                   </div>
                 </div>
+                {/* What that pot actually buys you — a safe-withdrawal income. */}
+                {retireIncomeAnnual > 0 && (
+                  <p className="mt-2 text-[12px] text-muted-foreground">
+                    Supports about{' '}
+                    <Money usd={retireIncomeAnnual} className="font-semibold text-foreground" />/yr
+                    {' '}(<Money usd={retireIncomeAnnual / 12} />/mo) for life ·{' '}
+                    {(SAFE_WITHDRAWAL_RATE * 100).toFixed(0)}% rule
+                  </p>
+                )}
               </div>
+
+              {/* Reconcile against the Retirement goal */}
+              {retireReconcile && (
+                <div
+                  className={cn(
+                    'flex items-start gap-2 rounded-xl border px-3.5 py-2.5 text-[12px] leading-snug',
+                    retireReconcile.onTrack
+                      ? 'border-success/25 bg-success-muted/40'
+                      : 'border-warning/25 bg-warning-muted/40',
+                  )}
+                >
+                  {retireReconcile.onTrack ? (
+                    <ShieldCheck size={14} className="mt-0.5 shrink-0 text-success" />
+                  ) : (
+                    <AlertTriangle size={14} className="mt-0.5 shrink-0 text-warning" />
+                  )}
+                  <span className="text-muted-foreground">
+                    {retireReconcile.onTrack ? (
+                      <>
+                        <span className="font-medium text-foreground">On track for retirement</span> —
+                        projected <Money usd={valueAtRetire} className="font-medium text-foreground" /> at{' '}
+                        {clampedRetire} vs your{' '}
+                        <Money usd={retireReconcile.target} className="font-medium text-foreground" /> goal
+                        {retireReconcile.delta > 0 && (
+                          <> (<Money usd={retireReconcile.delta} className="font-medium text-success" /> ahead)</>
+                        )}
+                        .{' '}
+                        <Link href="/goals" className="font-medium text-foreground underline-offset-2 hover:underline">
+                          View goal
+                        </Link>
+                      </>
+                    ) : (
+                      <>
+                        <span className="font-medium text-foreground">
+                          Short by <Money usd={-retireReconcile.delta} className="text-warning" />
+                        </span>{' '}
+                        — projected <Money usd={valueAtRetire} className="font-medium text-foreground" /> at{' '}
+                        {clampedRetire} vs your{' '}
+                        <Money usd={retireReconcile.target} className="font-medium text-foreground" /> goal.
+                        {retireReconcile.extraMonthly > 0 && (
+                          <>
+                            {' '}Invest{' '}
+                            <Money usd={retireReconcile.extraMonthly} className="font-medium text-foreground" />/mo
+                            {' '}more to close it
+                          </>
+                        )}
+                        .{' '}
+                        <Link href="/budget" className="font-medium text-foreground underline-offset-2 hover:underline">
+                          Adjust budget
+                        </Link>
+                      </>
+                    )}
+                  </span>
+                </div>
+              )}
 
               {/* Opt-in: pay goal costs from the curve at the year they're due */}
               {goalOutflows.length > 0 && (
@@ -609,7 +929,7 @@ export default function AnalyzerPage() {
                 retireAge={clampedRetire}
                 series={projSeries}
                 format={(v) => formatAmount(v, mode, rate)}
-                markers={accountForGoals ? goalOutflows.map((o) => o.age) : []}
+                markers={accountForGoals ? goalOutflows : []}
               />
 
               {accountForGoals &&
@@ -630,8 +950,14 @@ export default function AnalyzerPage() {
                 ))}
 
               <p className="text-[11px] leading-snug text-muted-foreground/80">
-                Compounds your current balance{monthlyContribution > 0 ? ' plus monthly contributions' : ' with no new contributions'} at{' '}
-                {(annualRate * 100).toFixed(1)}%/yr to age {END_AGE}
+                Compounds your balance
+                {monthlyContribution > 0
+                  ? contribGrowthPct > 0
+                    ? ` plus contributions rising ${contribGrowthPct}%/yr`
+                    : ' plus contributions'
+                  : ''}{' '}
+                at {(annualRate * 100).toFixed(1)}%/yr until {clampedRetire}, then draws a{' '}
+                {(SAFE_WITHDRAWAL_RATE * 100).toFixed(0)}% income to age {END_AGE}
                 {accountForGoals ? ', less your goal costs' : ''}. Illustrative, not a guarantee.
               </p>
             </div>
@@ -639,9 +965,6 @@ export default function AnalyzerPage() {
             <EmptyHint />
           )}
         </Card>
-
-        {/* Monthly budget — where the income goes, with custom categories */}
-        <BudgetSection />
       </Reveal>
 
       {/* ── AI explanation ─────────────────────────────────────────────── */}
@@ -680,8 +1003,8 @@ function ProjectionChart({
   retireAge: number
   series: number[]
   format: (v: number) => string
-  /** Ages at which a goal cost is paid — drawn as faint vertical dip lines. */
-  markers?: number[]
+  /** Goal costs paid along the way — drawn as faint vertical lines you can hover. */
+  markers?: { age: number; name: string; amount: number }[]
 }) {
   const W = 600
   const H = 168
@@ -689,7 +1012,9 @@ function ProjectionChart({
   const padTop = 22
   const padBottom = 22
   const n = series.length
-  const max = series[n - 1] || 1
+  // The curve now peaks at retirement and declines through drawdown, so scale to
+  // the true max — not the final point (which is the leftover balance at 90).
+  const max = Math.max(1, ...series)
   const X = (i: number) => padX + (i / Math.max(1, n - 1)) * (W - 2 * padX)
   const Y = (v: number) => padTop + (1 - v / max) * (H - padTop - padBottom)
   const pts = series.map((v, i) => `${X(i).toFixed(1)},${Y(v).toFixed(1)}`)
@@ -709,6 +1034,8 @@ function ProjectionChart({
   const hx = hover !== null ? X(hover) : 0
   const hy = hover !== null ? Y(series[hover]) : 0
   const ttAbove = hy > 52
+  // Goal costs paid at the hovered age — shown by name in the tooltip.
+  const goalsHere = hover !== null ? markers.filter((m) => m.age === startAge + hover) : []
 
   return (
     <div
@@ -734,23 +1061,35 @@ function ProjectionChart({
           strokeLinejoin="round"
           vectorEffect="non-scaling-stroke"
         />
-        {/* goal-cost markers — where the curve dips to pay a cost goal */}
-        {markers.map((mAge) => {
-          const idx = mAge - startAge
+        {/* goal-cost markers — where the curve dips to pay a cost goal. Hover the
+            year to read which goal it is (see the tooltip below). */}
+        {markers.map((m) => {
+          const idx = m.age - startAge
           if (idx < 1 || idx > n - 1) return null
+          const active = hover !== null && startAge + hover === m.age
           return (
-            <line
-              key={mAge}
-              x1={X(idx)}
-              y1={padTop - 8}
-              x2={X(idx)}
-              y2={H - padBottom}
-              stroke="var(--warning)"
-              strokeWidth="1"
-              strokeDasharray="2 2"
-              opacity="0.5"
-              vectorEffect="non-scaling-stroke"
-            />
+            <g key={`${m.name}-${m.age}`}>
+              <line
+                x1={X(idx)}
+                y1={padTop - 8}
+                x2={X(idx)}
+                y2={H - padBottom}
+                stroke="var(--warning)"
+                strokeWidth="1"
+                strokeDasharray="2 2"
+                opacity={active ? 0.95 : 0.5}
+                vectorEffect="non-scaling-stroke"
+              />
+              {/* dot at the top so the marker reads as a labelled flag */}
+              <circle
+                cx={X(idx)}
+                cy={padTop - 8}
+                r={active ? 3.2 : 2.4}
+                fill="var(--warning)"
+                stroke="var(--card)"
+                strokeWidth="1"
+              />
+            </g>
           )
         })}
         {/* retirement marker */}
@@ -794,6 +1133,20 @@ function ProjectionChart({
           <div className="whitespace-nowrap rounded-lg border border-border/70 bg-popover px-2 py-1 text-center shadow-[0_4px_12px_-2px_hsl(var(--shadow-color)/0.15)]">
             <p className="text-[11px] font-semibold tabular-nums">{format(series[hover])}</p>
             <p className="text-[9px] text-muted-foreground">age {startAge + hover}</p>
+            {goalsHere.length > 0 && (
+              <div className="mt-1 space-y-0.5 border-t border-border/60 pt-1 text-left">
+                {goalsHere.map((g) => (
+                  <p key={g.name} className="flex items-center gap-1 text-[10px]">
+                    <span
+                      className="size-1.5 shrink-0 rounded-full"
+                      style={{ background: 'var(--warning)' }}
+                    />
+                    <span className="font-medium text-foreground">{g.name}</span>
+                    <span className="tabular-nums text-warning">−{format(g.amount)}</span>
+                  </p>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1017,225 +1370,6 @@ function Stepper({
     >
       {icon}
     </button>
-  )
-}
-
-/* ── Monthly budget panel ─────────────────────────────────────────────────── */
-
-function BudgetSection() {
-  const { income, categories, addCategory, updateCategory, removeCategory } = useBudget()
-  const { rate, mode } = useCurrency()
-  const fmt = (v: number) => formatAmount(v, mode, rate)
-
-  const spent = categories.reduce((s, c) => s + (c.amount > 0 ? c.amount : 0), 0)
-  const remaining = income - spent
-  const denom = Math.max(income, spent, 1)
-
-  // Focus + select the freshly-added row so the user can type a name immediately.
-  const lastInputRef = useRef<HTMLInputElement>(null)
-  const [addTick, setAddTick] = useState(0)
-  useEffect(() => {
-    if (addTick) lastInputRef.current?.select()
-  }, [addTick])
-
-  function addBlank() {
-    addCategory({
-      label: 'New category',
-      amount: 0,
-      color: BUDGET_COLORS[categories.length % BUDGET_COLORS.length],
-    })
-    setAddTick((t) => t + 1)
-  }
-
-  return (
-    <Card className="flex flex-col">
-      <CardHeader
-        title="Monthly budget"
-        subtitle="Where your income goes — name it, set the amount, pick a colour"
-        icon={<Wallet size={15} />}
-        action={
-          <button
-            onClick={addBlank}
-            className="btn-ghost inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-medium"
-          >
-            <Plus size={13} />
-            Add
-          </button>
-        }
-      />
-
-      {income <= 0 ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-2 py-8 text-center">
-          <span className="flex size-10 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
-            <Wallet size={18} />
-          </span>
-          <p className="max-w-[15rem] text-[13px] text-muted-foreground">
-            Add your monthly income on the left, then map out where it goes.
-          </p>
-        </div>
-      ) : (
-        <div className="flex flex-1 flex-col gap-3">
-          {/* summary */}
-          <div className="flex flex-wrap items-center justify-between gap-2 text-[13px]">
-            <span className="text-muted-foreground">
-              Allocated <span className="font-medium tabular-nums text-foreground">{fmt(spent)}</span> of{' '}
-              <span className="font-medium tabular-nums text-foreground">{fmt(income)}</span>
-            </span>
-            <span
-              className={cn(
-                'rounded-full px-2 py-0.5 text-[12px] font-semibold tabular-nums ring-1',
-                remaining < 0
-                  ? 'bg-danger-muted/70 text-danger ring-danger/20'
-                  : 'bg-success-muted/70 text-success ring-success/20',
-              )}
-            >
-              {remaining < 0 ? `Over ${fmt(-remaining)}` : `${fmt(remaining)} left`}
-            </span>
-          </div>
-
-          {/* overview stacked bar */}
-          <div className="flex h-2.5 w-full gap-0.5 overflow-hidden rounded-full bg-muted">
-            {categories
-              .filter((c) => c.amount > 0)
-              .map((c) => (
-                <div
-                  key={c.id}
-                  style={{ width: `${(c.amount / denom) * 100}%`, background: c.color }}
-                  title={`${c.label}: ${fmt(c.amount)}`}
-                />
-              ))}
-          </div>
-
-          {/* editable category rows */}
-          <div className="-mx-1.5 mt-0.5 flex flex-col">
-            {categories.map((c, i) => (
-              <BudgetRow
-                key={c.id}
-                cat={c}
-                income={income}
-                inForecast={/invest/i.test(c.label)}
-                inputRef={i === categories.length - 1 ? lastInputRef : undefined}
-                onChange={(patch) => updateCategory(c.id, patch)}
-                onRemove={() => removeCategory(c.id)}
-              />
-            ))}
-            {categories.length === 0 && (
-              <p className="py-3 text-center text-[12px] text-muted-foreground">
-                No categories yet — click Add to start.
-              </p>
-            )}
-          </div>
-        </div>
-      )}
-    </Card>
-  )
-}
-
-function BudgetRow({
-  cat,
-  income,
-  inForecast,
-  inputRef,
-  onChange,
-  onRemove,
-}: {
-  cat: BudgetCategory
-  income: number
-  inForecast: boolean
-  inputRef?: React.Ref<HTMLInputElement>
-  onChange: (patch: Partial<BudgetCategory>) => void
-  onRemove: () => void
-}) {
-  const [pickColor, setPickColor] = useState(false)
-  const share = income > 0 ? Math.min(1, (cat.amount > 0 ? cat.amount : 0) / income) : 0
-  return (
-    <div className="group rounded-lg px-1.5 py-2 transition-colors hover:bg-accent/40">
-      <div className="flex items-center gap-2.5">
-        {/* colour swatch + picker */}
-        <div className="relative shrink-0">
-          <button
-            onClick={() => setPickColor((s) => !s)}
-            className="size-4 rounded-[5px] ring-1 ring-border transition-transform hover:scale-110"
-            style={{ background: cat.color }}
-            aria-label="Change colour"
-          />
-          {pickColor && (
-            <>
-              <div className="fixed inset-0 z-10" onClick={() => setPickColor(false)} />
-              <div className="absolute left-0 top-6 z-20 flex w-[7.5rem] flex-wrap gap-1 rounded-lg border border-border bg-popover p-1.5 shadow-[0_8px_24px_-8px_hsl(var(--shadow-color)/0.3)]">
-                {BUDGET_COLORS.map((col) => (
-                  <button
-                    key={col}
-                    onClick={() => {
-                      onChange({ color: col })
-                      setPickColor(false)
-                    }}
-                    className="size-5 rounded-md ring-1 ring-border transition-transform hover:scale-110"
-                    style={{ background: col }}
-                    aria-label="Pick colour"
-                  />
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-
-        <input
-          ref={inputRef}
-          value={cat.label}
-          onChange={(e) => onChange({ label: e.target.value })}
-          className="min-w-0 flex-1 rounded bg-transparent px-1 py-0.5 text-[13px] font-medium outline-none focus:bg-accent/60"
-        />
-
-        {inForecast && (
-          <span
-            className="hidden shrink-0 items-center gap-0.5 rounded-full bg-success-muted/70 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-success ring-1 ring-success/20 sm:inline-flex"
-            title="Counted as monthly investing in your projection"
-          >
-            <ArrowUpRight size={9} /> forecast
-          </span>
-        )}
-
-        <span className="w-8 shrink-0 text-right text-[11px] tabular-nums text-muted-foreground">
-          {Math.round(share * 100)}%
-        </span>
-
-        <div className="relative shrink-0">
-          <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[11px] text-muted-foreground">
-            $
-          </span>
-          <input
-            type="number"
-            inputMode="numeric"
-            min={0}
-            value={cat.amount || ''}
-            onChange={(e) => onChange({ amount: Math.max(0, Number(e.target.value) || 0) })}
-            placeholder="0"
-            className="w-[5.5rem] rounded-md border border-border/60 bg-card py-1 pl-5 pr-2 text-right text-[12px] tabular-nums outline-none transition-colors focus:border-brand/60"
-          />
-        </div>
-
-        <button
-          onClick={onRemove}
-          className="shrink-0 text-muted-foreground/40 opacity-0 transition-opacity hover:text-danger group-hover:opacity-100"
-          aria-label="Remove category"
-        >
-          <Trash2 size={13} />
-        </button>
-      </div>
-
-      {/* per-row share-of-income bar */}
-      <div className="ml-[1.625rem] mt-1.5 h-1 overflow-hidden rounded-full bg-muted/70">
-        <div
-          className="h-full rounded-full"
-          style={{
-            width: `${share * 100}%`,
-            background: cat.color,
-            transition: 'width 0.4s cubic-bezier(0.16,1,0.3,1)',
-          }}
-        />
-      </div>
-    </div>
   )
 }
 

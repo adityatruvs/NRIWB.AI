@@ -9,6 +9,7 @@ import {
   X,
   AlertTriangle,
   TrendingUp,
+  Sparkles,
   Flag,
   PiggyBank,
   GraduationCap,
@@ -32,6 +33,7 @@ import {
   goalProgress,
   goalRemaining,
   goalMonthlyNeeded,
+  goalExpectedReturn,
   goalKind,
   defaultGoalKind,
   resolveGoal,
@@ -172,6 +174,7 @@ export default function GoalsPage() {
               key={g.id}
               goal={g}
               funded={fundedById.get(g.id) ?? g.currentUsd}
+              holdings={holdings}
               mode={mode}
               rate={rate}
               currentYear={currentYear}
@@ -185,7 +188,7 @@ export default function GoalsPage() {
 
       <p className="px-1 text-center text-[12px] leading-relaxed text-muted-foreground/80">
         Monthly estimates credit what you&apos;ve already saved and assume it plus your contributions
-        grow ~6%/yr — a planning guide, not financial advice.
+        grow at your accounts&apos; own expected rates — a planning guide, not financial advice.
       </p>
 
       {adding && (
@@ -236,6 +239,7 @@ export default function GoalsPage() {
 function GoalCard({
   goal,
   funded,
+  holdings,
   mode,
   rate,
   currentYear,
@@ -246,6 +250,8 @@ function GoalCard({
   goal: Goal
   /** Funded amount resolved from linked accounts (falls back to manual). */
   funded: number
+  /** All holdings — used to grow the goal at its accounts' real expected rate. */
+  holdings: Holding[]
   mode: ReturnType<typeof useCurrency>['mode']
   rate: number
   currentYear: number
@@ -259,7 +265,9 @@ function GoalCard({
   const rg = { ...goal, currentUsd: funded }
   const pct = goalProgress(rg)
   const Icon = CATEGORY_ICON[goal.category]
-  const monthly = goalMonthlyNeeded(rg, currentYear)
+  // Grow the goal at the expected return of the accounts funding it (linked →
+  // those accounts; else the whole portfolio), not a flat guess.
+  const monthly = goalMonthlyNeeded(rg, currentYear, goalExpectedReturn(goal, holdings, rate))
   const yearsLeft = goal.targetYear - currentYear
   const reached = funded >= goal.targetUsd
   const linkedCount = goal.linkedAccountIds?.length ?? 0
@@ -283,7 +291,12 @@ function GoalCard({
             {GOAL_CATEGORY_META[goal.category].label}
             <span
               className="rounded px-1 py-px text-[10px] font-medium capitalize"
-              style={{ background: 'color-mix(in oklch, var(--foreground) 7%, transparent)' }}
+              style={{
+                background: `color-mix(in oklch, ${
+                  goalKind(goal) === 'cost' ? 'var(--danger)' : 'var(--success)'
+                } 12%, transparent)`,
+                color: goalKind(goal) === 'cost' ? 'var(--danger)' : 'var(--success)',
+              }}
               title={
                 goalKind(goal) === 'cost'
                   ? 'Cost — dips your projection the year it’s paid'
@@ -409,6 +422,51 @@ function GoalDialog({
   const [linkedIds, setLinkedIds] = useState<string[]>(initial?.linkedAccountIds ?? [])
   useEscape(onClose)
 
+  // AI assist: describe the goal in plain language and let Claude fill the form —
+  // it infers the amount and the *timing* (e.g. a child's age → their college year).
+  const { countryOfResidence } = useProfile()
+  const [aiInput, setAiInput] = useState('')
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiError, setAiError] = useState('')
+  const [aiRationale, setAiRationale] = useState('')
+  const minYear = currentYear
+  const maxYear = currentYear + 50
+
+  async function runSuggest() {
+    const description = aiInput.trim()
+    if (!description || aiLoading) return
+    setAiLoading(true)
+    setAiError('')
+    setAiRationale('')
+    try {
+      const res = await fetch('/api/goals/suggest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description, currentYear, age, country: countryOfResidence }),
+      })
+      const data = await res.json()
+      if (!res.ok || !data.suggestion) throw new Error(data.error || 'Could not reach the assistant.')
+      const s = data.suggestion as {
+        name: string
+        category: GoalCategory
+        targetUsd: number
+        targetYear: number
+        kind: GoalKind
+        rationale: string
+      }
+      setName(s.name)
+      setCategory(s.category)
+      setKind(s.kind)
+      setTarget(s.targetUsd ? String(s.targetUsd) : '')
+      setYear(Math.min(maxYear, Math.max(minYear, s.targetYear)))
+      setAiRationale(s.rationale ?? '')
+    } catch (e) {
+      setAiError(e instanceof Error ? e.message : 'Could not reach the assistant.')
+    } finally {
+      setAiLoading(false)
+    }
+  }
+
   const linked = linkedIds.length > 0
   const linkedUsd = useMemo(
     () =>
@@ -445,11 +503,11 @@ function GoalDialog({
       onClick={onClose}
     >
       <div
-        className="card-surface relative w-full max-w-md overflow-hidden p-6 animate-scale-in"
+        className="card-surface relative flex max-h-[calc(100dvh-2rem)] w-full max-w-md flex-col overflow-hidden animate-scale-in"
         onClick={(e) => e.stopPropagation()}
       >
         <span aria-hidden className="gradient-hairline absolute inset-x-0 top-0" />
-        <div className="mb-5 flex items-center justify-between">
+        <div className="flex shrink-0 items-center justify-between px-6 pb-4 pt-6">
           <div>
             <h2 className="font-serif text-base font-medium tracking-tight">
               {isEdit ? 'Edit goal' : 'Add a goal'}
@@ -467,7 +525,48 @@ function GoalDialog({
           </button>
         </div>
 
-        <div className="flex flex-col gap-3.5">
+        <div className="flex flex-1 flex-col gap-3.5 overflow-y-auto px-6 pb-2">
+          {/* AI assist — describe it, let Claude fill the amount + timing */}
+          <div className="ai-ring p-2.5">
+            <div className="mb-1.5 flex items-center gap-1.5">
+              <Sparkles size={13} className="text-brand" />
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-brand">
+                Describe it — AI fills the rest
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <input
+                value={aiInput}
+                onChange={(e) => setAiInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    runSuggest()
+                  }
+                }}
+                placeholder="e.g. fund my 8-year-old's US college"
+                className={cn(inputCls, 'flex-1')}
+              />
+              <button
+                type="button"
+                onClick={runSuggest}
+                disabled={aiLoading || !aiInput.trim()}
+                className="btn-primary inline-flex shrink-0 items-center gap-1 rounded-xl px-3 py-2 text-[12px] font-medium disabled:pointer-events-none disabled:opacity-50"
+              >
+                <Sparkles size={12} className={cn(aiLoading && 'animate-pulse')} />
+                {aiLoading ? 'Thinking…' : 'Fill'}
+              </button>
+            </div>
+            {aiError ? (
+              <p className="mt-1.5 text-[11px] text-danger">{aiError}</p>
+            ) : aiRationale ? (
+              <p className="mt-1.5 flex items-start gap-1 text-[11px] text-muted-foreground">
+                <Sparkles size={11} className="mt-0.5 shrink-0 text-brand" />
+                {aiRationale} — review and adjust below.
+              </p>
+            ) : null}
+          </div>
+
           <Field label="Goal name">
             <input
               value={name}
@@ -517,29 +616,41 @@ function GoalDialog({
 
           <Field label="Type — affects your projection">
             <div className="grid grid-cols-2 gap-1.5">
-              {(['cost', 'investment'] as GoalKind[]).map((k) => (
-                <button
-                  key={k}
-                  type="button"
-                  onClick={() => setKind(k)}
-                  className={cn(
-                    'rounded-xl border px-3 py-2 text-left transition-all',
-                    kind === k
-                      ? 'border-transparent text-foreground shadow-sm ring-1 ring-border'
-                      : 'border-border/70 text-muted-foreground hover:bg-accent/50',
-                  )}
-                  style={
-                    kind === k
-                      ? { background: 'color-mix(in oklch, var(--foreground) 5%, var(--card))' }
-                      : undefined
-                  }
-                >
-                  <span className="block text-[12px] font-medium capitalize">{k}</span>
-                  <span className="block text-[11px] text-muted-foreground">
-                    {k === 'cost' ? 'Spent — dips projection' : 'Stays your wealth'}
-                  </span>
-                </button>
-              ))}
+              {(['cost', 'investment'] as GoalKind[]).map((k) => {
+                const active = kind === k
+                const accent = k === 'cost' ? 'var(--danger)' : 'var(--success)'
+                return (
+                  <button
+                    key={k}
+                    type="button"
+                    onClick={() => setKind(k)}
+                    className={cn(
+                      'rounded-xl border px-3 py-2 text-left transition-all',
+                      active
+                        ? 'border-transparent shadow-sm'
+                        : 'border-border/70 text-muted-foreground hover:bg-accent/50',
+                    )}
+                    style={
+                      active
+                        ? {
+                            background: `color-mix(in oklch, ${accent} 10%, var(--card))`,
+                            boxShadow: `inset 0 0 0 1px color-mix(in oklch, ${accent} 35%, transparent)`,
+                          }
+                        : undefined
+                    }
+                  >
+                    <span
+                      className="block text-[12px] font-medium capitalize"
+                      style={active ? { color: accent } : undefined}
+                    >
+                      {k}
+                    </span>
+                    <span className="block text-[11px] text-muted-foreground">
+                      {k === 'cost' ? 'Spent — dips projection' : 'Stays your wealth'}
+                    </span>
+                  </button>
+                )
+              })}
             </div>
           </Field>
 
@@ -653,7 +764,7 @@ function GoalDialog({
           </Field>
         </div>
 
-        <div className="mt-6 flex justify-end gap-2">
+        <div className="flex shrink-0 justify-end gap-2 border-t border-border/60 px-6 py-4">
           <button
             onClick={onClose}
             className="rounded-xl px-3.5 py-2 text-[13px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"

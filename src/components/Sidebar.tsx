@@ -11,6 +11,7 @@ import {
   ShieldCheck,
   CalendarClock,
   Target,
+  Banknote,
   PanelLeftClose,
   PanelLeftOpen,
   ChevronDown,
@@ -34,9 +35,10 @@ const PRIMARY: NavItem[] = [
 ]
 
 const SECONDARY: NavItem[] = [
+  { href: '/budget', label: 'Budget', icon: Banknote },
+  { href: '/goals', label: 'Goals', icon: Target },
   { href: '/', label: 'Compliance', icon: ShieldCheck },
   { href: '/', label: 'Deadlines', icon: CalendarClock },
-  { href: '/goals', label: 'Goals', icon: Target },
 ]
 
 interface NavGroupDef {
