@@ -167,8 +167,10 @@ export function netWorth(holdings: Holding[], rate: number): NetWorth {
   }
   const totalUsd = usUsd + inUsd
   const base = Math.max(usUsd, 0) + Math.max(inUsd, 0)
+  // With no assets, both splits are 0 — never 100% India (100 − 0) as before.
   const usPct = base > 0 ? Math.round((Math.max(usUsd, 0) / base) * 100) : 0
-  return { totalUsd, usUsd, inUsd, usPct, inPct: 100 - usPct, assetsUsd, liabilitiesUsd }
+  const inPct = base > 0 ? 100 - usPct : 0
+  return { totalUsd, usUsd, inUsd, usPct, inPct, assetsUsd, liabilitiesUsd }
 }
 
 /* ── Asset-class grouping ─────────────────────────────────────────────────── */

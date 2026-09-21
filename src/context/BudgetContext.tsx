@@ -1,6 +1,8 @@
 'use client'
 
 import { createContext, useContext, useEffect, useRef, useState } from 'react'
+import { useUser } from '@clerk/nextjs'
+import { useAccounts } from '@/context/AccountsContext'
 
 export interface BudgetCategory {
   id: string
@@ -34,6 +36,9 @@ interface BudgetContextValue {
 
 const BudgetContext = createContext<BudgetContextValue | null>(null)
 
+// Starter category labels (all $0 — a template, not fabricated spend). Shown in
+// demo mode; real users start from this same empty template but their edits are
+// saved per user.
 const SEED: BudgetCategory[] = [
   { id: 'seed-rent', label: 'Rent / Mortgage', amount: 0, color: BUDGET_COLORS[1] },
   { id: 'seed-invest', label: 'Investments', amount: 0, color: BUDGET_COLORS[0] },
@@ -41,40 +46,67 @@ const SEED: BudgetCategory[] = [
   { id: 'seed-shopping', label: 'Shopping', amount: 0, color: BUDGET_COLORS[2] },
 ]
 
+// Persisted PER USER so one person's budget never surfaces under another sign-in.
+const budgetKeyFor = (userId: string) => `nriwb:budget:${userId}`
+// Pre-scoping keys — cleared on mount so stale globals can't leak across users.
+const LEGACY_BUDGET_KEY = 'nriwb:budget'
+const LEGACY_INCOME_KEY = 'nriwb:monthly-income'
+
 export function BudgetProvider({ children }: { children: React.ReactNode }) {
+  const { demo } = useAccounts()
+  const { isLoaded, user } = useUser()
+  const userId = user?.id ?? null
+
   const [income, setIncomeState] = useState(0)
   const [categories, setCategories] = useState<BudgetCategory[]>(SEED)
 
-  // Persist so the budget + income survive reloads and stay consistent across
-  // every page. Start from the seed (SSR-safe), then hydrate after mount.
+  // Suppresses the persist effect during the load/hydration swap.
   const persistReady = useRef(false)
+
+  // Load whenever the user or demo mode changes.
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem('nriwb:budget')
-      if (raw) {
-        const parsed = JSON.parse(raw) as { income?: number; categories?: BudgetCategory[] }
-        if (typeof parsed.income === 'number') setIncomeState(parsed.income)
-        if (Array.isArray(parsed.categories)) setCategories(parsed.categories)
-      } else {
-        // Migrate the standalone income the analyzer used to store.
-        const legacy = localStorage.getItem('nriwb:monthly-income')
-        if (legacy) setIncomeState(Number(legacy) || 0)
-      }
-    } catch {
-      /* ignore */
+    if (!isLoaded) return
+
+    // Drop pre-scoping globals so they can never bleed across users.
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem(LEGACY_BUDGET_KEY)
+      localStorage.removeItem(LEGACY_INCOME_KEY)
     }
-  }, [])
+
+    persistReady.current = false // the upcoming state set is hydration, not a user edit
+
+    // Demo and real both start from the same $0 template; only real users persist.
+    if (demo || !userId) {
+      setIncomeState(0)
+      setCategories(SEED)
+      return
+    }
+    try {
+      const raw = localStorage.getItem(budgetKeyFor(userId))
+      const parsed = raw
+        ? (JSON.parse(raw) as { income?: number; categories?: BudgetCategory[] })
+        : null
+      setIncomeState(typeof parsed?.income === 'number' ? parsed.income : 0)
+      setCategories(Array.isArray(parsed?.categories) ? parsed.categories : SEED)
+    } catch {
+      setIncomeState(0)
+      setCategories(SEED)
+    }
+  }, [isLoaded, userId, demo])
+
+  // Persist real users' budget to their scoped key. Never persist in demo mode.
   useEffect(() => {
     if (!persistReady.current) {
       persistReady.current = true
       return
     }
+    if (demo || !userId) return
     try {
-      localStorage.setItem('nriwb:budget', JSON.stringify({ income, categories }))
+      localStorage.setItem(budgetKeyFor(userId), JSON.stringify({ income, categories }))
     } catch {
       /* ignore */
     }
-  }, [income, categories])
+  }, [income, categories, demo, userId])
 
   const value: BudgetContextValue = {
     income,

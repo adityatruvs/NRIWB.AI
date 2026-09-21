@@ -59,7 +59,7 @@ function greetingForHour(h: number): string {
 
 export default function DashboardPage() {
   const { mode, rate } = useCurrency()
-  const { holdings, addLinked } = useAccounts()
+  const { holdings, addLinked, demo } = useAccounts()
   const { goals } = useGoals()
   const { age: profileAge } = useProfile()
   const { user } = useUser()
@@ -134,19 +134,28 @@ export default function DashboardPage() {
   const nw = netWorth(holdings, rate)
   const heroUsd = filter === 'us' ? nw.usUsd : filter === 'in' ? nw.inUsd : nw.totalUsd
 
-  // Rescale the history so the line ends exactly at whatever's on screen.
+  // The 12-month history is curated demo data. Demo mode rescales it to end at
+  // the on-screen value; real users have no balance history yet, so show a flat
+  // line at their current net worth rather than invent a trend (and hide the
+  // fabricated "this month" delta below).
   const lastHist = NET_WORTH_HISTORY[NET_WORTH_HISTORY.length - 1].usd
-  const series = NET_WORTH_HISTORY.map((h) => (h.usd / lastHist) * heroUsd)
-  const monthDelta = series[series.length - 1] - series[series.length - 2]
-  const monthPct = (monthDelta / series[series.length - 2]) * 100
+  const series = demo
+    ? NET_WORTH_HISTORY.map((h) => (h.usd / lastHist) * heroUsd)
+    : NET_WORTH_HISTORY.map(() => heroUsd)
+  const prevMonth = series[series.length - 2]
+  const monthDelta = series[series.length - 1] - prevMonth
+  const monthPct = prevMonth ? (monthDelta / prevMonth) * 100 : 0
 
   const fbar = fbarStatus(holdings, rate)
   const pfics = pficHoldings(holdings)
   const compliance = complianceItems(holdings, rate)
   const assets = byAssetClass(holdings, rate)
 
-  const residencyPct = RESIDENCY.daysInIndia / RESIDENCY.limit
-  const daysLeft = RESIDENCY.limit - RESIDENCY.daysInIndia
+  // Residency day-count is curated demo data — there's no live day tracker yet,
+  // so real users see 0 (never a fabricated 134) until they log India days.
+  const residencyDays = demo ? RESIDENCY.daysInIndia : 0
+  const residencyPct = residencyDays / RESIDENCY.limit
+  const daysLeft = RESIDENCY.limit - residencyDays
   const driftDelta = nw.inPct - TARGET_INDIA_PCT
 
   return (
@@ -159,10 +168,12 @@ export default function DashboardPage() {
           </h1>
           <p className="mt-1 flex items-center gap-2 text-[15px] text-muted-foreground">
             Here&apos;s your cross-border picture
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-success-muted/70 px-2 py-0.5 text-[11px] font-medium text-success">
-              <span className="size-1 rounded-full bg-success" />
-              Synced just now
-            </span>
+            {holdings.length > 0 && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-success-muted/70 px-2 py-0.5 text-[11px] font-medium text-success">
+                <span className="size-1 rounded-full bg-success" />
+                Synced just now
+              </span>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -220,22 +231,26 @@ export default function DashboardPage() {
                 usd={heroUsd}
                 className="block tabular-nums text-[3.4rem] font-semibold leading-none tracking-tighter tabular-nums"
               />
-              <div className="flex flex-col gap-1">
-                <span
-                  className={cn(
-                    'inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold ring-1',
-                    monthDelta >= 0
-                      ? 'bg-success-muted/80 text-success ring-success/20'
-                      : 'bg-danger-muted/80 text-danger ring-danger/20',
-                  )}
-                >
-                  <TrendingUp size={12} className={monthDelta < 0 ? 'rotate-180' : ''} />
-                  {monthDelta >= 0 ? '+' : ''}
-                  {formatUSD(Math.abs(monthDelta))} ({monthPct >= 0 ? '+' : ''}
-                  {monthPct.toFixed(1)}%)
-                </span>
-                <span className="pl-1 text-xs text-muted-foreground">this month</span>
-              </div>
+              {/* The month-over-month delta is only real in demo mode (curated
+                  history). Real users have no prior month yet — don't fake one. */}
+              {demo && (
+                <div className="flex flex-col gap-1">
+                  <span
+                    className={cn(
+                      'inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold ring-1',
+                      monthDelta >= 0
+                        ? 'bg-success-muted/80 text-success ring-success/20'
+                        : 'bg-danger-muted/80 text-danger ring-danger/20',
+                    )}
+                  >
+                    <TrendingUp size={12} className={monthDelta < 0 ? 'rotate-180' : ''} />
+                    {monthDelta >= 0 ? '+' : ''}
+                    {formatUSD(Math.abs(monthDelta))} ({monthPct >= 0 ? '+' : ''}
+                    {monthPct.toFixed(1)}%)
+                  </span>
+                  <span className="pl-1 text-xs text-muted-foreground">this month</span>
+                </div>
+              )}
             </div>
 
             {nw.liabilitiesUsd > 0 && filter === 'all' && (
@@ -313,7 +328,7 @@ export default function DashboardPage() {
                 />
               </div>
               <p className="mt-2 text-[13px] text-muted-foreground">
-                12-month trend · 1 USD = ₹{rate.toFixed(2)}
+                {demo ? '12-month trend' : 'Trend builds as balances are tracked'} · 1 USD = ₹{rate.toFixed(2)}
               </p>
             </div>
           </div>
@@ -348,14 +363,18 @@ export default function DashboardPage() {
             }
           />
           <div className="flex flex-1 flex-col gap-1.5">
-            {aiCompliance && aiCompliance.length === 0 ? (
+            {holdings.length === 0 || (aiCompliance && aiCompliance.length === 0) ? (
               <div className="flex flex-1 flex-col items-center justify-center gap-2 py-6 text-center">
                 <span className="flex size-9 items-center justify-center rounded-full bg-success-muted text-success">
                   <CheckCircle2 size={18} />
                 </span>
-                <p className="text-[13px] font-medium">You&apos;re all clear</p>
+                <p className="text-[13px] font-medium">
+                  {holdings.length === 0 ? 'Nothing to report yet' : "You're all clear"}
+                </p>
                 <p className="max-w-[15rem] text-xs text-muted-foreground">
-                  Nothing needs your attention right now across the US &amp; India.
+                  {holdings.length === 0
+                    ? 'Add your accounts and we’ll flag any US ↔ India filing obligations here.'
+                    : 'Nothing needs your attention right now across the US & India.'}
                 </p>
               </div>
             ) : (
@@ -366,22 +385,24 @@ export default function DashboardPage() {
               ))
             )}
           </div>
-          <div className="mt-4 rounded-xl border border-border bg-muted/50 px-3.5 py-3">
-            <p className="text-xs leading-relaxed text-muted-foreground">
-              <Sparkles size={12} className="mb-0.5 mr-1 inline text-muted-foreground" />
-              {pfics.length > 0 ? (
-                <>
-                  <span className="font-medium text-foreground">{pfics.length} India mutual fund{pfics.length > 1 ? 's' : ''}</span>{' '}
-                  need Form 8621.{' '}
-                </>
-              ) : (
-                <>You&apos;re {Math.abs(driftDelta)} pts {driftDelta < 0 ? 'below' : 'above'} your India target. </>
-              )}
-              <Link href="/copilot" className="font-medium text-foreground underline-offset-2 hover:underline">
-                Ask Copilot how to handle it →
-              </Link>
-            </p>
-          </div>
+          {holdings.length > 0 && (
+            <div className="mt-4 rounded-xl border border-border bg-muted/50 px-3.5 py-3">
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                <Sparkles size={12} className="mb-0.5 mr-1 inline text-muted-foreground" />
+                {pfics.length > 0 ? (
+                  <>
+                    <span className="font-medium text-foreground">{pfics.length} India mutual fund{pfics.length > 1 ? 's' : ''}</span>{' '}
+                    need Form 8621.{' '}
+                  </>
+                ) : (
+                  <>You&apos;re {Math.abs(driftDelta)} pts {driftDelta < 0 ? 'below' : 'above'} your India target. </>
+                )}
+                <Link href="/copilot" className="font-medium text-foreground underline-offset-2 hover:underline">
+                  Ask Copilot how to handle it →
+                </Link>
+              </p>
+            </div>
+          )}
         </Card>
       </Reveal>
 
@@ -413,7 +434,7 @@ export default function DashboardPage() {
         />
         <KpiCard
           label="India Residency"
-          value={`${RESIDENCY.daysInIndia} days`}
+          value={`${residencyDays} days`}
           chip={{
             text: `${daysLeft} left`,
             tone: residencyPct > 0.85 ? 'danger' : residencyPct > 0.6 ? 'warning' : 'success',
@@ -426,7 +447,7 @@ export default function DashboardPage() {
           }}
           sub={
             <>
-              {RESIDENCY.limit}-day rule · crosses ~{RESIDENCY.projectedCrossDate}
+              {RESIDENCY.limit}-day rule{demo ? ` · crosses ~${RESIDENCY.projectedCrossDate}` : ''}
             </>
           }
         />
