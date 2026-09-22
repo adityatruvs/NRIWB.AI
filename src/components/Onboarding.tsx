@@ -362,14 +362,16 @@ export default function Onboarding({
   }
 
   return (
-    // h-screen (fixed height) makes THIS the scroll container so overflow-y-auto
-    // engages — the page's html/body are locked to 100vh, so a min-h-screen here
-    // would just spill past the viewport with no way to scroll. flex-col + the
-    // card's my-auto centers it when it fits and scrolls from the top when it doesn't.
-    <div className="relative flex h-screen flex-1 flex-col items-center overflow-y-auto px-6 py-12">
+    // Scroll + centering MUST be on separate elements. The outer div is the
+    // scroll container (fixed h-screen since html/body are locked to 100vh); the
+    // inner min-h-full wrapper centers the card when it fits and simply grows —
+    // scrolling the outer — when the card is taller than the viewport. (Putting
+    // centering on the scroll container itself clips the overflow and won't scroll.)
+    <div className="relative h-screen overflow-y-auto">
       <div aria-hidden className="hero-mesh" />
 
-      <div className="card-surface relative my-auto w-full max-w-2xl animate-scale-in overflow-hidden">
+      <div className="flex min-h-full flex-col items-center justify-center px-6 py-12">
+        <div className="card-surface relative w-full max-w-2xl animate-scale-in overflow-hidden">
         <span aria-hidden className="gradient-hairline absolute inset-x-0 top-0" />
 
         <div className="px-7 pb-1 pt-9 sm:px-10">
@@ -586,6 +588,7 @@ export default function Onboarding({
               Next, you&apos;ll connect your first account.
             </p>
           )}
+        </div>
         </div>
       </div>
     </div>
