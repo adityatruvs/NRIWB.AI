@@ -171,6 +171,8 @@ export interface OnboardingProfile {
   numChildren: number | null
   supportsParentsIndia: string | null
   sendsRemittances: string | null
+  /** Rough average sent to India per month (USD) — easier to recall than a yearly total. */
+  monthlyRemittanceUsd: number | null
   // Contact (optional)
   phone: string | null
   occupation: string | null
@@ -269,6 +271,10 @@ export function parseOnboarding(
     })(),
     supportsParentsIndia: optStr(YES_NO_UNSURE, b.supportsParentsIndia),
     sendsRemittances: optStr(YES_NO_UNSURE, b.sendsRemittances),
+    monthlyRemittanceUsd: (() => {
+      const m = num(b.monthlyRemittanceUsd)
+      return m != null && m >= 0 ? Math.round(m) : null
+    })(),
     phone: str(b.phone) || null,
     occupation: str(b.occupation) || null,
     employer: str(b.employer) || null,

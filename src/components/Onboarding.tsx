@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, Check } from "lucide-react";
+import { ChevronDown, Check, Info } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   COUNTRIES,
@@ -71,6 +71,39 @@ function Select({
   );
 }
 
+/** Small ⓘ button that reveals a short explanation on click (tap-friendly). */
+function InfoHint({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="relative ml-1 inline-flex align-middle">
+      <button
+        type="button"
+        aria-label="More information"
+        onClick={() => setOpen((o) => !o)}
+        onBlur={() => setOpen(false)}
+        className="text-muted-foreground transition-colors hover:text-foreground"
+      >
+        <Info size={13} />
+      </button>
+      {open && (
+        <span className="absolute left-1/2 top-6 z-30 w-60 -translate-x-1/2 rounded-lg border border-border bg-card p-2.5 text-[12px] font-normal leading-relaxed text-muted-foreground shadow-lg">
+          {text}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** A field label with an optional ⓘ hint. */
+function FieldLabel({ label, hint }: { label: string; hint?: string }) {
+  return (
+    <label className={cn(labelCls, "flex items-center")}>
+      {label}
+      {hint && <InfoHint text={hint} />}
+    </label>
+  );
+}
+
 /** Labeled dropdown built from an Option[] list. */
 function SelectField({
   label,
@@ -80,6 +113,7 @@ function SelectField({
   placeholder = "Select…",
   required,
   className,
+  hint,
 }: {
   label: string;
   value: string;
@@ -88,10 +122,11 @@ function SelectField({
   placeholder?: string;
   required?: boolean;
   className?: string;
+  hint?: string;
 }) {
   return (
     <div className={className}>
-      <label className={labelCls}>{label}</label>
+      <FieldLabel label={label} hint={hint} />
       <Select aria-label={label} value={value} onChange={(e) => onChange(e.target.value)} required={required}>
         <option value="" disabled>{placeholder}</option>
         {options.map((o) => (
@@ -109,16 +144,18 @@ function Segmented({
   onChange,
   options,
   className,
+  hint,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   options: Option[];
   className?: string;
+  hint?: string;
 }) {
   return (
     <div className={className}>
-      <label className={labelCls}>{label}</label>
+      <FieldLabel label={label} hint={hint} />
       <div
         className="grid gap-1.5 rounded-xl bg-muted p-1"
         style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}
@@ -221,6 +258,7 @@ const initialForm = {
   numChildren: "",
   supportsParentsIndia: "",
   sendsRemittances: "",
+  monthlyRemittanceUsd: "",
   phone: "",
   occupation: "",
   employer: "",
@@ -306,6 +344,7 @@ export default function Onboarding({
           lrsUsedUsd: form.lrsUsedUsd || 0,
           targetRetirementAge: form.targetRetirementAge || null,
           numChildren: form.numChildren || null,
+          monthlyRemittanceUsd: form.monthlyRemittanceUsd || null,
         }),
       });
       if (res.ok) {
@@ -323,10 +362,13 @@ export default function Onboarding({
   }
 
   return (
-    <div className="relative flex min-h-screen flex-1 items-center justify-center overflow-y-auto px-6 py-12">
+    // flex-col + my-auto on the card centers it when it fits, but lets the TOP
+    // scroll into view when the form is taller than the viewport (items-center
+    // alone clips the top of tall content).
+    <div className="relative flex min-h-screen flex-1 flex-col items-center overflow-y-auto px-6 py-12">
       <div aria-hidden className="hero-mesh" />
 
-      <div className="card-surface relative w-full max-w-2xl animate-scale-in overflow-hidden">
+      <div className="card-surface relative my-auto w-full max-w-2xl animate-scale-in overflow-hidden">
         <span aria-hidden className="gradient-hairline absolute inset-x-0 top-0" />
 
         <div className="px-7 pb-1 pt-9 sm:px-10">
@@ -407,16 +449,32 @@ export default function Onboarding({
               <div className="flex flex-col gap-4">
                 <Segmented label="Country of residence" value={form.countryOfResidence} onChange={set("countryOfResidence")} options={COUNTRIES} />
                 <div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-2">
-                  <SelectField label="U.S. immigration status" value={form.usImmigrationStatus} onChange={set("usImmigrationStatus")} options={US_IMMIGRATION_STATUSES} placeholder="Select your status…" required />
-                  <SelectField label="India tax-residency status" value={form.indiaTaxResidency} onChange={set("indiaTaxResidency")} options={INDIA_TAX_RESIDENCY} placeholder="Select…" required />
+                  <SelectField
+                    label="U.S. immigration status"
+                    value={form.usImmigrationStatus}
+                    onChange={set("usImmigrationStatus")}
+                    options={US_IMMIGRATION_STATUSES}
+                    placeholder="Select your status…"
+                    required
+                    hint="Your visa or residency type in the U.S. This affects how you're taxed — e.g. F-1/J-1 holders are often non-resident aliens with different filing rules."
+                  />
+                  <SelectField
+                    label="India tax-residency status"
+                    value={form.indiaTaxResidency}
+                    onChange={set("indiaTaxResidency")}
+                    options={INDIA_TAX_RESIDENCY}
+                    placeholder="Select…"
+                    required
+                    hint="NRI = spent under 182 days in India. RNOR is a transitional status for returning NRIs where foreign income stays untaxed in India. Not sure? Pick that and we'll help."
+                  />
                   {isUsResident && (
                     <>
-                      <SelectField label="U.S. state" value={form.usState} onChange={set("usState")} options={US_STATES} placeholder="Select state…" />
+                      <SelectField label="U.S. state" value={form.usState} onChange={set("usState")} options={US_STATES} placeholder="Select state…" hint="Where you're a tax resident. State income tax varies a lot (e.g. none in TX/FL, high in CA/NY)." />
                       <SelectField label="Year you moved to the U.S." value={form.yearMovedToUs} onChange={set("yearMovedToUs")} options={MOVE_YEARS.map((y) => ({ value: String(y), label: String(y) }))} placeholder="Select year…" />
                     </>
                   )}
                   <div>
-                    <label className={labelCls}>Days spent in India this year</label>
+                    <FieldLabel label="Days spent in India this year" hint="Total days you've physically been in India this financial year. Crossing 182 can make India tax your worldwide income — we track this for you." />
                     <input type="number" min={0} max={366} className={inputCls} value={form.indiaDaysCurrentYear} onChange={setInput("indiaDaysCurrentYear")} placeholder="e.g. 45" />
                   </div>
                   <SelectField label="Long-term plan" value={form.planningHorizon} onChange={set("planningHorizon")} options={PLANNING_HORIZONS} placeholder="Select…" />
@@ -433,10 +491,10 @@ export default function Onboarding({
                 <SelectField label="U.S. filing status" value={form.usFilingStatus} onChange={set("usFilingStatus")} options={US_FILING_STATUSES} placeholder="Select…" />
                 <SelectField label="Where you file taxes" value={form.filesTaxesIn} onChange={set("filesTaxesIn")} options={FILES_TAXES_IN} placeholder="Select…" />
               </div>
-              <Segmented label="Do you have a U.S. SSN or ITIN?" value={form.hasSsnOrItin} onChange={set("hasSsnOrItin")} options={YES_NO_UNSURE} />
-              <Segmented label="Do you have an India PAN?" value={form.hasPan} onChange={set("hasPan")} options={YES_NO_UNSURE} />
-              <Segmented label="Foreign financial accounts over $10k combined?" value={form.foreignAccountsOver10k} onChange={set("foreignAccountsOver10k")} options={YES_NO_UNSURE} />
-              <Segmented label="Do you own foreign mutual funds or ETFs?" value={form.ownsForeignFunds} onChange={set("ownsForeignFunds")} options={YES_NO_UNSURE} />
+              <Segmented label="Do you have a U.S. SSN or ITIN?" value={form.hasSsnOrItin} onChange={set("hasSsnOrItin")} options={YES_NO_UNSURE} hint="Your U.S. taxpayer ID — needed to file U.S. taxes and forms like FBAR. We don't ask for the number itself." />
+              <Segmented label="Do you have an India PAN?" value={form.hasPan} onChange={set("hasPan")} options={YES_NO_UNSURE} hint="PAN is India's Permanent Account Number — the tax ID tied to your Indian accounts and filings." />
+              <Segmented label="Foreign financial accounts over $10k combined?" value={form.foreignAccountsOver10k} onChange={set("foreignAccountsOver10k")} options={YES_NO_UNSURE} hint="If all your non-U.S. bank/financial accounts together ever topped $10,000 this year, you likely must file an FBAR (FinCEN 114). We'll flag it." />
+              <Segmented label="Do you own foreign mutual funds or ETFs?" value={form.ownsForeignFunds} onChange={set("ownsForeignFunds")} options={YES_NO_UNSURE} hint="Non-U.S. mutual funds/ETFs (most Indian MFs) are usually 'PFICs' under U.S. tax law and need Form 8621 — worth flagging early." />
 
               <div className="my-3 border-t border-border/60" />
               <p className="eyebrow mb-1">Finances</p>
@@ -444,11 +502,11 @@ export default function Onboarding({
                 <SelectField label="Annual household income" value={form.incomeRange} onChange={set("incomeRange")} options={INCOME_RANGES} placeholder="Select range…" />
                 <SelectField label="Approximate net worth" value={form.netWorthRange} onChange={set("netWorthRange")} options={NET_WORTH_RANGES} placeholder="Select range…" />
               </div>
-              <Segmented label="Investment risk tolerance" value={form.riskTolerance} onChange={set("riskTolerance")} options={RISK_TOLERANCES} />
+              <Segmented label="Investment risk tolerance" value={form.riskTolerance} onChange={set("riskTolerance")} options={RISK_TOLERANCES} hint="How much ups-and-downs you're comfortable with. This drives the Portfolio Analyzer's suggested stock/bond mix." />
               <div className="sm:max-w-xs">
-                <label className={labelCls}>LRS remitted from India this year (USD)</label>
+                <FieldLabel label="Money moved OUT of India this year (USD)" hint="India's Liberalized Remittance Scheme (LRS) caps money you send OUT of India — e.g. repatriating funds — at $250,000/year. Leave 0 if that's not you. (This is different from money you send TO India.)" />
                 <input type="number" min={0} className={inputCls} value={form.lrsUsedUsd} onChange={setInput("lrsUsedUsd")} placeholder="0" />
-                <p className="mt-1 text-xs text-muted-foreground">Against the $250,000/yr Liberalized Remittance Scheme cap.</p>
+                <p className="mt-1 text-xs text-muted-foreground">Optional · against the $250,000/yr LRS cap. Leave 0 if unsure.</p>
               </div>
             </div>
           )}
@@ -477,6 +535,12 @@ export default function Onboarding({
               <Segmented label="Marital status" value={form.maritalStatus} onChange={set("maritalStatus")} options={MARITAL_STATUSES} />
               <Segmented label="Financially supporting parents in India?" value={form.supportsParentsIndia} onChange={set("supportsParentsIndia")} options={YES_NO_UNSURE} />
               <Segmented label="Do you send money to India regularly?" value={form.sendsRemittances} onChange={set("sendsRemittances")} options={YES_NO_UNSURE} />
+              {form.sendsRemittances === "yes" && (
+                <div className="sm:max-w-xs">
+                  <FieldLabel label="Roughly how much per month? (USD)" hint="A rough monthly average is fine — we don't need an exact figure. Easier to recall than a yearly total." />
+                  <input type="number" min={0} className={inputCls} value={form.monthlyRemittanceUsd} onChange={setInput("monthlyRemittanceUsd")} placeholder="e.g. 1,000" />
+                </div>
+              )}
 
               <div className="my-2 border-t border-border/60" />
               <p className="eyebrow mb-1">Contact <span className="font-normal lowercase tracking-normal">· optional</span></p>

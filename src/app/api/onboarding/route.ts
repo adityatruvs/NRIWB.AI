@@ -52,6 +52,7 @@ export async function POST(request: Request) {
       numChildren: profile.numChildren,
       supportsParentsIndia: profile.supportsParentsIndia,
       sendsRemittances: profile.sendsRemittances,
+      monthlyRemittanceUsd: profile.monthlyRemittanceUsd,
       phone: profile.phone,
       occupation: profile.occupation,
       employer: profile.employer,
