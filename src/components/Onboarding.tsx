@@ -362,10 +362,11 @@ export default function Onboarding({
   }
 
   return (
-    // flex-col + my-auto on the card centers it when it fits, but lets the TOP
-    // scroll into view when the form is taller than the viewport (items-center
-    // alone clips the top of tall content).
-    <div className="relative flex min-h-screen flex-1 flex-col items-center overflow-y-auto px-6 py-12">
+    // h-screen (fixed height) makes THIS the scroll container so overflow-y-auto
+    // engages — the page's html/body are locked to 100vh, so a min-h-screen here
+    // would just spill past the viewport with no way to scroll. flex-col + the
+    // card's my-auto centers it when it fits and scrolls from the top when it doesn't.
+    <div className="relative flex h-screen flex-1 flex-col items-center overflow-y-auto px-6 py-12">
       <div aria-hidden className="hero-mesh" />
 
       <div className="card-surface relative my-auto w-full max-w-2xl animate-scale-in overflow-hidden">
