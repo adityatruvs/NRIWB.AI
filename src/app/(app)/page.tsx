@@ -39,6 +39,7 @@ import {
   currentAllocation,
   activeBuckets,
   BUCKET_META,
+  type RiskLevel,
 } from '@/lib/allocation'
 import { goalProgress, goalAccent, resolveGoal } from '@/lib/goals'
 import { useUser } from '@clerk/nextjs'
@@ -61,7 +62,7 @@ export default function DashboardPage() {
   const { mode, rate } = useCurrency()
   const { holdings, addLinked, demo } = useAccounts()
   const { goals } = useGoals()
-  const { age: profileAge } = useProfile()
+  const { age: profileAge, indiaDaysCurrentYear, riskTolerance } = useProfile()
   const { user } = useUser()
   const firstName = user?.firstName ?? 'there'
   // Compute the time-based greeting after mount so SSR and the first client
@@ -151,9 +152,9 @@ export default function DashboardPage() {
   const compliance = complianceItems(holdings, rate)
   const assets = byAssetClass(holdings, rate)
 
-  // Residency day-count is curated demo data — there's no live day tracker yet,
-  // so real users see 0 (never a fabricated 134) until they log India days.
-  const residencyDays = demo ? RESIDENCY.daysInIndia : 0
+  // Demo shows the curated story; real users see the days they entered at
+  // onboarding (from ComplianceData via ProfileContext), defaulting to 0.
+  const residencyDays = demo ? RESIDENCY.daysInIndia : (indiaDaysCurrentYear ?? 0)
   const residencyPct = residencyDays / RESIDENCY.limit
   const daysLeft = RESIDENCY.limit - residencyDays
   const driftDelta = nw.inPct - TARGET_INDIA_PCT
@@ -618,7 +619,7 @@ export default function DashboardPage() {
 
       {/* ── Portfolio Analyzer teaser ─────────────────────────────────── */}
       <Reveal delay={0.19}>
-        <AnalyzerTeaser holdings={holdings} rate={rate} age={profileAge} />
+        <AnalyzerTeaser holdings={holdings} rate={rate} age={profileAge} risk={riskTolerance} />
       </Reveal>
 
       {/* ── Accounts preview ──────────────────────────────────────────── */}
@@ -674,14 +675,18 @@ function AnalyzerTeaser({
   holdings,
   rate,
   age,
+  risk,
 }: {
   holdings: ReturnType<typeof useAccounts>['holdings']
   rate: number
   age: number | null
+  risk: string | null
 }) {
   const effectiveAge = age ?? 35
+  // Use the user's stated risk tolerance from onboarding; fall back to moderate.
+  const effectiveRisk = (risk as RiskLevel) || 'moderate'
   const buckets = activeBuckets(false)
-  const recommended = recommendedAllocation(effectiveAge, 'moderate', false)
+  const recommended = recommendedAllocation(effectiveAge, effectiveRisk, false)
   const current = currentAllocation(holdings, rate, false)
   const currentPct = new Map(current.slices.map((s) => [s.key, s.pct]))
   const hasHoldings = current.totalUsd > 0

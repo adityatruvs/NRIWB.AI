@@ -13,6 +13,10 @@ interface ProfileContextValue {
   dateOfBirth: string | null
   countryOfResidence: string | null
   taxStatus: string | null
+  /** Days spent in India this year — from ComplianceData; powers the residency KPI. */
+  indiaDaysCurrentYear: number | null
+  /** conservative | moderate | aggressive — powers the analyzer's recommended split. */
+  riskTolerance: string | null
   /** Whole years, derived live from `dateOfBirth`. Null if unknown. */
   age: number | null
 }
@@ -37,11 +41,15 @@ export function ProfileProvider({
   dateOfBirth = null,
   countryOfResidence = null,
   taxStatus = null,
+  indiaDaysCurrentYear = null,
+  riskTolerance = null,
   children,
 }: {
   dateOfBirth?: string | null
   countryOfResidence?: string | null
   taxStatus?: string | null
+  indiaDaysCurrentYear?: number | null
+  riskTolerance?: string | null
   children: React.ReactNode
 }) {
   const value = useMemo<ProfileContextValue>(
@@ -49,9 +57,11 @@ export function ProfileProvider({
       dateOfBirth,
       countryOfResidence,
       taxStatus,
+      indiaDaysCurrentYear,
+      riskTolerance,
       age: ageFromDob(dateOfBirth),
     }),
-    [dateOfBirth, countryOfResidence, taxStatus],
+    [dateOfBirth, countryOfResidence, taxStatus, indiaDaysCurrentYear, riskTolerance],
   )
 
   return <ProfileContext.Provider value={value}>{children}</ProfileContext.Provider>
@@ -67,6 +77,8 @@ export function useProfile(): ProfileContextValue {
       dateOfBirth: null,
       countryOfResidence: null,
       taxStatus: null,
+      indiaDaysCurrentYear: null,
+      riskTolerance: null,
       age: null,
     }
   )

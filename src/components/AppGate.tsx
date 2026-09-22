@@ -3,6 +3,7 @@ import Onboarding from "@/components/Onboarding";
 import TopNav from "@/components/TopNav";
 import Sidebar from "@/components/Sidebar";
 import { ProfileProvider } from "@/context/ProfileContext";
+import { prisma } from "@/lib/prisma";
 
 // Renders for signed-in users only (nested inside <Show when="signed-in">).
 // Until the profile is complete we show onboarding; after that, the dashboard.
@@ -17,6 +18,7 @@ export default async function AppGate({
     dateOfBirth?: string;
     countryOfResidence?: string;
     taxStatus?: string;
+    riskTolerance?: string;
   };
 
   if (!meta.onboardingComplete) {
@@ -29,11 +31,19 @@ export default async function AppGate({
     );
   }
 
+  // Compliance numbers are the DB source of truth — read them here so the client
+  // dashboard (residency KPI) shows real onboarding data, not a mock value.
+  const compliance = user
+    ? await prisma.complianceData.findUnique({ where: { userId: user.id } })
+    : null;
+
   return (
     <ProfileProvider
       dateOfBirth={meta.dateOfBirth ?? null}
       countryOfResidence={meta.countryOfResidence ?? null}
       taxStatus={meta.taxStatus ?? null}
+      indiaDaysCurrentYear={compliance?.indiaDaysCurrentYear ?? null}
+      riskTolerance={meta.riskTolerance ?? null}
     >
       <TopNav />
       <div className="flex flex-1 overflow-hidden">
