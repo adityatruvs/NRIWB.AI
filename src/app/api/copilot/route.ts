@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { requireUserId, unauthorized, UnauthorizedError } from '@/lib/auth'
+import { getFxSnapshot } from '@/lib/fx'
 import {
   netWorth,
   fbarStatus,
@@ -192,13 +193,15 @@ export async function POST(req: Request) {
     return Response.json({ error: 'Last message must be from the user' }, { status: 400 })
   }
 
+  const rate = body.rate || (await getFxSnapshot()).rate
+
   const stream = client.messages.stream({
     model: MODEL,
     max_tokens: 8192,
     thinking: { type: 'adaptive' },
     system: buildSystemPrompt(
       body.holdings ?? [],
-      body.rate || 83,
+      rate,
       Math.max(0, Number(body.income) || 0),
       Math.max(0, Number(body.monthlyContribution) || 0),
       typeof body.age === 'number' ? body.age : null,

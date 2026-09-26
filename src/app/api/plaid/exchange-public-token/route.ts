@@ -4,11 +4,9 @@ import { encrypt } from '@/lib/crypto'
 import { requireUserId, unauthorized, UnauthorizedError } from '@/lib/auth'
 import { plaidAccountFields, type PlaidAccountInput } from '@/lib/plaid-map'
 import { toHolding } from '@/lib/accounts-api'
+import { getFxSnapshot } from '@/lib/fx'
 
 export const runtime = 'nodejs'
-
-/** Fallback USD/INR until the live FX service (ACC-05) populates the FxRate table. */
-const DEFAULT_USD_INR = 83
 
 export async function POST(request: Request) {
   let userId: string
@@ -30,7 +28,7 @@ export async function POST(request: Request) {
     typeof body?.institutionName === 'string' && body.institutionName.trim()
       ? body.institutionName.trim()
       : 'Bank'
-  const rate = Number(body?.rate) > 0 ? Number(body.rate) : DEFAULT_USD_INR
+  const rate = Number(body?.rate) > 0 ? Number(body.rate) : (await getFxSnapshot()).rate
 
   const { data: tokenData } = await plaidClient.itemPublicTokenExchange({ public_token })
   const { access_token, item_id } = tokenData

@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { requireUserId, unauthorized, UnauthorizedError } from '@/lib/auth'
+import { getFxSnapshot } from '@/lib/fx'
 import {
   netWorth,
   byAssetClass,
@@ -134,7 +135,7 @@ export async function POST(req: Request) {
   }
 
   const holdings = Array.isArray(body.holdings) ? body.holdings : []
-  const rate = body.rate || 83
+  const rate = body.rate || (await getFxSnapshot()).rate
 
   // Rule-based items are the always-available fallback if AI is unavailable.
   const fallback = (): Insight[] =>
