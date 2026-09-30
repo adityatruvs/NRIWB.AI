@@ -70,6 +70,7 @@ import { Donut } from '@/components/ui/charts'
 import { Money } from '@/components/ui/Money'
 import { Reveal } from '@/components/ui/Reveal'
 import { AddAccountChooser } from '@/components/AddAccountChooser'
+import { CasImportPanel } from '@/components/CasImportPanel'
 import { AiAdd } from '@/components/copilot/AiAddPanel'
 import { cn } from '@/lib/utils'
 
@@ -159,6 +160,7 @@ export default function AccountsPage() {
   }, [goals])
   const [adding, setAdding] = useState(false)
   const [choosing, setChoosing] = useState(false)
+  const [importingCas, setImportingCas] = useState(false)
   const [editing, setEditing] = useState<Holding | null>(null)
   const [deleting, setDeleting] = useState<Holding | null>(null)
   const [filter, setFilter] = useState<CountryFilter>('all')
@@ -461,8 +463,12 @@ export default function AccountsPage() {
           fxRate={rate}
           onLinked={addLinked}
           onManual={() => setAdding(true)}
+          onImportCas={() => setImportingCas(true)}
           onClose={() => setChoosing(false)}
         />
+      )}
+      {importingCas && (
+        <CasImportPanel onClose={() => setImportingCas(false)} onManual={() => setAdding(true)} />
       )}
       {adding && (
         <AccountDialog
