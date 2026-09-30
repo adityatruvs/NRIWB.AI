@@ -76,7 +76,7 @@ export const COPILOT_ANSWERS: CopilotAnswer[] = [
   {
     keywords: ['fbar', 'fincen', '114', 'foreign bank'],
     answer:
-      "**Yes — you'll need to file FBAR.** Your India accounts (HDFC NRE FD, SBI NRO, HDFC Mutual Fund, SBI FD) peaked at a combined **~$80,000** this year, far above the **$10,000** aggregate threshold.\n\nFBAR (FinCEN Form 114) is filed electronically through the BSA E-Filing System and is **separate from your tax return**. The deadline is April 15, automatically extended to **October 15**.\n\nMissing it can carry penalties of **$10,000+ per account**, so this is worth handling early.",
+      "**Yes — you'll need to file FBAR.** Your India accounts (HDFC NRE FD, SBI NRO, HDFC Mutual Fund, SBI FD) hold a combined **~$80,000** at current balances, far above the **$10,000** aggregate threshold.\n\nFBAR (FinCEN Form 114) is filed electronically through the BSA E-Filing System and is **separate from your tax return**. The deadline is April 15, automatically extended to **October 15**.\n\nMissing it can carry penalties of **$10,000+ per account**, so this is worth handling early.",
     followups: ['How do I actually file FBAR?', 'Is FBAR different from FATCA?'],
   },
   {

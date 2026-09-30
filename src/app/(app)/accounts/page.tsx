@@ -29,6 +29,8 @@ import {
   TrendingUp,
   PiggyBank,
   Home,
+  Users,
+  Calculator,
 } from 'lucide-react'
 import { AccountsLogo } from '@/components/ui/logos'
 import { useCurrency } from '@/context/CurrencyContext'
@@ -47,8 +49,13 @@ import {
   assetEquity,
   pficHoldings,
   TYPE_LABELS,
+  RELATION_LABELS,
+  ownershipLabel,
+  type CoOwner,
   type Holding,
   type HoldingDetails,
+  type Ownership,
+  type OwnerRelation,
 } from '@/lib/portfolio'
 import { typeExpectedReturn } from '@/lib/allocation'
 import { detailSpec } from '@/lib/account-details'
@@ -71,6 +78,10 @@ import { Money } from '@/components/ui/Money'
 import { Reveal } from '@/components/ui/Reveal'
 import { AddAccountChooser } from '@/components/AddAccountChooser'
 import { AiAdd } from '@/components/copilot/AiAddPanel'
+import { SearchParamsReader } from '@/components/SearchParamsReader'
+import { ReconnectButton } from '@/components/ReconnectButton'
+import { DebtSummaryCard } from '@/components/DebtSummary'
+import { PrepayCalculator } from '@/components/PrepayCalculator'
 import { cn } from '@/lib/utils'
 
 type CountryFilter = 'all' | 'US' | 'IN'
@@ -110,7 +121,7 @@ export default function AccountsPage() {
 
   // "Mark updated" — bump a manual account's lastSyncedAt to now (re-save as-is).
   const markUpdated = (h: Holding) => {
-    if (h.id) updateAccount(h.id, { ...h, lastSyncedAt: new Date().toISOString() })
+    if (h.id) updateAccount(h.id, { ...h, lastSyncedAt: new Date().toISOString() }, { confirmBalance: true })
   }
 
   // Sort key + collapsed category folders, both persisted so the layout sticks.
@@ -129,13 +140,15 @@ export default function AccountsPage() {
       /* ignore */
     }
   }, [])
-  useEffect(() => {
+  // Only a choice made in the picker is remembered — a ?sort= deep link isn't.
+  const chooseSort = useCallback((next: SortKey) => {
+    setSort(next)
     try {
-      localStorage.setItem('nriwb:accounts-sort', sort)
+      localStorage.setItem('nriwb:accounts-sort', next)
     } catch {
       /* ignore */
     }
-  }, [sort])
+  }, [])
   const toggleCollapse = useCallback((key: string) => {
     setCollapsed((prev) => {
       const next = new Set(prev)
@@ -161,9 +174,57 @@ export default function AccountsPage() {
   const [choosing, setChoosing] = useState(false)
   const [editing, setEditing] = useState<Holding | null>(null)
   const [deleting, setDeleting] = useState<Holding | null>(null)
+  const [prepayFor, setPrepayFor] = useState<Holding | null>(null)
   const [filter, setFilter] = useState<CountryFilter>('all')
   const [query, setQuery] = useState('')
   const [jurHover, setJurHover] = useState<number | null>(null) // 0 = US, 1 = India
+
+  // Deep links (from Home "Needs attention", goal cards, the Copilot):
+  //   ?focus=<id>   expand that row's folder, scroll to it, highlight it briefly
+  //   ?country=IN   filter to one country       ?sort=stale  stalest first
+  //   ?edit=<id>    open that account's edit dialog
+  const [linkParams, setLinkParams] = useState<URLSearchParams | null>(null)
+  const [focusedId, setFocusedId] = useState<string | null>(null)
+  useEffect(() => {
+    if (!linkParams || loading) return
+    const country = linkParams.get('country')
+    if (country === 'US' || country === 'IN') setFilter(country)
+    if (linkParams.get('sort') === 'stale') setSort('freshness')
+    const target = holdings.find((h) => h.id && h.id === linkParams.get('focus'))
+    if (target?.id) {
+      // Make sure the row is actually rendered: no hiding filter, folder open.
+      setQuery('')
+      if (country !== target.country) setFilter('all')
+      const folder = `${target.country}:${categoryOf(target)}`
+      setCollapsed((prev) => {
+        if (!prev.has(folder)) return prev
+        const next = new Set(prev)
+        next.delete(folder)
+        return next
+      })
+      setFocusedId(target.id)
+    }
+    // ?edit=<id> opens that account's edit dialog (e.g. "add the loan's rate").
+    const toEdit = holdings.find((h) => h.id && h.id === linkParams.get('edit'))
+    if (toEdit) setEditing(toEdit)
+    if (linkParams.get('section') === 'debt') {
+      requestAnimationFrame(() =>
+        document.getElementById('debt-summary')?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+      )
+    }
+    setLinkParams(null) // handled — don't re-apply on every ledger change
+  }, [linkParams, loading, holdings])
+  useEffect(() => {
+    if (!focusedId) return
+    const raf = requestAnimationFrame(() =>
+      document.getElementById(`acct-${focusedId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }),
+    )
+    const t = setTimeout(() => setFocusedId(null), 2000)
+    return () => {
+      cancelAnimationFrame(raf)
+      clearTimeout(t)
+    }
+  }, [focusedId])
 
   const nw = netWorth(holdings, rate)
   // Highest-impact stale account to nudge the user to refresh first (age × size).
@@ -201,6 +262,7 @@ export default function AccountsPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      <SearchParamsReader onParams={setLinkParams} />
       {/* ── Header ────────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-end justify-between gap-3 animate-fade-in">
         <div className="flex items-center gap-3">
@@ -333,7 +395,7 @@ export default function AccountsPage() {
             <ArrowUpDown size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <select
               value={sort}
-              onChange={(e) => setSort(e.target.value as SortKey)}
+              onChange={(e) => chooseSort(e.target.value as SortKey)}
               aria-label="Sort accounts"
               className="h-9 cursor-pointer appearance-none rounded-xl border border-border/70 bg-card pl-7 pr-7 text-[13px] font-medium outline-none transition-colors hover:bg-accent/40 focus:border-brand/60"
             >
@@ -400,10 +462,13 @@ export default function AccountsPage() {
                 accountToGoal={accountToGoal}
                 sort={sort}
                 collapsed={collapsed}
+                focusedId={focusedId}
                 onToggleCollapse={toggleCollapse}
                 onEdit={setEditing}
                 onDelete={setDeleting}
                 onMarkUpdated={demo ? undefined : markUpdated}
+                onReconnected={refresh}
+                onPrepay={setPrepayFor}
               />
             ))
           )}
@@ -411,6 +476,7 @@ export default function AccountsPage() {
 
         {/* Side rail — insights & intake, nothing else */}
         <div className="flex flex-col gap-6">
+          <DebtSummaryCard holdings={holdings} rate={rate} />
           {!demo && guidance.top && (
             <RefreshGuidanceCard
               top={guidance.top}
@@ -483,6 +549,18 @@ export default function AccountsPage() {
           onSave={(h) => {
             if (editing.id) updateAccount(editing.id, h)
             setEditing(null)
+          }}
+        />
+      )}
+      {prepayFor && (
+        <PrepayCalculator
+          loan={prepayFor}
+          holdings={holdings}
+          rate={rate}
+          onClose={() => setPrepayFor(null)}
+          onEditLoan={() => {
+            setEditing(prepayFor)
+            setPrepayFor(null)
           }}
         />
       )}
@@ -841,10 +919,13 @@ function AccountGroup({
   accountToGoal,
   sort,
   collapsed,
+  focusedId,
   onToggleCollapse,
   onEdit,
   onDelete,
   onMarkUpdated,
+  onReconnected,
+  onPrepay,
 }: {
   country: 'US' | 'IN'
   accounts: Holding[]
@@ -855,11 +936,17 @@ function AccountGroup({
   sort: SortKey
   /** Set of collapsed folder keys ("US:banking"). */
   collapsed: ReadonlySet<string>
+  /** Row to scroll to and highlight (from a ?focus= deep link). */
+  focusedId: string | null
   onToggleCollapse: (key: string) => void
   onEdit: (h: Holding) => void
   onDelete: (h: Holding) => void
   /** When set, manual rows can be marked freshly-updated. Omitted in demo mode. */
   onMarkUpdated?: (h: Holding) => void
+  /** Called after a Reconnect finishes, to reload the ledger. */
+  onReconnected: () => void
+  /** Opens the prepay-vs-invest calculator for a loan. */
+  onPrepay: (h: Holding) => void
 }) {
   const { flag, name, color } = COUNTRY_META[country]
   const [activeSlice, setActiveSlice] = useState<number | null>(null)
@@ -1037,9 +1124,12 @@ function AccountGroup({
                       rate={rate}
                       accountToGoal={accountToGoal}
                       note={securedNote(a, accounts, rate)}
+                      focused={!!a.id && a.id === focusedId}
                       onEdit={onEdit}
                       onDelete={onDelete}
                       onMarkUpdated={onMarkUpdated}
+                      onReconnected={onReconnected}
+                      onPrepay={onPrepay}
                     />
                   ))}
                 </div>
@@ -1058,9 +1148,12 @@ function AccountRow({
   rate,
   accountToGoal,
   note,
+  focused = false,
   onEdit,
   onDelete,
   onMarkUpdated,
+  onReconnected,
+  onPrepay,
   indent = false,
 }: {
   a: Holding
@@ -1069,9 +1162,13 @@ function AccountRow({
   accountToGoal: Map<string, string>
   /** Optional trailing note on the meta line (e.g. equity / "secured by …"). */
   note?: string
+  /** Briefly highlighted after a deep link lands on it. */
+  focused?: boolean
   onEdit: (h: Holding) => void
   onDelete: (h: Holding) => void
   onMarkUpdated?: (h: Holding) => void
+  onReconnected?: () => void
+  onPrepay?: (h: Holding) => void
   indent?: boolean
 }) {
   const days = ageInDays(a.lastSyncedAt)
@@ -1079,11 +1176,13 @@ function AccountRow({
   const canMark = !!onMarkUpdated && a.source === 'manual'
   return (
     <div
+      id={a.id ? `acct-${a.id}` : undefined}
       className={cn(
-        'group flex items-center gap-3.5 transition-colors hover:bg-accent/35',
+        'group flex scroll-mt-24 items-center gap-3.5 transition-colors duration-500 hover:bg-accent/35',
         indent ? 'py-2.5 pl-[4.5rem] pr-5' : 'px-5 py-3.5',
         // Colour stale rows so they stand out from fresh ones at a glance.
         fresh === 'stale' && 'bg-warning-muted/20',
+        focused && 'bg-brand/10 ring-2 ring-inset ring-brand/40',
       )}
     >
       {!indent && <Monogram institution={a.institution} color={color} />}
@@ -1101,6 +1200,9 @@ function AccountRow({
             </span>
           )}
           <ProvenanceBadge holding={a} />
+          {a.needsReauth && a.plaidItemId && (
+            <ReconnectButton itemId={a.plaidItemId} rate={rate} onDone={onReconnected ?? (() => {})} />
+          )}
         </div>
         <p className="mt-0.5 flex items-center gap-1.5 truncate text-[13px] text-muted-foreground">
           <span className="truncate">
@@ -1108,6 +1210,15 @@ function AccountRow({
             {detailSummary(a.details) ? ` · ${detailSummary(a.details)}` : ''}
             {note ? ` · ${note}` : ''}
           </span>
+          {ownershipLabel(a) && (
+            <span
+              className="inline-flex shrink-0 items-center gap-1 rounded bg-accent px-1.5 py-px text-[10.5px] font-medium text-accent-foreground/80 ring-1 ring-border/60"
+              title={a.ownership === 'family' ? `Held in ${ownershipLabel(a)}’s name` : `Jointly held: ${ownershipLabel(a)}`}
+            >
+              <Users size={10} />
+              {ownershipLabel(a)}
+            </span>
+          )}
           {a.id && accountToGoal.has(a.id) && (
             <span
               className="inline-flex shrink-0 items-center gap-1 rounded bg-brand/10 px-1.5 py-px text-[10.5px] font-medium text-brand"
@@ -1121,6 +1232,16 @@ function AccountRow({
         </p>
       </div>
       <div className="flex shrink-0 items-center gap-0.5 opacity-100 transition-opacity focus-within:opacity-100 sm:opacity-0 sm:group-hover:opacity-100">
+        {onPrepay && isLiability(a) && (
+          <button
+            onClick={() => onPrepay(a)}
+            aria-label={`Prepay or invest: ${a.nickname}`}
+            title="Prepay this loan or invest?"
+            className="flex size-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <Calculator size={13} />
+          </button>
+        )}
         {canMark && (
           <button
             onClick={() => onMarkUpdated!(a)}
@@ -1408,6 +1529,9 @@ function AccountDialog({
   const [isSgb, setIsSgb] = useState(d0?.isSgb ?? false)
   const [minPayment, setMinPayment] = useState(d0?.minPayment != null ? String(d0.minPayment) : '')
   const [expReturn, setExpReturn] = useState(d0?.expectedReturn != null ? String(d0.expectedReturn) : '')
+  // ── Ownership / title — whose name this is held in ──
+  const [ownership, setOwnership] = useState<Ownership>(initial?.ownership ?? 'self')
+  const [coOwners, setCoOwners] = useState<CoOwner[]>(initial?.coOwners ?? [])
   useEscape(onClose)
 
   const liability = kind === 'liability'
@@ -1416,7 +1540,7 @@ function AccountDialog({
   const liabilityTypes = country === 'US' ? US_LIABILITY_TYPES : IN_LIABILITY_TYPES
   const types = liability ? liabilityTypes : assetTypes
   const spec = detailSpec(country, accountType, isSgb, fdScheme)
-  const valid = nickname.trim() && institution.trim() && Number(amount) > 0
+  const valid =nickname.trim() && institution.trim() && Number(amount) > 0
 
   // Asset-side loan linking — for any securable asset being edited (it has an id).
   const canSecure = SECURABLE_ASSET_TYPES.has(accountType)
@@ -1463,6 +1587,10 @@ function AccountDialog({
       kind,
       securedAgainstId: liability ? securedAgainstId : undefined,
       details: buildDetails(),
+      ...(ownership !== 'self' && {
+        ownership,
+        coOwners: coOwners.map((c) => ({ ...c, name: c.name.trim() })),
+      }),
     }
     onSave(h)
     onClose()
@@ -1772,6 +1900,20 @@ function AccountDialog({
             </Field>
           )}
 
+          <OwnershipField
+            ownership={ownership}
+            coOwners={coOwners}
+            liability={liability}
+            onOwnershipChange={(o) => {
+              setOwnership(o)
+              // Seed one person so the list is never empty when it matters.
+              if (o !== 'self' && coOwners.length === 0) {
+                setCoOwners([{ name: '', relation: o === 'joint' ? 'spouse' : 'father' }])
+              }
+            }}
+            onCoOwnersChange={setCoOwners}
+          />
+
           {/* ── Linked loans — attach mortgages/HELOCs to this property for equity ── */}
           {editingAssetId && (
             <div className="flex flex-col gap-2.5 rounded-xl bg-muted/35 p-4 ring-1 ring-border/50">
@@ -1844,6 +1986,116 @@ function AccountDialog({
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+/* ── Ownership / title ──────────────────────────────────────────────────────── */
+
+const OWNERSHIP_OPTIONS: { value: Ownership; label: string }[] = [
+  { value: 'self', label: 'Just me' },
+  { value: 'joint', label: 'Joint' },
+  { value: 'family', label: 'Family member' },
+]
+
+const RELATIONS = Object.keys(RELATION_LABELS) as OwnerRelation[]
+
+/**
+ * Whose name the holding is in — self, joint (you + others), or a family member's
+ * name alone. Feeds the future Legacy "who owns what" view.
+ */
+function OwnershipField({
+  ownership,
+  coOwners,
+  liability,
+  onOwnershipChange,
+  onCoOwnersChange,
+}: {
+  ownership: Ownership
+  coOwners: CoOwner[]
+  liability: boolean
+  onOwnershipChange: (o: Ownership) => void
+  onCoOwnersChange: (c: CoOwner[]) => void
+}) {
+  const patch = (i: number, p: Partial<CoOwner>) =>
+    onCoOwnersChange(coOwners.map((c, j) => (j === i ? { ...c, ...p } : c)))
+  return (
+    <div className="flex flex-col gap-2.5 rounded-xl bg-muted/35 p-4 ring-1 ring-border/50">
+      <div>
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
+          {liability ? 'Whose name is the loan in?' : 'Whose name is it in?'}
+        </p>
+        <p className="mt-1 text-[12px] leading-snug text-muted-foreground">
+          What happens to it later depends on the name it’s held in.
+        </p>
+      </div>
+      <div className="grid grid-cols-3 gap-1 rounded-xl border border-border/70 bg-muted/70 p-1">
+        {OWNERSHIP_OPTIONS.map((o) => (
+          <button
+            key={o.value}
+            type="button"
+            onClick={() => onOwnershipChange(o.value)}
+            className={cn(
+              'rounded-lg py-1.5 text-xs font-medium transition-all',
+              ownership === o.value
+                ? 'bg-card shadow-[0_1px_2px_hsl(var(--shadow-color)/0.1),0_2px_6px_-2px_hsl(var(--shadow-color)/0.12)] ring-1 ring-border/70'
+                : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+
+      {ownership !== 'self' && (
+        <div className="flex flex-col gap-2">
+          <p className="text-[12px] text-muted-foreground">
+            {ownership === 'joint' ? 'Held jointly with' : 'Held in the name of'}
+          </p>
+          {coOwners.map((c, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <select
+                value={c.relation}
+                onChange={(e) => patch(i, { relation: e.target.value as OwnerRelation })}
+                aria-label="Relation"
+                className={cn(inputCls, 'w-32 shrink-0')}
+              >
+                {RELATIONS.map((r) => (
+                  <option key={r} value={r}>
+                    {RELATION_LABELS[r]}
+                  </option>
+                ))}
+              </select>
+              <input
+                value={c.name}
+                onChange={(e) => patch(i, { name: e.target.value })}
+                placeholder={c.relation === 'other' ? 'Name' : 'Name (optional)'}
+                aria-label="Name"
+                maxLength={80}
+                className={cn(inputCls, 'min-w-0 flex-1')}
+              />
+              <button
+                type="button"
+                onClick={() => onCoOwnersChange(coOwners.filter((_, j) => j !== i))}
+                aria-label="Remove person"
+                className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-danger-muted hover:text-danger"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          ))}
+          {coOwners.length < 10 && (
+            <button
+              type="button"
+              onClick={() => onCoOwnersChange([...coOwners, { name: '', relation: 'other' }])}
+              className="inline-flex items-center gap-1 self-start rounded-lg px-2 py-1 text-[12px] font-medium text-brand transition-colors hover:bg-brand/10"
+            >
+              <Plus size={13} />
+              Add person
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 }

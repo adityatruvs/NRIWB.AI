@@ -1,0 +1,535 @@
+Issue Type,Summary,Epic Name,Epic Link,Priority,Story Points,Status,Labels,Requirement ID,Depends On,Description,Acceptance Criteria
+Epic,"Persistence completion - goals, budget and Copilot on the database",Persistence Completion,,Highest,,In Review,foundation,F-01 / COP-02,,"h3. Why
+Accounts moved to Postgres in sprint 1. Goals and budget still live only in the browser (localStorage), so they disappear on a new device or browser, and the Copilot and Home insights are grounded on whatever the browser posts instead of the user's stored data.
+
+h3. Sprint goal
+Every piece of user data lives in the database, scoped to the signed-in user, and every AI feature reads from the database.
+
+h3. Done when
+* A user can sign in on a second device and see the same accounts, goals and budget.
+* Copilot and insights ignore client-sent financial data.
+* Account deletion (DELETE /api/user) removes goals and budget too.",
+Story,Goals persistence API + move goals from the browser to the database,,Persistence Completion,Highest,8,In Review,goals;backend;foundation,F-01,,"h3. Context
+Goals are stored in localStorage under nriwb:goals:<userId> by GoalsContext. They are lost when the user switches browser or device, and the server cannot read them. Accounts already use the target pattern: a pure mapper/validation module (src/lib/accounts-api.ts), thin route handlers, and optimistic updates with rollback in AccountsContext.
+
+h3. Scope
+* Prisma Goal model: id, userId, name, category, kind (nullable), targetUsd, currentUsd, targetYear, linkedAccountIds (String[]), plannedMonthlyUsd (nullable, used by the status-chip story), createdAt, updatedAt; index on userId.
+* src/lib/goals-api.ts: zod create/update schemas + toGoal / toCreateData / toUpdateData (pure, unit tested).
+* Routes: GET + POST /api/goals, PATCH + DELETE /api/goals/[id], all auth-scoped to the Clerk user.
+* GoalsContext loads from the API and does optimistic add/update/remove with rollback on failure.
+* One-time import of existing localStorage goals on first load after release.
+* Deleting an account removes its id from any goal's linkedAccountIds.
+* purgeUserData (account deletion) also deletes goals.
+
+h3. Acceptance criteria
+# A goal created in one browser appears after signing in on another browser.
+# Requests for another user's goal id return 404 (GET/PATCH/DELETE); no cross-user reads are possible.
+# Invalid input returns 400 with a readable message: empty name, targetUsd <= 0, currentUsd < 0, unknown category, targetYear outside current year to 2100.
+# linkedAccountIds must all belong to the caller, otherwise 400. An account can fund at most one goal (enforced server-side; linking it to a new goal removes it from the old one, matching today's UI behaviour).
+# Deleting an account that funds a goal removes it from that goal; the goal remains.
+# Existing localStorage goals are imported exactly once; reloading does not duplicate them; the local key is cleared after a successful import.
+# Demo mode shows the seed goals and writes nothing to the database.
+# If a save fails, the UI rolls back to the previous state and shows an error.
+# The Retirement goal and the Analyzer's retirement target stay in sync as they do today.
+# Deleting the user account deletes all of their goals.
+
+h3. Technical notes
+* Mirror accounts-api.ts + AccountsContext closely; reviewers should be able to diff the two.
+* linkedAccountIds as a Postgres String[] is fine for now; move to a join table only if we need per-link metadata.
+
+h3. Out of scope
+* Per-goal target currency (GOAL-02) - waits for the live FX service.
+
+h3. Sub-tasks
+* Prisma model + db push
+* goals-api.ts mapper + unit tests
+* Routes
+* GoalsContext rewire
+* localStorage import
+* Account-delete unlink + purge
+* Regression pass on Goals, Home, Analyzer","1. A goal created in one browser appears after signing in on another browser.
+2. Requests for another user's goal id return 404 (GET/PATCH/DELETE); no cross-user reads are possible.
+3. Invalid input returns 400 with a readable message: empty name, targetUsd <= 0, currentUsd < 0, unknown category, targetYear outside current year to 2100.
+4. linkedAccountIds must all belong to the caller, otherwise 400. An account can fund at most one goal (enforced server-side; linking it to a new goal removes it from the old one, matching today's UI behaviour).
+5. Deleting an account that funds a goal removes it from that goal; the goal remains.
+6. Existing localStorage goals are imported exactly once; reloading does not duplicate them; the local key is cleared after a successful import.
+7. Demo mode shows the seed goals and writes nothing to the database.
+8. If a save fails, the UI rolls back to the previous state and shows an error.
+9. The Retirement goal and the Analyzer's retirement target stay in sync as they do today.
+10. Deleting the user account deletes all of their goals."
+Story,Budget persistence API + move budget from the browser to the database,,Persistence Completion,High,5,In Review,budget;backend;foundation,F-01,,"h3. Context
+Budget (monthly income + categories) is stored in localStorage under nriwb:budget:<userId> by BudgetContext. Income is the single shared source for the Analyzer, Copilot and goals, so losing it on another device breaks several pages.
+
+h3. Scope
+* Prisma Budget model: userId (unique), incomeUsd, categories (Json: id, label, amount, color), updatedAt.
+* GET /api/budget returns the user's budget, or the empty starter template (Rent, Investments, Groceries, Shopping at $0) when none exists.
+* PUT /api/budget replaces the whole budget (it is small; no per-category endpoints).
+* BudgetContext loads from the API; edits save with a ~500 ms debounce, optimistically, with rollback on failure.
+* One-time localStorage import; purgeUserData deletes the budget.
+
+h3. Acceptance criteria
+# Income and categories entered in one browser appear on another device after sign-in.
+# Validation returns 400 for: income < 0, amount < 0, empty label or label over 60 characters, more than 50 categories.
+# Typing in an amount field produces at most one save request per ~500 ms, not one per keystroke.
+# A failed save rolls back and shows an error; no silent data loss.
+# Existing localStorage budget is imported exactly once.
+# Demo mode is client-only and writes nothing.
+# Analyzer, Copilot and Goals still read the same income value after the change.
+
+h3. Technical notes
+* Keep the category shape identical to BudgetCategory so the budget page UI does not change.
+
+h3. Out of scope
+* Multi-currency income (India rent, NRO interest) - that is the Cash flow epic (CF-01).
+
+h3. Sub-tasks
+* Prisma model + db push
+* Route + zod validation + tests
+* BudgetContext rewire with debounce
+* localStorage import
+* Purge","1. Income and categories entered in one browser appear on another device after sign-in.
+2. Validation returns 400 for: income < 0, amount < 0, empty label or label over 60 characters, more than 50 categories.
+3. Typing in an amount field produces at most one save request per ~500 ms, not one per keystroke.
+4. A failed save rolls back and shows an error; no silent data loss.
+5. Existing localStorage budget is imported exactly once.
+6. Demo mode is client-only and writes nothing.
+7. Analyzer, Copilot and Goals still read the same income value after the change."
+Story,"Copilot and insights read the user's data from the database, not from the browser",,Persistence Completion,Highest,5,In Review,copilot;backend;security,COP-02,Goals persistence API + move goals from the browser to the database; Budget persistence API + move budget from the browser to the database,"h3. Context
+POST /api/copilot currently accepts holdings, goals, income, monthlyContribution, age and rate in the request body; POST /api/insights accepts holdings and rate. Whatever the browser sends is what the model sees, so answers can be based on stale or fabricated data, and grounding depends on client state being loaded.
+
+h3. Scope
+* New src/lib/user-context.ts: loadUserContext(userId) loads accounts, goals, budget, compliance data and profile facts (age from date of birth) in one parallel batch.
+* Both routes build their prompts from loadUserContext; the request body carries only the conversation (Copilot) plus a demo flag.
+* Demo mode: the server uses the demo seed; nothing is read from or written to the user's real data.
+* Move the client-side monthlyContribution derivation into a shared helper so server and client agree.
+
+h3. Acceptance criteria
+# Posting fabricated holdings or goals in the request body does not change the model's context (covered by a test).
+# After a user edits an account balance, the next Copilot answer uses the new number without a page reload.
+# A user with no accounts gets a response grounded on 'no accounts yet' and is pointed to Add account; they never see demo portfolio numbers.
+# Demo mode still produces the demo-grounded answers it does today.
+# Home insights are generated from database data and still fall back to rule-based items on error.
+# Unauthenticated requests still return 401.
+# Loading the context adds no more than ~300 ms at p95 (single parallel query batch).
+
+h3. Technical notes
+* Until the live FX service lands, keep accepting rate from the client (validated to a sane range such as 50-150); switch to the server rate when F-02 ships.
+* This also removes the need to send the whole portfolio on every chat turn.
+
+h3. Out of scope
+* Moving chat history from localStorage to the Conversation table (separate story).
+
+h3. Sub-tasks
+* loadUserContext + tests
+* Rewire /api/copilot
+* Rewire /api/insights
+* Client callers stop sending financial data
+* Demo-mode path
+* Regression pass on proposal cards","1. Posting fabricated holdings or goals in the request body does not change the model's context (covered by a test).
+2. After a user edits an account balance, the next Copilot answer uses the new number without a page reload.
+3. A user with no accounts gets a response grounded on 'no accounts yet' and is pointed to Add account; they never see demo portfolio numbers.
+4. Demo mode still produces the demo-grounded answers it does today.
+5. Home insights are generated from database data and still fall back to rule-based items on error.
+6. Unauthenticated requests still return 401.
+7. Loading the context adds no more than ~300 ms at p95 (single parallel query batch)."
+Epic,History & trust - real net-worth history and honest freshness,History & Trust,,High,,In Review,trust;history,F-03 / TD-01 / TD-03,,"h3. Why
+For real users the Home net-worth chart is a flat line at today's value (demo users see rescaled mock data), and the green 'Synced just now' pill is hardcoded text. Balance snapshots are only written when a user manually syncs Plaid.
+
+h3. Sprint goal
+Start recording real balance history for every account, show it on Home, and tell users honestly how current their numbers are.
+
+h3. Done when
+* Every balance change and a daily Plaid sync write a snapshot.
+* Home shows a real trend, or an honest 'history starts today' state.
+* No hardcoded freshness text remains in the app.",
+Story,Save a balance snapshot on every account edit + daily scheduled Plaid sync,,History & Trust,Highest,8,In Review,backend;plaid;foundation,F-03 / ACC-08,,"h3. Context
+BalanceSnapshot exists in the schema. Today only POST /api/plaid/sync writes snapshots (via writeDailySnapshot, which keeps one row per account per day), and sync only runs when the user clicks Refresh. Manual accounts - most India holdings - never get history.
+
+h3. Scope
+* Move writeDailySnapshot into src/lib/snapshots.ts and call it from: account create, account PATCH when balanceUsd/balanceInr changes, 'mark updated', and the initial Plaid link.
+* Extract the per-item sync logic from the user route into a shared syncPlaidItem(item) used by both the user route and the cron.
+* New GET /api/cron/plaid-sync protected by a CRON_SECRET bearer token; add a daily cron entry to vercel.json.
+* The cron processes all non-disconnected PlaidItems with per-item error isolation.
+* Items that need re-login are marked requires_reauth and their account rows show a 'Reconnect' badge.
+
+h3. Acceptance criteria
+# Creating a manual account writes one snapshot with its balance.
+# Editing the balance twice in one day leaves one snapshot for that day, holding the latest value.
+# Editing only non-balance fields (nickname, ownership, details) writes no snapshot.
+# Calling the cron route without the correct secret returns 401.
+# The cron syncs every active item; one failing item does not stop the others; each run logs synced / failed / reauth counts.
+# Running the cron twice in one day does not create duplicate snapshots.
+# Accounts on a requires_reauth item show a 'Reconnect' badge; reconnecting clears it.
+# Deleting an account deletes its snapshots (existing cascade still works).
+
+h3. Technical notes
+* Define the snapshot 'day' in UTC and document it; the current helper uses server-local midnight.
+* Keep using accountsGet (cached balances), which Plaid does not bill per call. Do not switch to the paid real-time balance endpoint.
+* Vercel Hobby allows daily crons only; daily is enough for this story.
+
+h3. Out of scope
+* Backfilling history before this ships (Plaid gives no historical balances for most account types).
+* Real-time or webhook-driven sync.
+
+h3. Sub-tasks
+* snapshots.ts + tests
+* Hook into account routes
+* Extract syncPlaidItem
+* Cron route + secret + vercel.json
+* Reconnect badge on rows
+* Ops note in README (env var, schedule)","1. Creating a manual account writes one snapshot with its balance.
+2. Editing the balance twice in one day leaves one snapshot for that day, holding the latest value.
+3. Editing only non-balance fields (nickname, ownership, details) writes no snapshot.
+4. Calling the cron route without the correct secret returns 401.
+5. The cron syncs every active item; one failing item does not stop the others; each run logs synced / failed / reauth counts.
+6. Running the cron twice in one day does not create duplicate snapshots.
+7. Accounts on a requires_reauth item show a 'Reconnect' badge; reconnecting clears it.
+8. Deleting an account deletes its snapshots (existing cascade still works)."
+Story,Real net-worth trend on Home (replaces the current fake curve),,History & Trust,High,5,In Review,home;frontend,HOME-01 / F-03,Save a balance snapshot on every account edit + daily scheduled Plaid sync,"h3. Context
+The Home chart uses NET_WORTH_HISTORY mock data: rescaled in demo mode, a flat line for real users. The month-over-month delta is hidden for real users because there is no data.
+
+h3. Scope
+* Pure series builder src/lib/networth-history.ts: for each day or month, sum each account's most recent snapshot on or before that date (carry forward), liabilities negative.
+* GET /api/networth/history?range=90d|12m returns the series for the signed-in user.
+* Home chart, month-over-month delta and the US / India / All filter use the real series.
+* Mock history is used only in demo mode.
+
+h3. Acceptance criteria
+# With 2+ snapshot days, the chart shows the real series and hovering a point shows that date's net worth.
+# With fewer than 2 days of history, the chart shows a clear 'Your history starts <date>' state instead of a line.
+# The month-over-month delta appears only when a snapshot at least 28 days old exists.
+# The US / India / All filter changes the series, as it does for the headline number today.
+# A newly added account adds to the series from the day it was added, not retroactively.
+# Unit tests cover carry-forward, deleted accounts, liabilities and an empty history.
+
+h3. Technical notes
+* Convert India snapshots with balanceInr at the current rate (same as the rest of the app) so the trend is not distorted by the rate stored at save time. FX attribution of changes is HOME-10, after the FX service.
+* A jump on the day a large account is added is expected; the tooltip can note 'includes accounts added this day'.
+
+h3. Out of scope
+* FX attribution of changes (HOME-10).
+* Per-account history charts.
+
+h3. Sub-tasks
+* Series builder + tests
+* API route
+* Home chart + delta wiring
+* Empty state
+* Demo-mode guard","1. With 2+ snapshot days, the chart shows the real series and hovering a point shows that date's net worth.
+2. With fewer than 2 days of history, the chart shows a clear 'Your history starts <date>' state instead of a line.
+3. The month-over-month delta appears only when a snapshot at least 28 days old exists.
+4. The US / India / All filter changes the series, as it does for the headline number today.
+5. A newly added account adds to the series from the day it was added, not retroactively.
+6. Unit tests cover carry-forward, deleted accounts, liabilities and an empty history."
+Story,Remove the hardcoded 'Synced just now' + add a '% of net worth that's fresh' indicator,,History & Trust,High,3,In Review,home;frontend;trust,TD-01 / TD-03,,"h3. Context
+Home shows a green 'Synced just now' pill whenever the user has any accounts, regardless of real data age. Freshness (src/lib/freshness.ts: fresh under 30 days, aging 30-90, stale over 90) and provenance (src/lib/provenance.ts) already exist per row on Accounts but are never aggregated.
+
+h3. Scope
+* Replace the pill with the real most-recent update time ('Updated 3 days ago'), plus 'N accounts need updating' when any are stale.
+* Confidence meter on Home: share of net worth (weighted by absolute USD value, assets and debts) that is Fresh / Aging / Stale / Estimated.
+* Clicking the meter opens Accounts sorted stalest-first (/accounts?sort=stale).
+
+h3. Acceptance criteria
+# No hardcoded 'Synced just now' text remains anywhere.
+# The pill shows the relative age of the most recent lastSyncedAt; accounts with no timestamp count as unknown.
+# The four shares always add up to 100% and match what the Accounts rows show.
+# Estimated holdings (low-confidence provenance) are counted as Estimated regardless of age.
+# /accounts?sort=stale opens with the stalest accounts first.
+# Demo mode renders the meter from seed data without errors.
+# The aggregate helper has unit tests, including an all-empty ledger.
+
+h3. Technical notes
+* Reuse ageInDays, freshnessOf and provenanceOf; do not redefine thresholds.
+
+h3. Sub-tasks
+* Aggregate helper + tests
+* Home pill + meter
+* ?sort=stale support on Accounts","1. No hardcoded 'Synced just now' text remains anywhere.
+2. The pill shows the relative age of the most recent lastSyncedAt; accounts with no timestamp count as unknown.
+3. The four shares always add up to 100% and match what the Accounts rows show.
+4. Estimated holdings (low-confidence provenance) are counted as Estimated regardless of age.
+5. /accounts?sort=stale opens with the stalest accounts first.
+6. Demo mode renders the meter from seed data without errors.
+7. The aggregate helper has unit tests, including an all-empty ledger."
+Epic,Goals that track themselves,Goals That Track Themselves,,High,,In Review,goals,GOAL,,"h3. Why
+Goals already pull their funded amount live from linked accounts, but a goal card doesn't say whether the user is on track, only names its funding accounts inside the edit dialog, and a loan can't be a goal (linking one subtracts it).
+
+h3. Sprint goal
+Every goal clearly shows on track / ahead / behind, what funds it, and paying off a loan works as a goal.
+
+h3. Done when
+* Every goal card and Home goal widget shows a status chip.
+* Funding accounts are visible on the card.
+* A 'Debt payoff' goal type works end to end.",
+Story,"Goal status chips: On track / Ahead / Behind, with the monthly gap",,Goals That Track Themselves,High,5,In Review,goals;frontend,GOAL-05 / HOME-04,Goals persistence API + move goals from the browser to the database,"h3. Context
+Cards currently show a cost/investment chip and a 'required $/month' footer. Only the Analyzer's retirement banner says on track or short. Without a per-goal contribution, any goal without large savings looks behind, so we add an optional planned monthly contribution.
+
+h3. Scope
+* Optional 'I'm putting in $X/month' field on each goal (plannedMonthlyUsd, added to the model in the persistence story).
+* Pure goalStatus(goal, holdings, rate, currentYear) returns reached / ahead / on_track / behind / overdue, using the existing goalExpectedReturn and annuity math: projected = savings grown to the target year + planned contributions grown.
+* Thresholds: projected >= 105% of target is Ahead; 95-105% is On track; under 95% is Behind; target year passed and not reached is Overdue; funded >= target is Reached.
+* Chip on the goal card and on the Home goal widgets. Behind and Overdue show the gap: 'needs ~$X/month more' (goalMonthlyNeeded minus planned).
+* With no planned contribution, status uses savings only, and the chip suggests adding one.
+
+h3. Acceptance criteria
+# Reference case: target $100,000 in 10 years, $0 saved, 6% expected return, planned $610/month is On track (the exact annuity payment is about $610).
+# Same goal with $400/month is Behind and shows about '$210/month more'.
+# A goal whose funded amount is at or above target shows Reached, whatever the date.
+# A goal past its target year and not reached shows Overdue.
+# The chips on Home and the Goals page agree for the same goal.
+# Changing a linked account's balance updates the chip without a reload.
+# Unit tests cover every status, the band edges (95% and 105%), zero return, and a target year equal to the current year.
+
+h3. Technical notes
+* Wording stays educational ('At this pace you'd reach ~$X'), never 'you should'.
+
+h3. Out of scope
+* Currency-risk status (GOAL-04) - waits for per-goal currency.
+
+h3. Sub-tasks
+* goalStatus + tests
+* plannedMonthlyUsd field in the dialog
+* Chip on Goals card
+* Chip on Home widget
+* Copy review","1. Reference case: target $100,000 in 10 years, $0 saved, 6% expected return, planned $610/month is On track (the exact annuity payment is about $610).
+2. Same goal with $400/month is Behind and shows about '$210/month more'.
+3. A goal whose funded amount is at or above target shows Reached, whatever the date.
+4. A goal past its target year and not reached shows Overdue.
+5. The chips on Home and the Goals page agree for the same goal.
+6. Changing a linked account's balance updates the chip without a reload.
+7. Unit tests cover every status, the band edges (95% and 105%), zero return, and a target year equal to the current year."
+Story,Show which accounts fund each goal on the goal card,,Goals That Track Themselves,Medium,2,In Review,goals;frontend,GOAL-03,Clicking a Home 'Needs attention' item takes you to the exact place to fix it,"h3. Context
+The goal card only says 'Funded live from N accounts'; the account names are visible only inside the edit dialog.
+
+h3. Scope
+* List up to 3 linked accounts on the card with nickname and current value (Money component, so the currency toggle applies), then '+N more'.
+* Each account links to /accounts?focus=<id>, reusing the focus handling from the deep-link story.
+* Unlinked goals show 'Tracked manually'.
+
+h3. Acceptance criteria
+# A goal with 2 linked accounts shows both names and values; one with 5 shows 3 plus '+2 more'.
+# The values follow the global USD / INR / Lakh-Crore toggle.
+# Clicking an account opens Accounts scrolled to that row and highlights it briefly.
+# Deleted accounts never appear.
+# Goals with no linked accounts show 'Tracked manually'.
+
+h3. Sub-tasks
+* Card list UI
+* Link to Accounts focus","1. A goal with 2 linked accounts shows both names and values; one with 5 shows 3 plus '+2 more'.
+2. The values follow the global USD / INR / Lakh-Crore toggle.
+3. Clicking an account opens Accounts scrolled to that row and highlights it briefly.
+4. Deleted accounts never appear.
+5. Goals with no linked accounts show 'Tracked manually'."
+Story,Debt-payoff goal type ('clear the home loan by 2028'),,Goals That Track Themselves,Medium,5,In Review,goals;debt,GOAL-10,"Goal status chips: On track / Ahead / Behind, with the monthly gap","h3. Context
+Users want goals like 'Clear the Bangalore home loan by 2028 - Rs 28L of Rs 60L repaid'. Today linking a loan to a goal subtracts its balance from the funded amount, which makes no sense.
+
+h3. Scope
+* New category 'Debt payoff' linked to exactly one liability (linkedLiabilityId) with originalAmount (defaults to the current balance, editable, in the loan's own currency).
+* Progress = (original - current balance) / original.
+* Status uses the loan's APR and minimum payment (from its details) to project a payoff date, then compares it with the target year.
+* Debt-payoff goals are excluded from the Analyzer's cost-goal outflows (the payments are already debt service).
+
+h3. Acceptance criteria
+# Creating a Debt payoff goal offers only liabilities to link, not assets.
+# Progress for an INR loan is computed in INR, so FX moves don't change it: original Rs 60L with Rs 32L remaining shows 'Rs 28L of Rs 60L repaid' (47%).
+# When the loan balance reaches 0 the goal shows Reached.
+# If the loan has no APR or minimum payment, the card asks for them (linking to the loan's edit dialog) instead of showing a status.
+# If the linked loan is deleted, the goal stays and shows 'Loan removed - relink or delete'.
+# Linking a loan never reduces the funded amount of any other goal.
+# Unit tests cover progress, projected payoff date (checked against a standard amortization calculator) and the missing-data cases.
+
+h3. Out of scope
+* Prepay recommendations - see the prepay-vs-invest story.
+
+h3. Sub-tasks
+* Model fields
+* Dialog: category + loan picker
+* resolveGoal branch + tests
+* Card rendering
+* Analyzer exclusion","1. Creating a Debt payoff goal offers only liabilities to link, not assets.
+2. Progress for an INR loan is computed in INR, so FX moves don't change it: original Rs 60L with Rs 32L remaining shows 'Rs 28L of Rs 60L repaid' (47%).
+3. When the loan balance reaches 0 the goal shows Reached.
+4. If the loan has no APR or minimum payment, the card asks for them (linking to the loan's edit dialog) instead of showing a status.
+5. If the linked loan is deleted, the goal stays and shows 'Loan removed - relink or delete'.
+6. Linking a loan never reduces the funded amount of any other goal.
+7. Unit tests cover progress, projected payoff date (checked against a standard amortization calculator) and the missing-data cases."
+Epic,"Debt clarity - both countries, one picture",Debt Clarity,,High,,In Review,debt,DEBT,,"h3. Why
+Debt already lives in the Accounts ledger as rows, with APR and minimum payment captured. Only total debt is ever summarised, and the cross-border risks specific to NRIs (debt in rupees, income in dollars) are never surfaced.
+
+h3. Sprint goal
+Users can see what their debt costs, where the currency risk is, and the trade-off between prepaying and investing.
+
+h3. Done when
+* Debt rollups are on Accounts and Home.
+* The currency-mismatch insight fires when it applies.
+* The prepay-vs-invest calculator works for US and India loans. Tax deductibility (DEBT-01) waits for the Tax epic.",
+Story,"Debt rollups: total, average rate, monthly payments",,Debt Clarity,High,3,In Review,debt;frontend,DEBT-05,,"h3. Context
+Total debt is shown (netWorth().liabilitiesUsd). The minimum payment per loan is captured but never summed, and there is no average rate.
+
+h3. Scope
+* Pure debtRollup(holdings, rate): total debt (USD), balance-weighted average APR, total monthly payments (INR minimums converted to USD), per-country split, and counts of loans missing an APR or payment.
+* Shown in the Accounts liabilities summary and as a Debt widget on Home.
+
+h3. Acceptance criteria
+# Loans of $100,000 at 6% and $300,000 at 4% show an average APR of 4.5%.
+# Monthly payments add US and India minimums, with India converted at the current rate.
+# Loans with no APR are excluded from the average and called out ('2 loans missing a rate'), linking to those loans.
+# With no debts, the Home widget is hidden and the Accounts summary shows nothing new.
+# Numbers follow the global currency toggle.
+# Unit tests cover weighting, missing data and no debts.
+
+h3. Sub-tasks
+* debtRollup + tests
+* Accounts summary
+* Home widget","1. Loans of $100,000 at 6% and $300,000 at 4% show an average APR of 4.5%.
+2. Monthly payments add US and India minimums, with India converted at the current rate.
+3. Loans with no APR are excluded from the average and called out ('2 loans missing a rate'), linking to those loans.
+4. With no debts, the Home widget is hidden and the Accounts summary shows nothing new.
+5. Numbers follow the global currency toggle.
+6. Unit tests cover weighting, missing data and no debts."
+Story,Warning when debt is in one currency and income in another,,Debt Clarity,High,3,In Review,debt;insight,DEBT-03,"Budget persistence API + move budget from the browser to the database; Debt rollups: total, average rate, monthly payments","h3. Context
+A typical NRI earns in dollars but carries a rupee home loan, so a rupee move changes what the loan costs in dollars. The ingredients exist (budget income, liabilities by country) but nothing connects them.
+
+h3. Scope
+* Pure currencyMismatch(holdings, income, rate): share of debt in INR vs share of income in INR (budget income is USD-only today, so income is 100% USD).
+* Fires when the gap is at least 50 percentage points AND INR debt is at least $10,000 equivalent (avoids noise from small balances).
+* The message quantifies the exposure: 'If the rupee strengthens 5%, your Rs 40L loan costs about $X more in dollars.'
+* Shown as a banner on the Accounts liabilities section and as a Home 'Needs attention' item. Dismissible per user.
+
+h3. Acceptance criteria
+# User with Rs 40L of India debt, no US debt and USD income sees the banner, e.g. '100% of your debt is in rupees; 100% of your income is in dollars.'
+# The 5% figure equals INR debt / rate x 0.05 (checked in tests).
+# A user with only US debt, or INR debt under $10,000, sees no warning.
+# The Home item deep-links to the liabilities section on Accounts.
+# A dismissed warning stays dismissed until the INR debt share changes by 10+ points.
+# Copy is educational: it explains the exposure and does not tell the user what to do.
+
+h3. Out of scope
+* Hedging suggestions.
+* Multi-currency income (comes with Cash flow, CF-01).
+
+h3. Sub-tasks
+* currencyMismatch + tests
+* Accounts banner
+* Home insight item
+* Dismiss state
+* Copy review","1. User with Rs 40L of India debt, no US debt and USD income sees the banner, e.g. '100% of your debt is in rupees; 100% of your income is in dollars.'
+2. The 5% figure equals INR debt / rate x 0.05 (checked in tests).
+3. A user with only US debt, or INR debt under $10,000, sees no warning.
+4. The Home item deep-links to the liabilities section on Accounts.
+5. A dismissed warning stays dismissed until the INR debt share changes by 10+ points.
+6. Copy is educational: it explains the exposure and does not tell the user what to do."
+Story,"Prepay-vs-invest calculator, with a 'what if the rupee moves 5%' toggle",,Debt Clarity,Medium,5,In Review,debt;analysis,DEBT-04,"Debt rollups: total, average rate, monthly payments","h3. Context
+A common NRI question: should spare cash prepay the India home loan or go into investments? The per-account expected-return engine exists; there is no prepay math anywhere.
+
+h3. Scope
+* Opened from a loan row or its edit dialog. Inputs: extra amount (lump sum or monthly), horizon (defaults to the loan's remaining term), expected investment return (defaults to the user's portfolio expected return, editable).
+* Scenario A (prepay): the extra goes to the loan; after payoff, the freed payment is invested at the expected return.
+* Scenario B (invest): the extra is invested; the loan runs normally.
+* Compare net position at the horizon (investments minus remaining loan), interest saved, and months saved.
+* For INR loans funded from USD: a rupee-move slider from -10% to +10% that re-values the INR amounts at the horizon.
+
+h3. Acceptance criteria
+# Both scenarios show end value, interest paid and payoff date side by side, with 'guaranteed (loan rate)' vs 'expected, not guaranteed' labels.
+# Results match a standard amortization calculator within $1 for three reference cases kept in the unit tests.
+# Changing inputs recalculates instantly (client-side, no API call).
+# The rupee slider appears only for INR loans and moves the result in the expected direction (a stronger rupee makes prepaying relatively better).
+# All assumptions are listed under the result.
+# No wording recommends an option; the copy explains the trade-off.
+# Pre-tax only, with a note that the after-tax view comes later.
+
+h3. Technical notes
+* Keep the math in a pure module (src/lib/prepay.ts) so the Copilot can reuse it later.
+
+h3. Out of scope
+* Tax effects (mortgage interest deduction, Section 24/80C) - Tax epic.
+* Saving scenarios as goals.
+
+h3. Sub-tasks
+* prepay.ts + reference-case tests
+* Calculator UI
+* Rupee sensitivity
+* Copy review","1. Both scenarios show end value, interest paid and payoff date side by side, with 'guaranteed (loan rate)' vs 'expected, not guaranteed' labels.
+2. Results match a standard amortization calculator within $1 for three reference cases kept in the unit tests.
+3. Changing inputs recalculates instantly (client-side, no API call).
+4. The rupee slider appears only for INR loans and moves the result in the expected direction (a stronger rupee makes prepaying relatively better).
+5. All assumptions are listed under the result.
+6. No wording recommends an option; the copy explains the trade-off.
+7. Pre-tax only, with a note that the after-tax view comes later."
+Epic,Copilot everywhere,Copilot Everywhere,,High,,In Review,copilot,COP-01 / HOME-07 / HOME-03,,"h3. Why
+Copilot is a destination page; other pages only link to it (plus one embedded panel on Accounts). Home 'Needs attention' items describe a problem but don't take the user to where it gets fixed.
+
+h3. Sprint goal
+The Copilot is one click away on every page, and every alert leads straight to its fix.
+
+h3. Done when
+* A floating Copilot button is on every signed-in page except the Copilot page.
+* Every Home attention item links to the exact row or dialog that resolves it.",
+Story,Floating Copilot button on every page,,Copilot Everywhere,High,8,In Review,copilot;frontend,COP-01 / HOME-07,"Copilot and insights read the user's data from the database, not from the browser","h3. Context
+The streaming chat and proposal cards (accept / edit / discard) are already reusable: AiAddPanel on Accounts uses the same useCopilotStream pipeline. The app shell (AppGate) has no launcher.
+
+h3. Scope
+* Floating button in the lower right of the app shell on every signed-in page.
+* Opens a right-side panel (desktop) or full-screen sheet (mobile) using useCopilotStream and the existing chat UI and proposal cards.
+* Suggested prompts depend on the current page (3-4 each for Home, Accounts, Goals, Budget, Analyzer).
+* 'Open full view' continues the same conversation on /copilot (conversations already share one store).
+* Hidden on /copilot itself. Shortcut Ctrl/Cmd+J toggles it; Escape closes it.
+
+h3. Acceptance criteria
+# The button appears on Home, Accounts, Goals, Budget and Analyzer, and not on /copilot or the onboarding and sign-in screens.
+# Suggested prompts change with the page, e.g. Accounts: 'Which accounts are stale?'; Goals: 'Am I on track for retirement?'
+# Accepting a proposal card in the panel updates the page behind it immediately (shared contexts).
+# 'Open full view' shows the same messages on /copilot.
+# The panel never covers the page's primary action buttons on a 1280px-wide screen; on mobile it is a full-screen sheet with a close button.
+# Keyboard: Ctrl/Cmd+J toggles; Escape closes; focus returns to the button; the panel is labelled for screen readers.
+# Opening and closing does not reset an in-progress answer.
+
+h3. Technical notes
+* Mount once in AppGate so page navigation doesn't remount the panel or drop a streaming reply.
+
+h3. Out of scope
+* Voice input.
+* Proactive unprompted messages (COP-03).
+
+h3. Sub-tasks
+* Launcher + panel shell
+* Page-aware prompt sets
+* Full-view handoff
+* Mobile sheet
+* Keyboard + accessibility
+* QA across pages","1. The button appears on Home, Accounts, Goals, Budget and Analyzer, and not on /copilot or the onboarding and sign-in screens.
+2. Suggested prompts change with the page, e.g. Accounts: 'Which accounts are stale?'; Goals: 'Am I on track for retirement?'
+3. Accepting a proposal card in the panel updates the page behind it immediately (shared contexts).
+4. 'Open full view' shows the same messages on /copilot.
+5. The panel never covers the page's primary action buttons on a 1280px-wide screen; on mobile it is a full-screen sheet with a close button.
+6. Keyboard: Ctrl/Cmd+J toggles; Escape closes; focus returns to the button; the panel is labelled for screen readers.
+7. Opening and closing does not reset an in-progress answer."
+Story,Clicking a Home 'Needs attention' item takes you to the exact place to fix it,,Copilot Everywhere,Highest,2,In Review,home;frontend,HOME-03,,"h3. Context
+Attention items (AI-ranked, or the rule-based fallback) have title, detail and meta, but no link. The user has to work out where to go.
+
+h3. Scope
+* Add an optional href to ComplianceItem / Insight.
+* Rule-based items map to targets: FBAR/FATCA go to /accounts?country=IN; PFIC goes to /accounts?focus=<first PFIC account>; NRO-to-NRE TDS goes to the NRO account; stale data goes to /accounts?sort=stale.
+* For AI items, the model returns an item key; the server maps keys to routes (never trust a model-generated URL).
+* Accounts handles ?focus=<id> (expand the folder, scroll, highlight for 2s) and ?country=. Goals handles ?edit=<id> (opens the dialog).
+
+h3. Acceptance criteria
+# Every rule-based item on Home is clickable and lands on the relevant account row or filtered view.
+# AI items with a known key are clickable; unknown keys render as today, not clickable, with no broken links.
+# ?focus with an unknown or deleted id loads the page normally with no error.
+# The focused row is scrolled into view and highlighted even if its category folder was collapsed.
+# The link is keyboard accessible (a real link, not a div with onClick).
+
+h3. Technical notes
+* Server-side key-to-route mapping also stops prompt-injected links from appearing in the UI.
+
+h3. Sub-tasks
+* href on item types
+* Rule-based mappings
+* AI key-to-route mapping
+* ?focus / ?country / ?edit handling
+* Tests for the mappings","1. Every rule-based item on Home is clickable and lands on the relevant account row or filtered view.
+2. AI items with a known key are clickable; unknown keys render as today, not clickable, with no broken links.
+3. ?focus with an unknown or deleted id loads the page normally with no error.
+4. The focused row is scrolled into view and highlighted even if its category folder was collapsed.
+5. The link is keyboard accessible (a real link, not a div with onClick)."

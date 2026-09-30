@@ -4,5 +4,11 @@
     "deploymentEnabled": {
       "main": true
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/plaid-sync",
+      "schedule": "0 9 * * *"
+    }
+  ]
 }

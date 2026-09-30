@@ -4,12 +4,13 @@
  * A goal is a target amount (in USD) you're saving toward by a target year.
  * Everything here is rule-based and source-of-truth-free: the numbers come
  * from the user, and these helpers only derive progress + a rough monthly
- * contribution. Goals live in client state (GoalsContext) for now, mirroring
- * the way accounts are held — no DB round-trip in the demo.
+ * contribution. Goals are persisted per user via /api/goals (see goals-api.ts);
+ * GoalsContext holds them client-side, and demo mode uses SEED_GOALS only.
  */
 
 import { usdValue, type Holding } from '@/lib/portfolio'
 import { portfolioExpectedReturn } from '@/lib/allocation'
+import { resolveDebtGoal } from '@/lib/debt-goal'
 
 /** Fallback growth rate when there are no holdings to derive one from. */
 export const DEFAULT_GOAL_RETURN = 0.06
@@ -21,8 +22,13 @@ export type GoalCategory =
   | 'travel'
   | 'emergency'
   | 'other'
+  | 'debt'
 
-/** Canonical render order for pickers + legends. */
+/**
+ * Savings categories, in render order. Debt payoff (`'debt'`) is separate: it
+ * needs a linked loan, so only the Goals dialog offers it (see ALL_GOAL_CATEGORIES),
+ * not the Copilot or the AI goal suggester.
+ */
 export const GOAL_CATEGORY_ORDER: GoalCategory[] = [
   'retirement',
   'education',
@@ -31,6 +37,9 @@ export const GOAL_CATEGORY_ORDER: GoalCategory[] = [
   'emergency',
   'other',
 ]
+
+/** Every category the Goals dialog offers, debt payoff last. */
+export const ALL_GOAL_CATEGORIES: GoalCategory[] = [...GOAL_CATEGORY_ORDER, 'debt']
 
 export const GOAL_CATEGORY_META: Record<
   GoalCategory,
@@ -42,6 +51,7 @@ export const GOAL_CATEGORY_META: Record<
   travel: { label: 'Travel', accent: 'oklch(0.62 0.13 300)' },
   emergency: { label: 'Emergency Fund', accent: 'var(--india)' },
   other: { label: 'Other', accent: 'oklch(0.6 0.14 200)' },
+  debt: { label: 'Debt payoff', accent: 'var(--danger)' },
 }
 
 /**
@@ -60,6 +70,8 @@ const DEFAULT_KIND: Record<GoalCategory, GoalKind> = {
   travel: 'cost',
   emergency: 'investment',
   other: 'cost',
+  // Paying down debt is already debt service in the cash flow — never a dip.
+  debt: 'investment',
 }
 
 export interface Goal {
@@ -78,6 +90,12 @@ export interface Goal {
    * instead of the manual `currentUsd`. Each account funds at most one goal.
    */
   linkedAccountIds?: string[]
+  /** What the user plans to contribute each month, in USD (optional). */
+  plannedMonthlyUsd?: number
+  /** Debt payoff only: the liability being paid off. */
+  linkedLiabilityId?: string
+  /** Debt payoff only: the starting balance, in the loan's own currency. */
+  originalAmount?: number
 }
 
 /** True when the goal draws its funded amount from linked accounts. */
@@ -100,8 +118,29 @@ export function goalLinkedUsd(g: Goal, holdings: Holding[], rate: number): numbe
  * all display/progress so a linked goal always mirrors the real accounts.
  */
 export function resolveGoal(g: Goal, holdings: Holding[], rate: number): Goal {
+  if (g.category === 'debt') return resolveDebtGoal(g, holdings, rate)
   if (!isGoalLinked(g)) return g
   return { ...g, currentUsd: goalLinkedUsd(g, holdings, rate) }
+}
+
+/**
+ * Enforce "an account funds at most one goal": the goals (other than `keepId`)
+ * that lose one of the `claimed` account ids, with their new id lists. Only
+ * changed goals are returned, so the caller writes just those.
+ */
+export function releaseClaims<G extends { id: string; linkedAccountIds?: string[] }>(
+  goals: G[],
+  keepId: string,
+  claimed: string[] | undefined,
+): { id: string; linkedAccountIds: string[] }[] {
+  if (!claimed?.length) return []
+  const taken = new Set(claimed)
+  const changed: { id: string; linkedAccountIds: string[] }[] = []
+  for (const g of goals) {
+    if (g.id === keepId || !g.linkedAccountIds?.some((i) => taken.has(i))) continue
+    changed.push({ id: g.id, linkedAccountIds: g.linkedAccountIds.filter((i) => !taken.has(i)) })
+  }
+  return changed
 }
 
 /** Resolve a goal's kind (explicit override, else the category default). */

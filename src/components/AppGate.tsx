@@ -2,6 +2,8 @@ import { currentUser } from "@clerk/nextjs/server";
 import Onboarding from "@/components/Onboarding";
 import TopNav from "@/components/TopNav";
 import Sidebar from "@/components/Sidebar";
+import SaveErrorToast from "@/components/SaveErrorToast";
+import { CopilotLauncher } from "@/components/copilot/CopilotLauncher";
 import { ProfileProvider } from "@/context/ProfileContext";
 import { prisma } from "@/lib/prisma";
 
@@ -54,6 +56,8 @@ export default async function AppGate({
           </div>
         </main>
       </div>
+      <SaveErrorToast />
+      <CopilotLauncher />
     </ProfileProvider>
   );
 }

@@ -7,6 +7,7 @@ import {
   toHolding,
   formatZodError,
 } from '@/lib/accounts-api'
+import { writeDailySnapshot } from '@/lib/snapshots'
 
 // Touches customer banking data + the DB — must run on Node, never the edge.
 export const runtime = 'nodejs'
@@ -24,11 +25,20 @@ export async function GET() {
     throw e
   }
 
-  const rows = await prisma.account.findMany({
-    where: { userId },
-    orderBy: { createdAt: 'asc' },
+  const [rows, reauthItems] = await Promise.all([
+    prisma.account.findMany({ where: { userId }, orderBy: { createdAt: 'asc' } }),
+    prisma.plaidItem.findMany({
+      where: { userId, status: 'requires_reauth' },
+      select: { itemId: true },
+    }),
+  ])
+  // Rows on an item whose bank login expired get a "Reconnect" badge.
+  const reauth = new Set(reauthItems.map((i) => i.itemId))
+  const accounts = rows.map((r) => {
+    const h = toHolding(r)
+    return r.plaidItemId && reauth.has(r.plaidItemId) ? { ...h, needsReauth: true, plaidItemId: r.plaidItemId } : h
   })
-  return Response.json({ accounts: rows.map(toHolding) })
+  return Response.json({ accounts })
 }
 
 /**
@@ -77,6 +87,8 @@ export async function POST(request: Request) {
     const created = await prisma.account.create({
       data: toCreateData(input, userId) as Prisma.AccountUncheckedCreateInput,
     })
+    // History starts the day an account is added.
+    await writeDailySnapshot(created.id, created.balanceUsd, created.balanceInr)
     return Response.json({ account: toHolding(created) }, { status: 201 })
   } catch (e) {
     // Duplicate Plaid account id (the only unique constraint on Account).

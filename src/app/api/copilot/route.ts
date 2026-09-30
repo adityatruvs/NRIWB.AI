@@ -10,13 +10,17 @@ import {
   loansSecuredBy,
   assetEquity,
   TYPE_LABELS,
+  ownershipLabel,
   FBAR_THRESHOLD_USD,
+  fbarBasisPhrase,
   FATCA_THRESHOLD_USD,
   type Holding,
 } from '@/lib/portfolio'
 import { portfolioExpectedReturn, expectedReturn } from '@/lib/allocation'
 import { resolveGoal, goalKind, type Goal } from '@/lib/goals'
 import { ACTIONS_PROMPT } from '@/lib/copilot-actions'
+import { loadUserContext, parseRate } from '@/lib/user-context'
+import { recordedFbarPeak, type FbarSnapshot } from '@/lib/fbar'
 
 export const runtime = 'nodejs'
 
@@ -30,24 +34,23 @@ interface WireMessage {
   text: string
 }
 
+/**
+ * The request carries only the conversation, the demo flag and (until the FX
+ * service lands) the rate. The user's financial data is loaded server-side —
+ * anything else in the body is ignored.
+ */
 interface CopilotRequest {
   messages: WireMessage[]
-  holdings: Holding[]
-  rate: number
-  /** Planning context — so the copilot can project and answer goal/budget questions. */
-  income?: number
-  monthlyContribution?: number
-  age?: number | null
-  goals?: Goal[]
+  rate?: number
+  demo?: boolean
 }
 
 const usd = (n: number) =>
   new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n)
 
 /**
- * Grounds the copilot in the user's live portfolio. Recomputed server-side
- * from the posted holdings so the model always sees the same numbers the
- * dashboard renders.
+ * Grounds the copilot in the user's stored portfolio, goals and budget (see
+ * loadUserContext), computed with the same selectors the dashboard renders.
  */
 function buildSystemPrompt(
   holdings: Holding[],
@@ -56,9 +59,10 @@ function buildSystemPrompt(
   monthlyContribution: number,
   age: number | null,
   goals: Goal[],
+  fbarSnapshots: FbarSnapshot[],
 ): string {
   const nw = netWorth(holdings, rate)
-  const fbar = fbarStatus(holdings, rate)
+  const fbar = fbarStatus(holdings, rate, recordedFbarPeak(holdings, fbarSnapshots, rate, new Date().getUTCFullYear()))
   const pfics = pficHoldings(holdings)
   const compliance = complianceItems(holdings, rate)
 
@@ -77,6 +81,8 @@ function buildSystemPrompt(
       } else if (!isLiability(h) && loansSecuredBy(h.id, holdings).length > 0) {
         extra = ` — ${usd(assetEquity(h, holdings, rate))} equity after loans`
       }
+      const owner = ownershipLabel(h)
+      if (owner) extra += h.ownership === 'family' ? ` — held in name of ${owner}` : ` — joint: ${owner}`
       const rtn = isLiability(h) ? '' : `, ~${(expectedReturn(h) * 100).toFixed(1)}%/yr`
       return `- [${h.country}] ${h.nickname} — ${h.institution}, ${TYPE_LABELS[h.accountType] ?? h.accountType}, ${usd(usdValue(h, rate))}${rtn}${flags.length ? ` (${flags.join(', ')})` : ''}${extra}${h.id ? ` [ref: ${h.id}]` : ''}`
     })
@@ -139,7 +145,7 @@ Blended expected return: ${blendedR != null ? `${(blendedR * 100).toFixed(1)}%/y
       : ''
   }
 FX rate: 1 USD = ₹${rate.toFixed(2)}
-FBAR: India accounts peaked at ~${usd(fbar.peakUsd)} vs the ${usd(FBAR_THRESHOLD_USD)} threshold — ${fbar.crossed ? 'CROSSED, filing required' : `${Math.round(fbar.pctOfThreshold)}% of the limit`}
+FBAR: ${fbarBasisPhrase(fbar)}${fbar.basis === 'current' ? ' (no balance history recorded this year, so the true yearly maximum is unknown and may be higher)' : ''} vs the ${usd(FBAR_THRESHOLD_USD)} threshold — ${fbar.crossed ? 'CROSSED, filing required' : `${Math.round(fbar.pctOfThreshold)}% of the limit`}
 FATCA: Form 8938 reporting threshold is ${usd(FATCA_THRESHOLD_USD)} in foreign assets
 PFIC holdings: ${pfics.length > 0 ? pfics.map((p) => p.nickname).join(', ') : 'none'}
 
@@ -149,7 +155,7 @@ Goals:
 ${goalLines}${retireGoal ? `\nRetirement target: ${usd(retireGoal.targetUsd)} by ${retireGoal.targetYear}.` : ''}
 
 Accounts (${holdings.length}):
-${accountLines}
+${holdings.length > 0 ? accountLines : 'No accounts yet. The user has not added any accounts, so there are no balances to discuss. Say so plainly, and point them to "Add account" on the Accounts page (it supports Plaid for US banks and manual entry for India holdings). Never invent example balances.'}
 
 Compliance status:
 ${complianceLines}
@@ -160,6 +166,7 @@ Guidelines:
 - Be concise: a few short paragraphs or a tight bullet list. This renders in a small chat panel.
 - Formatting is limited: plain text, **bold** for emphasis, and lines starting with "•" for bullets. No headers, tables, links, LaTeX, or nested lists.
 - You explain and inform; you do not give personalized tax, legal, or investment advice. For filings or elections (e.g. QEF vs mark-to-market), explain the options and recommend confirming with a cross-border CPA.
+- FBAR figures: use ONLY the FBAR line above. Never state, estimate or round up a "peak" or "maximum" balance that isn't given there. When it says current balances, call it the current balance and note that FBAR counts each account's highest balance during the year, which the app hasn't recorded.
 - PROJECTIONS ARE IN SCOPE — never refuse them. When asked to predict or project net worth (e.g. "in 2 years"), ANSWER using the blended expected return, the user's contributions, and the illustrative path above — these come from the user's own data, so you are NOT lacking assumptions. State the projected figure, label it illustrative, name the assumptions (the blended rate, contributions, debts held flat), and note real returns vary year to year. If the user supplies a different rate or savings amount, recompute from it. The same applies to retirement and goal questions ("am I on track?", "how much more per month?") — answer them from the goals + cash-flow data above.
 - If asked something genuinely outside cross-border personal finance and planning, answer briefly and steer back.
 
@@ -170,8 +177,9 @@ export async function POST(req: Request) {
   // The copilot streams the user's portfolio to Anthropic — require an authenticated
   // session even though the UI is already gated (defense in depth: the endpoint is
   // directly reachable). Anthropic is a subprocessor; disclose this in the privacy policy.
+  let userId: string
   try {
-    await requireUserId()
+    userId = await requireUserId()
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized()
     throw e
@@ -192,17 +200,20 @@ export async function POST(req: Request) {
     return Response.json({ error: 'Last message must be from the user' }, { status: 400 })
   }
 
+  const ctx = await loadUserContext(userId, { demo: body.demo === true })
+
   const stream = client.messages.stream({
     model: MODEL,
     max_tokens: 8192,
     thinking: { type: 'adaptive' },
     system: buildSystemPrompt(
-      body.holdings ?? [],
-      body.rate || 83,
-      Math.max(0, Number(body.income) || 0),
-      Math.max(0, Number(body.monthlyContribution) || 0),
-      typeof body.age === 'number' ? body.age : null,
-      Array.isArray(body.goals) ? body.goals : [],
+      ctx.holdings,
+      parseRate(body.rate),
+      ctx.budget.incomeUsd,
+      ctx.monthlyContribution,
+      ctx.age,
+      ctx.goals,
+      ctx.fbarSnapshots,
     ),
     messages: history.map((m): Anthropic.MessageParam => ({ role: m.role, content: m.text })),
   })

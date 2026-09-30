@@ -10,7 +10,7 @@
  */
 
 import { z } from 'zod'
-import { LIABILITY_TYPES, type Holding, type HoldingDetails } from '@/lib/portfolio'
+import { LIABILITY_TYPES, type CoOwner, type Holding, type HoldingDetails, type Ownership } from '@/lib/portfolio'
 import type { AccountType } from '@/types/accounts'
 
 /**
@@ -28,6 +28,14 @@ export const ACCOUNT_TYPES = [
 const COUNTRIES = ['US', 'IN'] as const
 const SOURCES = ['manual', 'plaid', 'setu', 'pdf_upload'] as const
 const KINDS = ['asset', 'liability'] as const
+const OWNERSHIPS = ['self', 'joint', 'family'] as const satisfies readonly Ownership[]
+const RELATIONS = ['spouse', 'father', 'mother', 'sibling', 'child', 'other'] as const
+
+/** One co-holder / title-holder. Name is optional for a named relation ("Father"). */
+export const coOwnerSchema = z.object({
+  name: z.string().trim().max(80).default(''),
+  relation: z.enum(RELATIONS),
+})
 
 /** Instrument-specific details — mirrors `HoldingDetails`. Unknown keys are stripped. */
 export const detailsSchema = z.object({
@@ -60,6 +68,8 @@ const baseFields = {
   // from "leave unchanged" (omitted / undefined).
   securedAgainstId: z.string().min(1).nullable(),
   details: detailsSchema.nullable(),
+  ownership: z.enum(OWNERSHIPS),
+  coOwners: z.array(coOwnerSchema).max(10).nullable(),
   plaidAccountId: z.string().min(1).nullable(),
 }
 
@@ -72,11 +82,19 @@ export const createAccountSchema = z.object({
   kind: baseFields.kind.default('asset'),
   securedAgainstId: baseFields.securedAgainstId.optional(),
   details: baseFields.details.optional(),
+  ownership: baseFields.ownership.default('self'),
+  coOwners: baseFields.coOwners.optional(),
   plaidAccountId: baseFields.plaidAccountId.optional(),
 })
 
-/** PATCH: any subset of fields, no defaults (so omitted fields stay untouched). */
-export const updateAccountSchema = z.object(baseFields).partial()
+/**
+ * PATCH: any subset of fields, no defaults (so omitted fields stay untouched).
+ * `confirmBalance` isn't stored: it marks a "mark updated" (the user confirming
+ * today's balance), which records a history snapshot even though nothing changed.
+ */
+export const updateAccountSchema = z
+  .object({ ...baseFields, confirmBalance: z.boolean() })
+  .partial()
 
 export type CreateAccountInput = z.infer<typeof createAccountSchema>
 export type UpdateAccountInput = z.infer<typeof updateAccountSchema>
@@ -94,6 +112,8 @@ export interface AccountRecord {
   source: string
   kind: string
   securedAgainstId: string | null
+  ownership: string
+  coOwners: unknown
   details: unknown
   lastSyncedAt: Date | null
 }
@@ -105,6 +125,13 @@ function cleanDetails(details: unknown): HoldingDetails | undefined {
   if (!parsed.success) return undefined
   const entries = Object.entries(parsed.data).filter(([, v]) => v !== undefined)
   return entries.length > 0 ? (Object.fromEntries(entries) as HoldingDetails) : undefined
+}
+
+/** Validate stored co-owners; `self` never carries any (they'd be meaningless). */
+function cleanCoOwners(ownership: string, coOwners: unknown): CoOwner[] | undefined {
+  if (ownership === 'self' || !Array.isArray(coOwners)) return undefined
+  const parsed = z.array(coOwnerSchema).safeParse(coOwners)
+  return parsed.success && parsed.data.length > 0 ? parsed.data : undefined
 }
 
 /** Native currency of the account — an FCNR deposit overrides its country default. */
@@ -133,6 +160,11 @@ export function toHolding(row: AccountRecord): Holding {
     kind: row.kind === 'liability' ? 'liability' : 'asset',
   }
   if (row.securedAgainstId) holding.securedAgainstId = row.securedAgainstId
+  if (row.ownership === 'joint' || row.ownership === 'family') {
+    holding.ownership = row.ownership
+    const coOwners = cleanCoOwners(row.ownership, row.coOwners)
+    if (coOwners) holding.coOwners = coOwners
+  }
   const details = cleanDetails(row.details)
   if (details) holding.details = details
   // Serialize the Date to an ISO string — the client reads freshness off this.
@@ -160,6 +192,8 @@ export function toCreateData(input: CreateAccountInput, userId: string) {
     // Only a liability can be secured against an asset; assets never carry the link.
     securedAgainstId: kind === 'liability' ? (input.securedAgainstId ?? null) : null,
     details: details ?? undefined,
+    ownership: input.ownership,
+    coOwners: cleanCoOwners(input.ownership, input.coOwners),
     plaidAccountId: input.plaidAccountId ?? null,
     // A manual write is the user telling us "this is current" — stamp freshness.
     lastSyncedAt: new Date(),
@@ -196,6 +230,16 @@ export function toUpdateData(patch: UpdateAccountInput): Record<string, unknown>
   if (patch.kind !== undefined && data.kind === undefined) data.kind = patch.kind
 
   if (patch.securedAgainstId !== undefined) data.securedAgainstId = patch.securedAgainstId
+
+  // Co-owners only mean something alongside a non-self ownership; switching to
+  // `self` clears them. `null` coOwners => clear (route maps to Prisma.DbNull).
+  if (patch.ownership !== undefined) {
+    data.ownership = patch.ownership
+    if (patch.ownership === 'self') data.coOwners = null
+  }
+  if (patch.coOwners !== undefined && data.coOwners === undefined) {
+    data.coOwners = patch.coOwners && patch.coOwners.length > 0 ? patch.coOwners : null
+  }
 
   if (patch.details !== undefined) {
     // null => clear; an object => cleaned (an all-empty object also clears).

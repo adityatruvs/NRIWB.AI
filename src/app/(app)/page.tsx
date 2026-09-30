@@ -42,6 +42,11 @@ import {
   type RiskLevel,
 } from '@/lib/allocation'
 import { goalProgress, goalAccent, resolveGoal } from '@/lib/goals'
+import { goalStatus } from '@/lib/goal-status'
+import { GoalStatusChip } from '@/components/GoalStatusChip'
+import { withHrefs } from '@/lib/attention-links'
+import { fbarSinceLabel, type RecordedFbarPeak } from '@/lib/fbar'
+import { monthAgoValue, isoDay, type HistoryRange, type NetWorthHistory } from '@/lib/networth-history'
 import { useUser } from '@clerk/nextjs'
 import { NET_WORTH_HISTORY, RESIDENCY, TARGET_INDIA_PCT } from '@/data/mock/insights'
 import { Card, CardHeader } from '@/components/ui/Card'
@@ -50,6 +55,10 @@ import { Money } from '@/components/ui/Money'
 import { Reveal } from '@/components/ui/Reveal'
 import { PlaidConnect } from '@/components/PlaidConnect'
 import { DataCompletion } from '@/components/DataCompletion'
+import { ConfidenceMeter } from '@/components/ConfidenceMeter'
+import { DebtSummaryCard, mismatchCopy, useMismatchDismissal } from '@/components/DebtSummary'
+import { currencyMismatch } from '@/lib/debt'
+import { freshnessMix, ageInDays, relativeAge } from '@/lib/freshness'
 import { cn } from '@/lib/utils'
 
 type CountryFilter = 'all' | 'us' | 'in'
@@ -60,7 +69,7 @@ function greetingForHour(h: number): string {
 
 export default function DashboardPage() {
   const { mode, rate } = useCurrency()
-  const { holdings, addLinked, demo } = useAccounts()
+  const { holdings, addLinked, demo, loading: accountsLoading } = useAccounts()
   const { goals } = useGoals()
   const { age: profileAge, indiaDaysCurrentYear, riskTolerance } = useProfile()
   const { user } = useUser()
@@ -68,6 +77,9 @@ export default function DashboardPage() {
   // Compute the time-based greeting after mount so SSR and the first client
   // render agree (the hour can differ between server build and the browser).
   const [greeting, setGreeting] = useState('Welcome')
+  // Set after mount (like the greeting) so SSR and the first client render agree.
+  const [currentYear, setCurrentYear] = useState(2026)
+  useEffect(() => setCurrentYear(new Date().getFullYear()), [])
   useEffect(() => setGreeting(greetingForHour(new Date().getHours())), [])
   const [filter, setFilter] = useState<CountryFilter>('all')
   const [activeAsset, setActiveAsset] = useState<number | null>(null)
@@ -80,7 +92,8 @@ export default function DashboardPage() {
   const [aiCompliance, setAiCompliance] = useState<ComplianceItem[] | null>(null)
   const [aiTs, setAiTs] = useState<number | null>(null)
   const [aiLoading, setAiLoading] = useState(false)
-  const insightsCacheKey = user?.id ? `nriwb:insights:${user.id}` : null
+  // v2: items cached before the FBAR wording fix said "peaked at" an estimated figure.
+  const insightsCacheKey = user?.id ? `nriwb:insights:v2:${user.id}` : null
 
   const refreshInsights = useCallback(async () => {
     if (holdings.length === 0 || aiLoading) return
@@ -89,7 +102,7 @@ export default function DashboardPage() {
       const r = await fetch('/api/insights', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ holdings, rate }),
+        body: JSON.stringify({ rate, demo }),
       })
       const d = r.ok ? await r.json() : null
       if (Array.isArray(d?.insights)) {
@@ -109,7 +122,7 @@ export default function DashboardPage() {
     } finally {
       setAiLoading(false)
     }
-  }, [holdings, rate, aiLoading, insightsCacheKey])
+  }, [holdings.length, rate, demo, aiLoading, insightsCacheKey])
 
   // On load: show the cached result; only auto-generate the first time (no cache).
   useEffect(() => {
@@ -135,21 +148,87 @@ export default function DashboardPage() {
   const nw = netWorth(holdings, rate)
   const heroUsd = filter === 'us' ? nw.usUsd : filter === 'in' ? nw.inUsd : nw.totalUsd
 
-  // The 12-month history is curated demo data. Demo mode rescales it to end at
-  // the on-screen value; real users have no balance history yet, so show a flat
-  // line at their current net worth rather than invent a trend (and hide the
-  // fabricated "this month" delta below).
-  const lastHist = NET_WORTH_HISTORY[NET_WORTH_HISTORY.length - 1].usd
-  const series = demo
-    ? NET_WORTH_HISTORY.map((h) => (h.usd / lastHist) * heroUsd)
-    : NET_WORTH_HISTORY.map(() => heroUsd)
-  const prevMonth = series[series.length - 2]
-  const monthDelta = series[series.length - 1] - prevMonth
-  const monthPct = prevMonth ? (monthDelta / prevMonth) * 100 : 0
+  // Real balance history from snapshots. Re-fetched when a balance changes so the
+  // trend's last point tracks edits; demo mode uses the curated mock instead.
+  const [range, setRange] = useState<HistoryRange>('90d')
+  const [history, setHistory] = useState<NetWorthHistory | null>(null)
+  const balanceKey = holdings.map((h) => `${h.id}:${h.balanceUsd}:${h.balanceInr}`).join('|')
+  useEffect(() => {
+    if (demo || accountsLoading) return
+    let live = true
+    fetch(`/api/networth/history?range=${range}&rate=${rate}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: NetWorthHistory | null) => live && setHistory(d))
+      .catch(() => live && setHistory(null))
+    return () => {
+      live = false
+    }
+  }, [demo, accountsLoading, range, rate, balanceKey])
 
-  const fbar = fbarStatus(holdings, rate)
+  const seriesKey = filter === 'us' ? 'us' : filter === 'in' ? 'in' : 'all'
+  const today = isoDay(new Date())
+  const dayLabel = (d: string) =>
+    new Date(`${d}T00:00:00Z`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' })
+
+  // Demo: the curated 12-month story, rescaled to end at the on-screen value.
+  const lastHist = NET_WORTH_HISTORY[NET_WORTH_HISTORY.length - 1].usd
+  let series: number[]
+  let seriesLabels: string[]
+  let monthAgo: number | null
+  if (demo) {
+    series = NET_WORTH_HISTORY.map((h) => (h.usd / lastHist) * heroUsd)
+    seriesLabels = NET_WORTH_HISTORY.map((h) => h.month)
+    monthAgo = series[series.length - 2]
+  } else {
+    const pts = history?.points ?? []
+    series = pts.map((p) => p[seriesKey])
+    seriesLabels = pts.map((p) => dayLabel(p.date))
+    // Today's point is the live number, so the chart ends exactly at the headline.
+    if (pts.length && pts[pts.length - 1].date === today) series[series.length - 1] = heroUsd
+    monthAgo = history ? monthAgoValue(history, seriesKey, today) : null
+  }
+  // A trend needs two days of history; before that we say when it starts.
+  const hasTrend = demo || (history?.days ?? 0) >= 2
+  const monthDelta = monthAgo !== null ? heroUsd - monthAgo : 0
+  const monthPct = monthAgo ? (monthDelta / Math.abs(monthAgo)) * 100 : 0
+
+  // Honest freshness: the real age of the newest number, and what share of net
+  // worth rests on fresh vs aging vs stale vs estimated values.
+  const mix = freshnessMix(holdings, rate)
+  const latestDays = ageInDays(mix.latest)
+
+  // FBAR: the recorded yearly maxima when balance history exists, else today's
+  // balances, labelled as such. Never an estimate (it's a legal filing).
+  const [fbarRecorded, setFbarRecorded] = useState<RecordedFbarPeak | null>(null)
+  useEffect(() => {
+    if (demo || accountsLoading) {
+      setFbarRecorded(null)
+      return
+    }
+    let live = true
+    fetch(`/api/fbar?rate=${rate}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { recorded: RecordedFbarPeak | null } | null) => live && setFbarRecorded(d?.recorded ?? null))
+      .catch(() => live && setFbarRecorded(null))
+    return () => {
+      live = false
+    }
+  }, [demo, accountsLoading, rate, balanceKey])
+  const fbar = fbarStatus(holdings, rate, fbarRecorded)
   const pfics = pficHoldings(holdings)
-  const compliance = complianceItems(holdings, rate)
+  const compliance = withHrefs(complianceItems(holdings, rate, fbarRecorded), holdings)
+
+  // Debt in rupees vs income in dollars — shown first when it applies, until the
+  // user dismisses it on Accounts (it returns if the INR debt share moves 10+ pts).
+  const mismatch = currencyMismatch(holdings, rate)
+  const { dismissed: mismatchDismissed } = useMismatchDismissal(mismatch.inrDebtSharePct)
+  const mismatchItem: ComplianceItem[] =
+    mismatch.fires && !mismatchDismissed
+      ? withHrefs(
+          [{ key: 'debt_currency', level: 'attention', meta: 'Currency exposure', ...mismatchCopy(mismatch) }],
+          holdings,
+        )
+      : []
   const assets = byAssetClass(holdings, rate)
 
   // Demo shows the curated story; real users see the days they entered at
@@ -170,12 +249,36 @@ export default function DashboardPage() {
           <p className="mt-1 flex items-center gap-2 text-[15px] text-muted-foreground">
             Here&apos;s your cross-border picture
             {holdings.length > 0 && (
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-success-muted/70 px-2 py-0.5 text-[11px] font-medium text-success">
-                <span className="size-1 rounded-full bg-success" />
-                Synced just now
+              <span
+                className={cn(
+                  'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium',
+                  latestDays === null
+                    ? 'bg-muted text-muted-foreground'
+                    : latestDays <= 30
+                      ? 'bg-success-muted/70 text-success'
+                      : 'bg-warning-muted/70 text-warning',
+                )}
+                title={mix.latest ? new Date(mix.latest).toLocaleString() : 'No account has an update time yet'}
+              >
+                <span className="size-1 rounded-full bg-current" />
+                {latestDays === null
+                  ? 'Update time unknown'
+                  : latestDays <= 1
+                    ? `Updated ${relativeAge(latestDays).toLowerCase()}`
+                    : `Updated ${relativeAge(latestDays)} ago`}
               </span>
             )}
+            {mix.staleCount > 0 && (
+              <Link
+                href="/accounts?sort=stale"
+                className="inline-flex items-center gap-1 rounded-full bg-warning-muted/70 px-2 py-0.5 text-[11px] font-medium text-warning hover:underline"
+              >
+                <AlertTriangle size={10} />
+                {mix.staleCount} account{mix.staleCount === 1 ? '' : 's'} need{mix.staleCount === 1 ? 's' : ''} updating
+              </Link>
+            )}
           </p>
+          {holdings.length > 0 && <ConfidenceMeter mix={mix} className="-ml-2 mt-1.5" />}
         </div>
         <div className="flex items-center gap-2">
           <Link
@@ -232,9 +335,8 @@ export default function DashboardPage() {
                 usd={heroUsd}
                 className="block tabular-nums text-[3.4rem] font-semibold leading-none tracking-tighter tabular-nums"
               />
-              {/* The month-over-month delta is only real in demo mode (curated
-                  history). Real users have no prior month yet — don't fake one. */}
-              {demo && (
+              {/* Only once a snapshot at least 28 days old exists — never faked. */}
+              {monthAgo !== null && (
                 <div className="flex flex-col gap-1">
                   <span
                     className={cn(
@@ -318,19 +420,51 @@ export default function DashboardPage() {
 
             {/* Trend — grows to fill the card so the hero never feels hollow */}
             <div className="mt-6 flex min-h-0 flex-1 flex-col">
-              <div className="min-h-[140px] flex-1">
-                <Sparkline
-                  data={series}
-                  labels={NET_WORTH_HISTORY.map((h) => h.month)}
-                  format={(v) => formatAmount(v, mode, rate)}
-                  color="var(--brand)"
-                  height={140}
-                  fill
-                />
+              {hasTrend && series.length >= 2 ? (
+                <div className="min-h-[140px] flex-1">
+                  <Sparkline
+                    data={series}
+                    labels={seriesLabels}
+                    format={(v) => formatAmount(v, mode, rate)}
+                    color="var(--brand)"
+                    height={140}
+                    fill
+                  />
+                </div>
+              ) : (
+                <div className="flex min-h-[140px] flex-1 flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-border/70 text-center">
+                  <TrendingUp size={16} className="text-muted-foreground" />
+                  <p className="text-[13px] font-medium">
+                    Your history starts {history?.firstDay ? dayLabel(history.firstDay) : 'today'}
+                  </p>
+                  <p className="max-w-[18rem] text-xs text-muted-foreground">
+                    We record your balances daily from here on. The trend appears after your second day.
+                  </p>
+                </div>
+              )}
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[13px] text-muted-foreground">
+                <span>
+                  {demo ? '12-month trend (demo)' : range === '90d' ? 'Last 90 days' : 'Last 12 months'} · 1 USD = ₹
+                  {rate.toFixed(2)}
+                </span>
+                {!demo && hasTrend && (
+                  <span className="flex gap-0.5 rounded-lg bg-muted/60 p-0.5">
+                    {(['90d', '12m'] as HistoryRange[]).map((r) => (
+                      <button
+                        key={r}
+                        onClick={() => setRange(r)}
+                        aria-pressed={range === r}
+                        className={cn(
+                          'rounded-md px-2 py-0.5 text-[11px] font-medium',
+                          range === r ? 'bg-card text-foreground shadow-sm' : 'hover:text-foreground',
+                        )}
+                      >
+                        {r === '90d' ? '90D' : '12M'}
+                      </button>
+                    ))}
+                  </span>
+                )}
               </div>
-              <p className="mt-2 text-[13px] text-muted-foreground">
-                {demo ? '12-month trend' : 'Trend builds as balances are tracked'} · 1 USD = ₹{rate.toFixed(2)}
-              </p>
             </div>
           </div>
         </Card>
@@ -364,7 +498,7 @@ export default function DashboardPage() {
             }
           />
           <div className="flex flex-1 flex-col gap-1.5">
-            {holdings.length === 0 || (aiCompliance && aiCompliance.length === 0) ? (
+            {holdings.length === 0 || (aiCompliance && aiCompliance.length === 0 && mismatchItem.length === 0) ? (
               <div className="flex flex-1 flex-col items-center justify-center gap-2 py-6 text-center">
                 <span className="flex size-9 items-center justify-center rounded-full bg-success-muted text-success">
                   <CheckCircle2 size={18} />
@@ -381,8 +515,17 @@ export default function DashboardPage() {
             ) : (
               /* Top 3 most-urgent on the dashboard to keep the card compact;
                  the AI analyzes & ranks the full set server-side. */
-              (aiCompliance ?? compliance).slice(0, 3).map((item) => (
-                <ComplianceRow key={item.key} level={item.level} title={item.title} detail={item.detail} meta={item.meta} />
+              [...mismatchItem, ...(aiCompliance ?? compliance).filter((i) => !i.key.startsWith('debt_currency'))]
+                .slice(0, 3)
+                .map((item) => (
+                <ComplianceRow
+                  key={item.key}
+                  level={item.level}
+                  title={item.title}
+                  detail={item.detail}
+                  meta={item.meta}
+                  href={item.href}
+                />
               ))
             )}
           </div>
@@ -428,9 +571,17 @@ export default function DashboardPage() {
                 : `${Math.round(fbar.pctOfThreshold)}%`,
           }}
           sub={
-            <>
-              India peak vs the {formatUSD(FBAR_THRESHOLD_USD)} filing limit
-            </>
+            fbar.basis === 'recorded' && fbar.since ? (
+              <>
+                Highest India balances recorded since {fbarSinceLabel(fbar.since)}, vs the{' '}
+                {formatUSD(FBAR_THRESHOLD_USD)} limit
+              </>
+            ) : (
+              <>
+                India balances today (as entered) vs the {formatUSD(FBAR_THRESHOLD_USD)} limit. The year&apos;s
+                highest may be higher.
+              </>
+            )
           }
         />
         <KpiCard
@@ -584,10 +735,14 @@ export default function DashboardPage() {
                 const g = resolveGoal(raw, holdings, rate)
                 const pct = goalProgress(g)
                 const accent = goalAccent(g)
+                const status = goalStatus(g, holdings, rate, currentYear)
                 return (
                   <div key={g.id}>
-                    <div className="mb-1.5 flex items-center justify-between">
-                      <span className="text-sm font-medium">{g.name}</span>
+                    <div className="mb-1.5 flex items-center justify-between gap-2">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="truncate text-sm font-medium">{g.name}</span>
+                        <GoalStatusChip status={status} targetYear={g.targetYear} compact />
+                      </span>
                       <span className="tabular-nums text-xs font-semibold tabular-nums" style={{ color: accent }}>
                         {Math.round(pct * 100)}%
                       </span>
@@ -615,6 +770,11 @@ export default function DashboardPage() {
             </div>
           )}
         </Card>
+      </Reveal>
+
+      {/* ── Debt (hidden when there's none) ──────────────────────────────── */}
+      <Reveal delay={0.18}>
+        <DebtSummaryCard holdings={holdings} rate={rate} variant="home" />
       </Reveal>
 
       {/* ── Portfolio Analyzer teaser ─────────────────────────────────── */}
@@ -814,20 +974,23 @@ const LEVEL_STYLE: Record<
   overdue: { icon: AlertCircle, chip: 'bg-danger-muted/80 text-danger ring-danger/20' },
 }
 
+/** One attention item. With an `href` it's a real link to the place that fixes it. */
 function ComplianceRow({
   level,
   title,
   detail,
   meta,
+  href,
 }: {
   level: ComplianceLevel
   title: string
   detail: string
   meta: string
+  href?: string
 }) {
   const { icon: Icon, chip } = LEVEL_STYLE[level]
-  return (
-    <div className="group flex gap-3 rounded-xl px-2 py-2.5 transition-colors hover:bg-accent/40">
+  const body = (
+    <>
       <span
         className={cn(
           'mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg ring-1 transition-transform group-hover:scale-105',
@@ -841,7 +1004,21 @@ function ComplianceRow({
         <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{detail}</p>
         <p className="mt-1 text-[12px] font-medium text-muted-foreground/80">{meta}</p>
       </div>
-    </div>
+      {href && (
+        <ArrowRight
+          size={14}
+          className="ml-auto mt-1 shrink-0 text-muted-foreground/60 transition-transform group-hover:translate-x-0.5 group-hover:text-foreground"
+        />
+      )}
+    </>
+  )
+  const cls = 'group flex gap-3 rounded-xl px-2 py-2.5 transition-colors hover:bg-accent/40'
+  return href ? (
+    <Link href={href} className={cn(cls, 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40')}>
+      {body}
+    </Link>
+  ) : (
+    <div className={cls}>{body}</div>
   )
 }
 

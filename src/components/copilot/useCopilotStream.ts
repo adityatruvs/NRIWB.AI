@@ -32,13 +32,15 @@ export interface StreamMessage {
   proposals?: StreamProposal[]
 }
 
-/** Live grounding context — mirrors the payload the /api/copilot route expects. */
+/**
+ * Client-side context. The server grounds the model on the user's stored data;
+ * the client keeps these to resolve proposal cards against what's on screen.
+ */
 export interface CopilotContext {
   holdings: Holding[]
   rate: number
-  income: number
-  monthlyContribution: number
-  age: number | null
+  /** Demo mode: the server grounds on the demo seed instead of the user's data. */
+  demo: boolean
   goals: Goal[]
   categories: BudgetCategory[]
 }
@@ -102,12 +104,8 @@ export function useCopilotStream(ctx: CopilotContext) {
           signal: controller.signal,
           body: JSON.stringify({
             messages: withUser.map(({ role, text }) => ({ role, text })),
-            holdings: c.holdings,
             rate: c.rate,
-            income: c.income,
-            monthlyContribution: c.monthlyContribution,
-            age: c.age,
-            goals: c.goals,
+            demo: c.demo,
           }),
         })
         if (!res.ok || !res.body) throw new Error(`Copilot request failed (${res.status})`)
