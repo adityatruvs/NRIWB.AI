@@ -1,17 +1,5 @@
 'use client'
 
-/**
- * Upload → AI-extract → review/confirm flow for importing India mutual-fund
- * holdings from a CAMS/KFintech CAS statement (PDF, Word, or Excel).
- *
- * Extraction happens server-side (`/api/accounts/import-cas`) and returns
- * unsaved proposals; this panel renders each through the same `ProposalCard`
- * used by the AI-add flow, so nothing is written until the user accepts a
- * card — matching the existing "review before applying" convention. Any
- * failure (bad file, parse error, empty result) drops into an error state
- * that offers manual entry instead.
- */
-
 import { useRef, useState } from 'react'
 import { UploadCloud, AlertTriangle, Loader2, X } from 'lucide-react'
 import { useAccounts } from '@/context/AccountsContext'

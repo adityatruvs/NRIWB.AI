@@ -94,7 +94,6 @@ export function AddAccountChooser({ fxRate, onLinked, onManual, onImportCas, onC
             disabled
           />
 
-          {/* CAS statement — mutual fund import */}
           <Option
             icon={<FileUp size={18} strokeWidth={1.75} />}
             accent="india"

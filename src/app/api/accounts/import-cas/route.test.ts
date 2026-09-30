@@ -1,15 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { UnauthorizedError } from '@/lib/auth'
 
-/**
- * Route-level tests: every branch of POST is exercised by mocking its three
- * collaborators (auth, the Anthropic client, and @/lib/cas-import) rather than
- * feeding it real PDF/Word/Excel bytes — cas-import.test.ts already covers the
- * real parsing/validation logic in isolation. This file only verifies the
- * route's own orchestration: which status/error each failure mode produces,
- * and that a genuine success passes proposals straight through.
- */
-
 const { mockRequireUserId } = vi.hoisted(() => ({ mockRequireUserId: vi.fn() }))
 vi.mock('@/lib/auth', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/auth')>()
@@ -54,7 +45,7 @@ beforeEach(() => {
   mockValidateCasFile.mockReset()
   mockBuildExtractionContent.mockReset()
   mockParseExtractionResult.mockReset()
-  vi.spyOn(console, 'error').mockImplementation(() => {})
+  vi.spyOn(console, 'error').mockImplementation(() => { })
 })
 
 afterEach(() => {

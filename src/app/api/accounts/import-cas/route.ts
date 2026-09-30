@@ -7,26 +7,15 @@ import {
   CAS_EXTRACTION_TOOL,
 } from '@/lib/cas-import'
 
-// Touches an uploaded file + calls the model — must run on Node, never the edge.
 export const runtime = 'nodejs'
-// A multi-page PDF + a Claude round trip can run past the platform default.
 export const maxDuration = 60
 
-const client = new Anthropic() // reads ANTHROPIC_API_KEY from the environment
+const client = new Anthropic()
 const MODEL = 'claude-sonnet-4-6'
 
 const GENERIC_FAILURE =
   "Couldn't read that statement — it may be scanned, password-protected, or in an unexpected format. Add your holdings manually instead."
 
-/**
- * POST /api/accounts/import-cas — parse an uploaded CAMS/KFintech CAS (PDF,
- * Word, or Excel) into reviewable mutual-fund holding proposals. Nothing is
- * saved here: the client reviews/edits each proposal, then accepting one goes
- * through the normal POST /api/accounts path (source: 'pdf_upload').
- *
- * Any failure returns a 4xx/5xx with a human-readable `error` — the client
- * treats that as a signal to fall back to manual entry.
- */
 export async function POST(request: Request) {
   try {
     await requireUserId()
