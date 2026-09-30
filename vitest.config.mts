@@ -6,7 +6,8 @@ import { fileURLToPath } from 'node:url'
 export default defineConfig({
   test: {
     environment: 'node',
-    include: ['src/**/*.test.ts'],
+    // .test.tsx: components rendered to static HTML (react-dom/server) — no DOM needed.
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
   },
   resolve: {
     alias: {

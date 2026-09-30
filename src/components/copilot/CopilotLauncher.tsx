@@ -45,6 +45,11 @@ const PAGE_PROMPTS: { match: (p: string) => boolean; prompts: string[] }[] = [
   },
 ]
 
+/** The suggested prompts for a page (first match wins; the last entry is the catch-all). */
+export function promptsFor(pathname: string): string[] {
+  return PAGE_PROMPTS.find((x) => x.match(pathname))!.prompts
+}
+
 // The full Copilot page's chat store (see app/(app)/copilot/page.tsx).
 const CHAT_STORE_KEY = 'nriwb:copilot-chats'
 const PANEL_WIDTH = 420
@@ -75,7 +80,7 @@ export function CopilotLauncher() {
   const taRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const hidden = hiddenOn(pathname)
-  const prompts = PAGE_PROMPTS.find((x) => x.match(pathname))!.prompts
+  const prompts = promptsFor(pathname)
 
   const close = useCallback(() => {
     setOpen(false)
