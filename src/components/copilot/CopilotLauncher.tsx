@@ -32,6 +32,14 @@ const PAGE_PROMPTS: { match: (p: string) => boolean; prompts: string[] }[] = [
     prompts: ['How does my allocation compare to the recommendation?', 'Can I retire at 55?', 'What drives my expected return?'],
   },
   {
+    match: (p) => p.startsWith('/compliance'),
+    prompts: ['Do I need to file FBAR this year?', 'Are my India mutual funds PFICs?', 'What is the difference between FBAR and FATCA?'],
+  },
+  {
+    match: (p) => p.startsWith('/deadlines'),
+    prompts: ['When is FBAR due?', 'What US and India filing dates are coming up?', 'Do I need Form 15CA to send money to the US?'],
+  },
+  {
     match: () => true,
     prompts: ['What needs my attention this month?', 'What will my net worth be in 5 years?', 'Do I need to file FBAR this year?'],
   },
