@@ -40,6 +40,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# clerk keyless-mode dev instance (contains a secret key — never commit)
+.clerk
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
