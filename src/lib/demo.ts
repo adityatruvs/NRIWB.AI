@@ -24,5 +24,6 @@ export const DEMO_HOLDINGS: Holding[] = MOCK_ACCOUNTS.map((a, i) => ({
   balanceInr: a.balanceInr,
   isPfic: a.isPfic,
   source: a.source,
+  details: a.details,
   lastSyncedAt: daysAgo(DEMO_AGES[i % DEMO_AGES.length]),
 }))

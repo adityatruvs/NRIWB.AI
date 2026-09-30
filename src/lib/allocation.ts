@@ -121,7 +121,7 @@ const ACCOUNT_TYPE_TO_BUCKET: Record<AccountType, AllocBucket> = {
   savings: 'cash',
   nre: 'cash',
   nro: 'cash',
-  fcnr: 'cash',
+  fcnr: 'bonds', // a term deposit, like fd
   other: 'cash',
   cd: 'bonds',
   bond: 'bonds',

@@ -244,7 +244,7 @@ const TYPE_TO_CLASS: Record<AccountType, AssetClass> = {
   savings: 'cash',
   nre: 'cash',
   nro: 'cash',
-  fcnr: 'cash',
+  fcnr: 'fixedDeposits', // FCNR(B) is always a 1–5 yr term deposit
   cd: 'fixedDeposits',
   bond: 'fixedDeposits',
   brokerage: 'investments',
@@ -527,9 +527,10 @@ export const TYPE_LABELS: Record<string, string> = {
   ira: 'IRA',
   roth_ira: 'Roth IRA',
   real_estate: 'Real Estate',
-  nre: 'NRE',
-  nro: 'NRO',
-  fcnr: 'FCNR',
+  // "Savings" so an NRE/NRO FD isn't filed here — an FD is 'fd' + fdScheme.
+  nre: 'NRE Savings',
+  nro: 'NRO Savings',
+  fcnr: 'FCNR Deposit',
   fd: 'Fixed Deposit',
   mutual_fund: 'Mutual Fund',
   property: 'Property',

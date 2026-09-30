@@ -58,7 +58,15 @@ import {
   type OwnerRelation,
 } from '@/lib/portfolio'
 import { typeExpectedReturn } from '@/lib/allocation'
-import { detailSpec } from '@/lib/account-details'
+import {
+  IN_ASSET_CHOICES,
+  detailSpec,
+  fromTypeChoice,
+  mistypedFdScheme,
+  typeChoice,
+  typeChoiceLabel,
+  type TypeChoice,
+} from '@/lib/account-details'
 import { ageInDays, freshnessOf, relativeAge, type Freshness } from '@/lib/freshness'
 import { provenanceOf, CONFIDENCE_LABELS } from '@/lib/provenance'
 import { rankStaleAccounts, rankPhrase, type RefreshSuggestion } from '@/lib/refresh-guidance'
@@ -1327,7 +1335,8 @@ function ProvenanceBadge({ holding }: { holding: Holding }) {
 /* ── Add / edit account dialog ─────────────────────────────────────────────── */
 
 const US_TYPES: AccountType[] = ['checking', 'savings', 'cd', 'brokerage', 'bond', '401k', 'ira', 'roth_ira', 'real_estate', 'vehicle', 'notes_receivable', 'other']
-const IN_TYPES: AccountType[] = ['nre', 'nro', 'fcnr', 'fd', 'mutual_fund', 'property', 'gold', 'vehicle', 'notes_receivable', 'other']
+// India FDs are offered per scheme (NRE / NRO Fixed Deposit) — see TypeChoice.
+const IN_TYPES = IN_ASSET_CHOICES
 const US_LIABILITY_TYPES: AccountType[] = ['mortgage', 'heloc', 'auto_loan', 'student_loan', 'credit_card', 'personal_loan', 'notes_payable', 'other_debt']
 const IN_LIABILITY_TYPES: AccountType[] = ['home_loan', 'auto_loan', 'education_loan', 'credit_card', 'personal_loan', 'notes_payable', 'other_debt']
 
@@ -1344,20 +1353,20 @@ function TypeSelect({
   onChange,
   liability,
 }: {
-  value: AccountType
-  options: AccountType[]
-  onChange: (t: AccountType) => void
+  value: TypeChoice
+  options: TypeChoice[]
+  onChange: (t: TypeChoice) => void
   liability: boolean
 }) {
   return (
-    <Select.Root value={value} onValueChange={(v) => onChange(v as AccountType)}>
+    <Select.Root value={value} onValueChange={(v) => onChange(v as TypeChoice)}>
       <Select.Trigger
         className={cn(
           inputCls,
           'flex items-center justify-between gap-2 text-left data-[popup-open]:border-brand data-[popup-open]:bg-card data-[popup-open]:ring-[3px] data-[popup-open]:ring-brand/12',
         )}
       >
-        <Select.Value>{(v) => TYPE_LABELS[v as string] ?? (v as string)}</Select.Value>
+        <Select.Value>{(v) => typeChoiceLabel(v as TypeChoice)}</Select.Value>
         <Select.Icon className="shrink-0 text-muted-foreground transition-transform duration-200 data-[popup-open]:rotate-180">
           <ChevronDown size={15} />
         </Select.Icon>
@@ -1376,7 +1385,7 @@ function TypeSelect({
                     : 'data-[highlighted]:bg-success/10 data-[highlighted]:text-success data-[selected]:bg-success/10 data-[selected]:font-medium data-[selected]:text-success',
                 )}
               >
-                <Select.ItemText>{TYPE_LABELS[t] ?? t}</Select.ItemText>
+                <Select.ItemText>{typeChoiceLabel(t)}</Select.ItemText>
                 <Select.ItemIndicator className="shrink-0">
                   <Check size={14} />
                 </Select.ItemIndicator>
@@ -1540,6 +1549,8 @@ function AccountDialog({
   const liabilityTypes = country === 'US' ? US_LIABILITY_TYPES : IN_LIABILITY_TYPES
   const types = liability ? liabilityTypes : assetTypes
   const spec = detailSpec(country, accountType, isSgb, fdScheme)
+  // Named like an FD but typed as NRE/NRO Savings — suggest the FD choice (never auto-switched).
+  const suggestedScheme = liability ? null : mistypedFdScheme({ country, accountType, nickname })
   const valid =nickname.trim() && institution.trim() && Number(amount) > 0
 
   // Asset-side loan linking — for any securable asset being edited (it has an id).
@@ -1563,7 +1574,7 @@ function AccountDialog({
     if (spec.maturityDate && maturityDate) det.maturityDate = maturityDate
     if (spec.compounding) det.compounding = compounding
     if (spec.depositCurrency) det.depositCurrency = depositCurrency
-    if (spec.schemeToggle) det.fdScheme = fdScheme
+    if (spec.hasScheme) det.fdScheme = fdScheme
     if (spec.tdsRate && tdsRate.trim() !== '') det.tdsRate = Number(tdsRate)
     if (spec.minPayment && minPayment.trim() !== '') det.minPayment = Number(minPayment)
     if (spec.expectedReturn && expReturn.trim() !== '') det.expectedReturn = Number(expReturn)
@@ -1714,7 +1725,39 @@ function AccountDialog({
             </Field>
           </div>
           <Field label="Type">
-            <TypeSelect value={accountType} options={types} onChange={setAccountType} liability={liability} />
+            <TypeSelect
+              value={typeChoice(country, accountType, fdScheme)}
+              options={types}
+              onChange={(c) => {
+                const next = fromTypeChoice(c)
+                setAccountType(next.accountType)
+                if (next.fdScheme) setFdScheme(next.fdScheme)
+              }}
+              liability={liability}
+            />
+            {suggestedScheme && (
+              <p className="mt-1.5 text-[11.5px] text-muted-foreground">
+                Sounds like a fixed deposit.{' '}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFdScheme(suggestedScheme)
+                    setAccountType('fd')
+                  }}
+                  className="font-medium text-foreground underline underline-offset-2"
+                >
+                  Use {suggestedScheme} Fixed Deposit
+                </button>{' '}
+                so it sits with your other FDs.
+              </p>
+            )}
+            {spec.hasScheme && (
+              <p className="mt-1.5 text-[11.5px] text-muted-foreground">
+                {fdScheme === 'NRE'
+                  ? 'Interest is tax-free in India and fully repatriable — no TDS.'
+                  : 'Interest is taxable in India — TDS applies.'}
+              </p>
+            )}
           </Field>
           <Field label={liability ? 'Amount owed' : 'Balance'}>
             <div className="relative">
@@ -1743,33 +1786,6 @@ function AccountDialog({
               <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
                 Details
               </p>
-
-              {spec.schemeToggle && (
-                <Field label="Deposit scheme">
-                  <div className="grid grid-cols-2 gap-1 rounded-xl border border-border/70 bg-muted/70 p-1">
-                    {(['NRE', 'NRO'] as const).map((s) => (
-                      <button
-                        key={s}
-                        type="button"
-                        onClick={() => setFdScheme(s)}
-                        className={cn(
-                          'rounded-lg py-1.5 text-xs font-medium transition-all',
-                          fdScheme === s
-                            ? 'bg-card shadow-[0_1px_2px_hsl(var(--shadow-color)/0.1),0_2px_6px_-2px_hsl(var(--shadow-color)/0.12)] ring-1 ring-border/70'
-                            : 'text-muted-foreground hover:text-foreground',
-                        )}
-                      >
-                        {s} FD
-                      </button>
-                    ))}
-                  </div>
-                  <span className="text-[11px] text-muted-foreground">
-                    {fdScheme === 'NRE'
-                      ? 'Interest is tax-free in India and fully repatriable — no TDS.'
-                      : 'Interest is taxable in India — TDS applies.'}
-                  </span>
-                </Field>
-              )}
 
               {spec.goldToggle && (
                 <label className="flex cursor-pointer items-start gap-2.5 rounded-xl bg-muted/50 px-3 py-2.5">
