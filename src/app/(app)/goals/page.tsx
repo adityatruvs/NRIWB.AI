@@ -49,6 +49,7 @@ import {
   defaultGoalKind,
   resolveGoal,
   isGoalLinked,
+  showsOwnAge,
   type Goal,
   type GoalCategory,
   type GoalKind,
@@ -382,7 +383,7 @@ function GoalCard({
         <span className="tabular-nums tabular-nums">of {formatAmount(goal.targetUsd, mode, rate)}</span>
         <span className="rounded-full bg-muted px-1.5 py-0.5 text-[11px] font-medium">
           by {goal.targetYear}
-          {age != null && goal.targetYear > currentYear
+          {age != null && goal.targetYear > currentYear && showsOwnAge(goal.category)
             ? ` · age ${age + (goal.targetYear - currentYear)}`
             : ''}
         </span>
@@ -660,6 +661,8 @@ function GoalDialog({
     initial?.originalAmount != null ? String(Math.round(initial.originalAmount)) : '',
   )
   const isDebt = category === 'debt'
+  // The user's age at the target year — not for education (that's the child's timeline).
+  const ownAge = age != null && showsOwnAge(category)
   const loan = loanId ? (holdings.find((h) => h.id === loanId && isLiability(h)) ?? null) : null
   const [planned, setPlanned] = useState(
     initial?.plannedMonthlyUsd != null ? String(Math.round(initial.plannedMonthlyUsd)) : '',
@@ -1032,7 +1035,7 @@ function GoalDialog({
             </>
           )}
 
-          <Field label={age != null ? `Target year — you'll be ${age + (year - currentYear)}` : 'Target year'}>
+          <Field label={ownAge ? `Target year — you'll be ${age + (year - currentYear)}` : 'Target year'}>
             <select
               value={year}
               onChange={(e) => setYear(Number(e.target.value))}
@@ -1041,7 +1044,7 @@ function GoalDialog({
               {years.map((y) => (
                 <option key={y} value={y}>
                   {y}
-                  {age != null ? ` · age ${age + (y - currentYear)}` : ''}
+                  {ownAge ? ` · age ${age + (y - currentYear)}` : ''}
                 </option>
               ))}
             </select>

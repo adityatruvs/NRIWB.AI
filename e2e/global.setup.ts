@@ -1,7 +1,7 @@
 import { clerk, clerkSetup } from '@clerk/testing/playwright'
 import { test as setup, expect } from '@playwright/test'
 import { assertClockInSync, ensureQaUser, QA_EMAIL } from './qa-user'
-import { QA_LEDGER } from './fixtures'
+import { QA_GOALS, QA_LEDGER } from './fixtures'
 
 setup.describe.configure({ mode: 'serial' })
 
@@ -30,6 +30,19 @@ setup('sign in the QA user and reset their data', async ({ page }) => {
   for (const body of QA_LEDGER) {
     const add = await page.request.post('/api/accounts', { data: body })
     expect(add.status(), `POST ${body.nickname}: ${await add.text()}`).toBe(201)
+  }
+
+  // Same for goals (/api/goals).
+  const gRes = await page.request.get('/api/goals')
+  expect(gRes.ok(), `GET /api/goals ${gRes.status()}`).toBe(true)
+  const { goals } = (await gRes.json()) as { goals: { id: string }[] }
+  for (const g of goals) {
+    const del = await page.request.delete(`/api/goals/${g.id}`)
+    expect(del.ok(), `DELETE goal ${del.status()}`).toBe(true)
+  }
+  for (const body of QA_GOALS) {
+    const add = await page.request.post('/api/goals', { data: body })
+    expect(add.ok(), `POST goal ${body.name}: ${await add.text()}`).toBe(true)
   }
 
   await page.context().storageState({ path: 'e2e/.auth/qa.json' })

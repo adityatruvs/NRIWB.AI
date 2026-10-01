@@ -12,6 +12,12 @@ export const QA_LEDGER = [
   { nickname: 'ICICI FCNR', institution: 'ICICI', accountType: 'fcnr', country: 'IN', balanceUsd: 20_000, balanceInr: 20_000 * 83.5, details: { depositCurrency: 'USD' } },
 ]
 
+/** The QA user's real goals, reset before every run (mirrors two of the demo seed goals). */
+export const QA_GOALS = [
+  { name: 'Retirement', category: 'retirement', targetUsd: 2_000_000, currentUsd: 400_000, targetYear: 2041 },
+  { name: "Child's Education", category: 'education', targetUsd: 250_000, currentUsd: 60_000, targetYear: 2035 },
+]
+
 export type Mode = 'real' | 'demo'
 export const MODES: Mode[] = ['real', 'demo']
 

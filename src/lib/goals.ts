@@ -153,6 +153,16 @@ export function defaultGoalKind(category: GoalCategory): GoalKind {
   return DEFAULT_KIND[category]
 }
 
+/**
+ * Whether to show the user's own age at a goal's target year ("by 2035 · age 64").
+ * Not for education: that timeline is the child's, so the parent's age reads as
+ * the child's ("Child's education by age 64"). We don't collect children's ages,
+ * so those goals show just the year.
+ */
+export function showsOwnAge(category: GoalCategory): boolean {
+  return category !== 'education'
+}
+
 /** Accent colour for a goal, derived from its category. */
 export function goalAccent(g: Goal): string {
   return GOAL_CATEGORY_META[g.category].accent
