@@ -50,8 +50,7 @@ export async function extractTextFromFile(ext: (typeof TEXT_EXTENSIONS)[number],
   }
 
   const workbook = new ExcelJS.Workbook()
-  // @ts-expect-error
-  await workbook.xlsx.load(buffer)
+  await workbook.xlsx.load(buffer as unknown as Parameters<typeof workbook.xlsx.load>[0])
   const lines: string[] = []
   workbook.eachSheet((sheet) => {
     sheet.eachRow((row) => {
