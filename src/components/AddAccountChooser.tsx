@@ -2,17 +2,18 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { usePlaidLink, type PlaidLinkOnSuccessMetadata } from 'react-plaid-link'
-import { Landmark, Building2, PencilLine, X, ChevronRight } from 'lucide-react'
+import { Landmark, Building2, PencilLine, FileUp, X, ChevronRight } from 'lucide-react'
 import type { Holding } from '@/lib/portfolio'
 
 interface Props {
   fxRate: number
   onLinked: (accounts: Holding[]) => void
   onManual: () => void
+  onImportCas: () => void
   onClose: () => void
 }
 
-export function AddAccountChooser({ fxRate, onLinked, onManual, onClose }: Props) {
+export function AddAccountChooser({ fxRate, onLinked, onManual, onImportCas, onClose }: Props) {
   const [linkToken, setLinkToken] = useState<string | null>(null)
 
   useEffect(() => {
@@ -91,6 +92,17 @@ export function AddAccountChooser({ fxRate, onLinked, onManual, onClose }: Props
             subtitle="Via Account Aggregator"
             badge="Coming soon"
             disabled
+          />
+
+          <Option
+            icon={<FileUp size={18} strokeWidth={1.75} />}
+            accent="india"
+            title="Mutual funds via CAS statement"
+            subtitle="Upload a CAMS/KFintech statement — PDF, Word, Excel, CSV, or a photo"
+            onClick={() => {
+              onImportCas()
+              onClose()
+            }}
           />
 
           {/* Manual */}
