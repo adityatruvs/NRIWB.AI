@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import NextLink from 'next/link'
 import {
   Target,
   Plus,
@@ -16,6 +17,7 @@ import {
   Home,
   Plane,
   ShieldCheck,
+  CreditCard,
   Link2,
   Check,
   type LucideIcon,
@@ -25,9 +27,18 @@ import { useGoals } from '@/context/GoalsContext'
 import { useProfile } from '@/context/ProfileContext'
 import { useAccounts } from '@/context/AccountsContext'
 import { formatAmount } from '@/lib/currency'
-import { usdValue, TYPE_LABELS, type Holding } from '@/lib/portfolio'
+import { usdValue, isLiability, TYPE_LABELS, type Holding } from '@/lib/portfolio'
+import { formatLakhs, formatUSD } from '@/lib/currency'
 import {
-  GOAL_CATEGORY_ORDER,
+  debtProgress,
+  linkedLoan,
+  loanBalanceNative,
+  loanCurrency,
+  nativeToUsd,
+  type LoanCurrency,
+} from '@/lib/debt-goal'
+import {
+  ALL_GOAL_CATEGORIES,
   GOAL_CATEGORY_META,
   goalAccent,
   goalProgress,
@@ -38,6 +49,8 @@ import {
   defaultGoalKind,
   resolveGoal,
   isGoalLinked,
+  showsOwnAge,
+  onTrackOnSavings,
   type Goal,
   type GoalCategory,
   type GoalKind,
@@ -47,6 +60,9 @@ import { Money } from '@/components/ui/Money'
 import { ProgressBar, RadialProgress } from '@/components/ui/charts'
 import { Reveal } from '@/components/ui/Reveal'
 import { cn } from '@/lib/utils'
+import { SearchParamsReader } from '@/components/SearchParamsReader'
+import { GoalStatusChip } from '@/components/GoalStatusChip'
+import { goalStatus } from '@/lib/goal-status'
 
 const CATEGORY_ICON: Record<GoalCategory, LucideIcon> = {
   retirement: PiggyBank,
@@ -55,16 +71,30 @@ const CATEGORY_ICON: Record<GoalCategory, LucideIcon> = {
   travel: Plane,
   emergency: ShieldCheck,
   other: Flag,
+  debt: CreditCard,
 }
+
+/** A loan amount in its own currency (lakh/crore for rupees). */
+const fmtNative = (n: number, c: LoanCurrency) => (c === 'INR' ? formatLakhs(n) : formatUSD(n))
 
 export default function GoalsPage() {
   const { mode, rate } = useCurrency()
-  const { goals, addGoal, updateGoal, removeGoal } = useGoals()
+  const { goals, loading: goalsLoading, addGoal, updateGoal, removeGoal } = useGoals()
   const { age } = useProfile()
   const { holdings } = useAccounts()
   const [adding, setAdding] = useState(false)
   const [editing, setEditing] = useState<Goal | null>(null)
   const [deleting, setDeleting] = useState<Goal | null>(null)
+
+  // ?edit=<id> deep link opens that goal's dialog (unknown ids are ignored).
+  const [editParam, setEditParam] = useState<string | null>(null)
+  const onParams = useCallback((p: URLSearchParams) => setEditParam(p.get('edit')), [])
+  useEffect(() => {
+    if (!editParam || goalsLoading) return
+    const g = goals.find((x) => x.id === editParam)
+    if (g) setEditing(g)
+    setEditParam(null)
+  }, [editParam, goalsLoading, goals])
 
   const [currentYear, setCurrentYear] = useState(2026)
   useEffect(() => setCurrentYear(new Date().getFullYear()), [])
@@ -95,6 +125,7 @@ export default function GoalsPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      <SearchParamsReader onParams={onParams} />
       {/* ── Header ─────────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-end justify-between gap-3 animate-fade-in">
         <div className="flex items-center gap-3">
@@ -267,10 +298,17 @@ function GoalCard({
   const Icon = CATEGORY_ICON[goal.category]
   // Grow the goal at the expected return of the accounts funding it (linked →
   // those accounts; else the whole portfolio), not a flat guess.
-  const monthly = goalMonthlyNeeded(rg, currentYear, goalExpectedReturn(goal, holdings, rate))
+  const growth = goalExpectedReturn(goal, holdings, rate)
+  const monthly = goalMonthlyNeeded(rg, currentYear, growth)
+  // Savings alone are projected to clear the target — say so, not "~$0/mo".
+  const onTrack = onTrackOnSavings(rg, currentYear, growth)
   const yearsLeft = goal.targetYear - currentYear
   const reached = funded >= goal.targetUsd
-  const linkedCount = goal.linkedAccountIds?.length ?? 0
+  // Funding accounts that still exist (a deleted one never shows).
+  const funders = (goal.linkedAccountIds ?? [])
+    .map((id) => holdings.find((h) => h.id === id))
+    .filter((h): h is Holding => !!h)
+  const status = goalStatus(rg, holdings, rate, currentYear)
 
   return (
     <Card hover className="group flex flex-col">
@@ -327,6 +365,14 @@ function GoalCard({
         </div>
       </div>
 
+      {goal.category === 'debt' ? (
+        <DebtGoalBody goal={goal} holdings={holdings} status={status} accent={accent} onEdit={onEdit} />
+      ) : (
+        <>
+      <div className="mb-3">
+        <GoalStatusChip status={status} targetYear={goal.targetYear} />
+      </div>
+
       <div className="mb-1.5 flex items-baseline justify-between">
         <Money
           usd={funded}
@@ -341,17 +387,32 @@ function GoalCard({
         <span className="tabular-nums tabular-nums">of {formatAmount(goal.targetUsd, mode, rate)}</span>
         <span className="rounded-full bg-muted px-1.5 py-0.5 text-[11px] font-medium">
           by {goal.targetYear}
-          {age != null && goal.targetYear > currentYear
+          {age != null && goal.targetYear > currentYear && showsOwnAge(goal.category)
             ? ` · age ${age + (goal.targetYear - currentYear)}`
             : ''}
         </span>
       </div>
 
-      {linkedCount > 0 && (
-        <p className="mt-2 inline-flex items-center gap-1 text-[11px] text-muted-foreground">
-          <Link2 size={11} className="shrink-0" style={{ color: accent }} />
-          Funded live from {linkedCount} account{linkedCount > 1 ? 's' : ''}
-        </p>
+      {funders.length > 0 ? (
+        <ul className="mt-3 flex flex-col gap-0.5" aria-label="Funded by">
+          {funders.slice(0, 3).map((h) => (
+            <li key={h.id}>
+              <NextLink
+                href={`/accounts?focus=${encodeURIComponent(h.id!)}`}
+                className="-mx-1.5 flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[12px] text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+              >
+                <Link2 size={11} className="shrink-0" style={{ color: accent }} />
+                <span className="min-w-0 flex-1 truncate">{h.nickname}</span>
+                <Money usd={usdValue(h, rate)} className="shrink-0 tabular-nums font-medium text-foreground" />
+              </NextLink>
+            </li>
+          ))}
+          {funders.length > 3 && (
+            <li className="pl-5 text-[11px] text-muted-foreground">+{funders.length - 3} more</li>
+          )}
+        </ul>
+      ) : (
+        <p className="mt-2 text-[11px] text-muted-foreground">Tracked manually</p>
       )}
 
       <div className="mt-4 border-t border-border/60 pt-3 text-[12px] text-muted-foreground">
@@ -364,6 +425,18 @@ function GoalCard({
             <Money usd={goalRemaining(goal)} className="font-medium text-foreground" /> left · target year
             passed
           </span>
+        ) : onTrack ? (
+          <span
+            className="inline-flex items-start gap-1.5"
+            title="Illustrative: assumes this growth rate holds every year. Not a guarantee."
+          >
+            <TrendingUp size={13} className="mt-px shrink-0 text-success" />
+            <span>
+              <span className="font-medium text-success">On track</span> — at ~
+              {(growth * 100).toFixed(1).replace(/\.0$/, '')}%/yr, what you&apos;ve saved grows to this by{' '}
+              {goal.targetYear}
+            </span>
+          </span>
         ) : (
           <span className="inline-flex items-center gap-1.5">
             <TrendingUp size={13} className="shrink-0" />
@@ -374,7 +447,185 @@ function GoalCard({
           </span>
         )}
       </div>
+        </>
+      )}
     </Card>
+  )
+}
+
+/** Card body for a debt-payoff goal: progress in the loan's own currency. */
+function DebtGoalBody({
+  goal,
+  holdings,
+  status,
+  accent,
+  onEdit,
+}: {
+  goal: Goal
+  holdings: Holding[]
+  status: ReturnType<typeof goalStatus>
+  accent: string
+  onEdit: () => void
+}) {
+  const loan = linkedLoan(goal, holdings)
+  if (!loan) {
+    return (
+      <div className="mt-1 flex flex-col gap-2 text-[12px] text-muted-foreground">
+        <GoalStatusChip status={status} targetYear={goal.targetYear} />
+        <p>
+          Loan removed.{' '}
+          <button onClick={onEdit} className="font-medium text-foreground underline-offset-2 hover:underline">
+            Relink a loan
+          </button>{' '}
+          or delete this goal.
+        </p>
+      </div>
+    )
+  }
+  const p = debtProgress(goal, loan)
+  const focusHref = `/accounts?focus=${encodeURIComponent(loan.id!)}`
+  return (
+    <>
+      <div className="mb-3">
+        <GoalStatusChip status={status} targetYear={goal.targetYear} />
+      </div>
+      <div className="mb-1.5 flex items-baseline justify-between gap-2">
+        <span className="text-[13px] text-muted-foreground">
+          <span className="text-[1.2rem] font-semibold tabular-nums tracking-tight text-foreground">
+            {fmtNative(p.repaidNative, p.currency)}
+          </span>{' '}
+          of {fmtNative(p.originalNative, p.currency)} repaid
+        </span>
+        <span className="tabular-nums text-xs font-semibold" style={{ color: accent }}>
+          {Math.round(p.pct * 100)}%
+        </span>
+      </div>
+      <ProgressBar value={p.pct} color={accent} height={7} />
+      <div className="mt-1.5 flex items-center justify-between text-[12px] text-muted-foreground">
+        <span className="tabular-nums">{fmtNative(p.remainingNative, p.currency)} left</span>
+        <span className="rounded-full bg-muted px-1.5 py-0.5 text-[11px] font-medium">by {goal.targetYear}</span>
+      </div>
+      <NextLink
+        href={focusHref}
+        className="-mx-1.5 mt-3 flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[12px] text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+      >
+        <CreditCard size={11} className="shrink-0" style={{ color: accent }} />
+        <span className="truncate">Paying off {loan.nickname}</span>
+      </NextLink>
+      <div className="mt-4 border-t border-border/60 pt-3 text-[12px] text-muted-foreground">
+        {status.status === 'needs_details' ? (
+          <span>
+            Add this loan&apos;s interest rate and minimum payment to see when it&apos;s paid off.{' '}
+            <NextLink
+              href={`/accounts?edit=${encodeURIComponent(loan.id!)}`}
+              className="font-medium text-foreground underline-offset-2 hover:underline"
+            >
+              Edit loan
+            </NextLink>
+          </span>
+        ) : status.status === 'reached' ? (
+          <span className="inline-flex items-center gap-1.5 font-medium text-success">
+            <ShieldCheck size={13} /> Paid off
+          </span>
+        ) : status.payoffMonth ? (
+          <span>
+            At the minimum payment: paid off around{' '}
+            <span className="font-medium text-foreground">
+              {new Date(`${status.payoffMonth}-01T00:00:00Z`).toLocaleDateString(undefined, {
+                month: 'short',
+                year: 'numeric',
+                timeZone: 'UTC',
+              })}
+            </span>
+          </span>
+        ) : (
+          <span>At the minimum payment the balance doesn&apos;t fall: it doesn&apos;t cover the interest.</span>
+        )}
+      </div>
+    </>
+  )
+}
+
+/* ── Debt payoff fields ───────────────────────────────────────────────────── */
+
+function DebtFields({
+  holdings,
+  loanId,
+  onLoan,
+  original,
+  setOriginal,
+}: {
+  holdings: Holding[]
+  loanId: string | null
+  onLoan: (h: Holding) => void
+  original: string
+  setOriginal: (v: string) => void
+}) {
+  // Only liabilities can be paid off; assets are never offered here.
+  const loans = holdings.filter((h) => isLiability(h) && h.id)
+  const loan = loans.find((h) => h.id === loanId) ?? null
+  const currency = loan ? loanCurrency(loan) : 'USD'
+  return (
+    <>
+      <Field label="Loan to pay off">
+        {loans.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-border/70 px-3 py-2.5 text-[12px] text-muted-foreground">
+            No loans yet. Add your home loan, mortgage or card in Accounts first.
+          </p>
+        ) : (
+          <div className="max-h-44 space-y-1 overflow-y-auto rounded-xl border border-border/70 p-1" role="radiogroup">
+            {loans.map((h) => {
+              const on = h.id === loanId
+              return (
+                <button
+                  key={h.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={on}
+                  onClick={() => onLoan(h)}
+                  className={cn(
+                    'flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors',
+                    on ? 'bg-accent/70' : 'hover:bg-accent/40',
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'flex size-4 shrink-0 items-center justify-center rounded-full border',
+                      on ? 'border-transparent bg-foreground text-background' : 'border-border',
+                    )}
+                  >
+                    {on && <Check size={11} strokeWidth={3} />}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-[12px] font-medium">
+                    {h.nickname}
+                    <span className="ml-1 font-normal text-muted-foreground">
+                      · {TYPE_LABELS[h.accountType] ?? h.accountType}
+                    </span>
+                  </span>
+                  <span className="shrink-0 tabular-nums text-[12px] text-muted-foreground">
+                    {fmtNative(loanBalanceNative(h), loanCurrency(h))} owed
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        )}
+      </Field>
+      {loan && (
+        <Field label={`Starting balance (${currency}): progress is measured from here`}>
+          <input
+            value={original}
+            onChange={(e) => setOriginal(e.target.value.replace(/[^0-9.]/g, ''))}
+            inputMode="decimal"
+            className={cn(inputCls, 'tabular-nums')}
+          />
+          <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
+            Defaults to what you owe today. Enter the original loan amount to count what you&apos;ve already
+            repaid.
+          </p>
+        </Field>
+      )}
+    </>
   )
 }
 
@@ -420,6 +671,18 @@ function GoalDialog({
     initial?.kind ?? defaultGoalKind(initial?.category ?? 'retirement'),
   )
   const [linkedIds, setLinkedIds] = useState<string[]>(initial?.linkedAccountIds ?? [])
+  // Debt payoff: the loan being paid off and its starting balance (loan's currency).
+  const [loanId, setLoanId] = useState<string | null>(initial?.linkedLiabilityId ?? null)
+  const [original, setOriginal] = useState(
+    initial?.originalAmount != null ? String(Math.round(initial.originalAmount)) : '',
+  )
+  const isDebt = category === 'debt'
+  // The user's age at the target year — not for education (that's the child's timeline).
+  const ownAge = age != null && showsOwnAge(category)
+  const loan = loanId ? (holdings.find((h) => h.id === loanId && isLiability(h)) ?? null) : null
+  const [planned, setPlanned] = useState(
+    initial?.plannedMonthlyUsd != null ? String(Math.round(initial.plannedMonthlyUsd)) : '',
+  )
   useEscape(onClose)
 
   // AI assist: describe the goal in plain language and let Claude fill the form —
@@ -479,11 +742,33 @@ function GoalDialog({
     setLinkedIds((prev) => (prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]))
   }
 
-  const years = Array.from({ length: 51 }, (_, i) => currentYear + i)
-  const valid = name.trim() && Number(target) > 0 && (linked || Number(current) >= 0)
+  // An overdue goal keeps its (past) year selectable so editing it doesn't move it.
+  const years = [
+    ...(initial && initial.targetYear < currentYear ? [initial.targetYear] : []),
+    ...Array.from({ length: 51 }, (_, i) => currentYear + i),
+  ]
+  const plannedValid = planned.trim() === '' || Number(planned) >= 0
+  const valid = isDebt
+    ? !!name.trim() && !!loan && Number(original) > 0
+    : name.trim() && Number(target) > 0 && (linked || Number(current) >= 0) && plannedValid
 
   function submit() {
     if (!valid) return
+    if (isDebt && loan) {
+      const c = loanCurrency(loan)
+      const orig = Number(original)
+      onSave({
+        name: name.trim(),
+        category: 'debt',
+        // Stored in USD for sorting/summaries; the card reads progress natively.
+        targetUsd: nativeToUsd(orig, c, rate),
+        currentUsd: Math.max(0, nativeToUsd(orig - loanBalanceNative(loan), c, rate)),
+        targetYear: year,
+        linkedLiabilityId: loan.id,
+        originalAmount: orig,
+      })
+      return
+    }
     onSave({
       name: name.trim(),
       category,
@@ -494,6 +779,7 @@ function GoalDialog({
       targetYear: year,
       kind,
       linkedAccountIds: linked ? linkedIds : undefined,
+      plannedMonthlyUsd: planned.trim() !== '' && Number(planned) > 0 ? Number(planned) : undefined,
     })
   }
 
@@ -579,7 +865,7 @@ function GoalDialog({
 
           <Field label="Category">
             <div className="grid grid-cols-3 gap-1.5">
-              {GOAL_CATEGORY_ORDER.map((c) => {
+              {ALL_GOAL_CATEGORIES.map((c) => {
                 const Icon = CATEGORY_ICON[c]
                 const active = category === c
                 const accent = GOAL_CATEGORY_META[c].accent
@@ -614,6 +900,21 @@ function GoalDialog({
             </div>
           </Field>
 
+          {isDebt ? (
+            <DebtFields
+              holdings={holdings}
+              loanId={loanId}
+              onLoan={(h) => {
+                setLoanId(h.id ?? null)
+                // Default the starting balance to what's owed today.
+                if (!original) setOriginal(String(Math.round(loanBalanceNative(h))))
+                if (!name.trim()) setName(`Pay off ${h.nickname}`)
+              }}
+              original={original}
+              setOriginal={setOriginal}
+            />
+          ) : (
+            <>
           <Field label="Type — affects your projection">
             <div className="grid grid-cols-2 gap-1.5">
               {(['cost', 'investment'] as GoalKind[]).map((k) => {
@@ -696,7 +997,7 @@ function GoalDialog({
             ) : (
               <>
                 <div className="max-h-44 space-y-1 overflow-y-auto rounded-xl border border-border/70 p-1">
-                  {holdings.map((h) => {
+                  {holdings.filter((h) => !isLiability(h) || (h.id && linkedIds.includes(h.id))).map((h) => {
                     const id = h.id ?? ''
                     const on = linkedIds.includes(id)
                     const owner = accountToGoal.get(id)
@@ -747,8 +1048,10 @@ function GoalDialog({
               </>
             )}
           </Field>
+            </>
+          )}
 
-          <Field label={age != null ? `Target year — you'll be ${age + (year - currentYear)}` : 'Target year'}>
+          <Field label={ownAge ? `Target year — you'll be ${age + (year - currentYear)}` : 'Target year'}>
             <select
               value={year}
               onChange={(e) => setYear(Number(e.target.value))}
@@ -757,11 +1060,26 @@ function GoalDialog({
               {years.map((y) => (
                 <option key={y} value={y}>
                   {y}
-                  {age != null ? ` · age ${age + (y - currentYear)}` : ''}
+                  {ownAge ? ` · age ${age + (y - currentYear)}` : ''}
                 </option>
               ))}
             </select>
           </Field>
+
+          {!isDebt && (
+          <Field label="I'm putting in (USD / month, optional)">
+            <input
+              value={planned}
+              onChange={(e) => setPlanned(e.target.value.replace(/[^0-9.]/g, ''))}
+              inputMode="decimal"
+              placeholder="e.g. 500"
+              className={cn(inputCls, 'tabular-nums')}
+            />
+            <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
+              Used to show whether you&apos;re on track. Without it, the status looks at savings alone.
+            </p>
+          </Field>
+          )}
         </div>
 
         <div className="flex shrink-0 justify-end gap-2 border-t border-border/60 px-6 py-4">

@@ -46,6 +46,8 @@ import {
 } from '@/lib/allocation'
 import { formatAmount } from '@/lib/currency'
 import { useBudget, BUDGET_COLORS } from '@/context/BudgetContext'
+import { monthlyContribution as sumInvesting } from '@/lib/budget'
+import { AI_ERROR_TEXT } from '@/lib/ai'
 
 /** Moderate long-run rate used until we have ≥3 months of tracked history. */
 const MODERATE_RATE = 0.07
@@ -158,9 +160,7 @@ export default function AnalyzerPage() {
 
   // Monthly contribution comes straight from the budget's investment categories,
   // so the projection and the budget panel are always in sync (one source of truth).
-  const monthlyContribution = budgetCategories
-    .filter((c) => /invest/i.test(c.label))
-    .reduce((s, c) => s + (c.amount > 0 ? c.amount : 0), 0)
+  const monthlyContribution = sumInvesting(budgetCategories)
 
   // Optional yearly step-up: each working year you invest this much % more than
   // the year before (raises track income growth). 0 = a flat contribution.
@@ -175,7 +175,8 @@ export default function AnalyzerPage() {
   const goalOutflows = useMemo(
     () =>
       goals
-        .filter((g) => goalKind(g) === 'cost' && g.targetUsd > 0)
+        // Debt payoff is already debt service in the cash flow, never an outflow here.
+        .filter((g) => g.category !== 'debt' && goalKind(g) === 'cost' && g.targetUsd > 0)
         .map((g) => ({ name: g.name, age: age + (g.targetYear - currentYear), amount: g.targetUsd }))
         .filter((o) => o.age > age && o.age <= END_AGE)
         .sort((a, b) => a.age - b.age),
@@ -1375,8 +1376,7 @@ function Stepper({
 
 /* ── AI explanation panel ─────────────────────────────────────────────────── */
 
-const AI_ERROR =
-  "Sorry — I couldn't reach Claude just now. Make sure **ANTHROPIC_API_KEY** is set in `.env.local`, restart the dev server, and try again."
+const AI_ERROR = AI_ERROR_TEXT
 
 /** Short "Jun 25" style stamp for "based on …" labels. */
 function fmtStamp(ts: number): string {
@@ -1482,7 +1482,7 @@ function AiExplainer({
             <p className="text-xs text-muted-foreground">
               {ts
                 ? `Based on ${fmtStamp(ts)} — refresh after changes`
-                : 'Claude reviews your live split & income, then your next move'}
+                : 'NRIWB AI reviews your live split & income, then your next move'}
             </p>
           </div>
         </div>

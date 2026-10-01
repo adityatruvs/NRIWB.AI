@@ -1,5 +1,6 @@
 import { MOCK_USER_ID } from "./user"
 import type { AccountType, AccountSource } from "@/types/accounts"
+import type { HoldingDetails } from "@/lib/portfolio"
 
 // Approximate USD/INR rate used for seeding mock data
 // Real rate is fetched live from ExchangeRate-API
@@ -17,6 +18,7 @@ interface MockAccount {
   isManual: boolean
   source: AccountSource
   isPfic: boolean
+  details?: HoldingDetails
 }
 
 export const MOCK_ACCOUNTS: MockAccount[] = [
@@ -79,7 +81,9 @@ export const MOCK_ACCOUNTS: MockAccount[] = [
     userId: MOCK_USER_ID,
     nickname: "HDFC NRE FD",
     institution: "HDFC Bank",
-    accountType: "nre",
+    // A fixed deposit held under the NRE scheme: the product is "fd", the scheme
+    // lives in details. Tagging it "nre" would file it as a savings account.
+    accountType: "fd",
     country: "IN",
     balanceUsd: 4500000 / SEED_RATE, // ₹45L
     balanceInr: 4500000,
@@ -87,6 +91,7 @@ export const MOCK_ACCOUNTS: MockAccount[] = [
     isManual: true,
     source: "manual",
     isPfic: false,
+    details: { fdScheme: "NRE" },
   },
   {
     userId: MOCK_USER_ID,
@@ -126,5 +131,6 @@ export const MOCK_ACCOUNTS: MockAccount[] = [
     isManual: true,
     source: "manual",
     isPfic: false,
+    details: { fdScheme: "NRO" },
   },
 ]

@@ -1,4 +1,5 @@
 import { prisma } from "./prisma"
+import { Prisma } from "@/generated/prisma"
 import { MOCK_ACCOUNTS } from "@/data/mock/accounts"
 import { MOCK_USER_ID } from "@/data/mock/user"
 
@@ -10,8 +11,10 @@ async function seed() {
   await prisma.complianceData.deleteMany({ where: { userId: MOCK_USER_ID } })
 
   // Insert mock accounts
-  for (const account of MOCK_ACCOUNTS) {
-    await prisma.account.create({ data: account })
+  for (const { details, ...account } of MOCK_ACCOUNTS) {
+    await prisma.account.create({
+      data: { ...account, ...(details ? { details: details as Prisma.InputJsonValue } : {}) },
+    })
   }
 
   // Seed a starting FX rate

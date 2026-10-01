@@ -52,3 +52,58 @@ describe('relativeAge', () => {
     expect(relativeAge(365)).toBe('12 months')
   })
 })
+
+describe('freshnessMix', async () => {
+  const { freshnessMix, sharesToPercents, confidenceBucket } = await import('@/lib/freshness')
+  const now = new Date('2026-09-30T12:00:00Z')
+  const daysAgo = (n: number) => new Date(now.getTime() - n * 86_400_000).toISOString()
+  const h = (over: Record<string, unknown>) =>
+    ({
+      nickname: 'x',
+      institution: 'y',
+      accountType: 'savings',
+      country: 'US',
+      balanceUsd: 100,
+      balanceInr: 0,
+      isPfic: false,
+      source: 'manual',
+      ...over,
+    }) as import('@/lib/portfolio').Holding
+
+  it('is all zero for an empty ledger', () => {
+    const m = freshnessMix([], 83, now)
+    expect(m.shares).toEqual({ fresh: 0, aging: 0, stale: 0, estimated: 0 })
+    expect(m.latest).toBeNull()
+    expect(sharesToPercents(m.shares)).toEqual({ fresh: 0, aging: 0, stale: 0, estimated: 0 })
+  })
+
+  it('weights by |USD| across assets and debts, and the shares sum to 1', () => {
+    const m = freshnessMix(
+      [
+        h({ balanceUsd: 600, lastSyncedAt: daysAgo(2) }),
+        h({ balanceUsd: 200, lastSyncedAt: daysAgo(45) }),
+        h({ balanceUsd: 100, lastSyncedAt: daysAgo(200), accountType: 'credit_card', kind: 'liability' }),
+        h({ balanceUsd: 100 }), // no timestamp → stale
+      ],
+      83,
+      now,
+    )
+    expect(m.shares.fresh).toBeCloseTo(0.6)
+    expect(m.shares.aging).toBeCloseTo(0.2)
+    expect(m.shares.stale).toBeCloseTo(0.2)
+    expect(Object.values(m.shares).reduce((a, b) => a + b, 0)).toBeCloseTo(1)
+    expect(m.staleCount).toBe(1)
+    expect(m.unknownCount).toBe(1)
+    expect(m.latest).toBe(daysAgo(2))
+  })
+
+  it('counts estimated holdings as Estimated regardless of age', () => {
+    expect(confidenceBucket(h({ accountType: 'property', lastSyncedAt: daysAgo(1) }), now)).toBe('estimated')
+    expect(confidenceBucket(h({ accountType: 'gold', lastSyncedAt: daysAgo(400) }), now)).toBe('estimated')
+  })
+
+  it('rounds to whole percents that always total 100', () => {
+    const p = sharesToPercents({ fresh: 1 / 3, aging: 1 / 3, stale: 1 / 3, estimated: 0 })
+    expect(p.fresh + p.aging + p.stale + p.estimated).toBe(100)
+  })
+})

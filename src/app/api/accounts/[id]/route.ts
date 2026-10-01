@@ -7,6 +7,7 @@ import {
   toHolding,
   formatZodError,
 } from '@/lib/accounts-api'
+import { balanceChanged, writeDailySnapshot } from '@/lib/snapshots'
 
 export const runtime = 'nodejs'
 
@@ -62,7 +63,10 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   }
 
   // Confirm the row exists AND belongs to this user before touching it.
-  const existing = await prisma.account.findFirst({ where: { id, userId }, select: { id: true } })
+  const existing = await prisma.account.findFirst({
+    where: { id, userId },
+    select: { id: true, balanceUsd: true, balanceInr: true },
+  })
   if (!existing) return Response.json({ error: 'Account not found' }, { status: 404 })
 
   // A non-null secured-against link must reference a *different* account of the user's.
@@ -85,12 +89,18 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const data = toUpdateData(parsed.data)
   // Translate the mapper's "clear it" sentinel into Prisma's JSON-null.
   if (data.details === null) data.details = Prisma.DbNull
+  if (data.coOwners === null) data.coOwners = Prisma.DbNull
 
   try {
     const updated = await prisma.account.update({
       where: { id },
       data: data as Prisma.AccountUncheckedUpdateInput,
     })
+    // History: a new balance, or "mark updated" re-confirming today's balance.
+    // Edits to other fields (nickname, ownership, details) write nothing.
+    if (parsed.data.confirmBalance || balanceChanged(existing, data)) {
+      await writeDailySnapshot(updated.id, updated.balanceUsd, updated.balanceInr)
+    }
     return Response.json({ account: toHolding(updated) })
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
@@ -102,8 +112,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 
 /**
  * DELETE /api/accounts/[id] — remove one account.
- * Any liability secured against it is unlinked first (in the same transaction), so
- * no dangling `securedAgainstId` is left behind. BalanceSnapshots cascade.
+ * Any liability secured against it, and any goal it funds, is unlinked in the same
+ * transaction, so no dangling reference is left behind. BalanceSnapshots cascade.
  */
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const auth = await authOr401()
@@ -118,6 +128,15 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
     prisma.account.updateMany({
       where: { userId, securedAgainstId: id },
       data: { securedAgainstId: null },
+    }),
+    // The goal it funded stays; it just stops counting this account.
+    prisma.$executeRaw`
+      UPDATE "Goal" SET "linkedAccountIds" = array_remove("linkedAccountIds", ${id})
+      WHERE "userId" = ${userId} AND ${id} = ANY("linkedAccountIds")`,
+    // A debt-payoff goal on this loan stays too, showing "Loan removed".
+    prisma.goal.updateMany({
+      where: { userId, linkedLiabilityId: id },
+      data: { linkedLiabilityId: null },
     }),
     prisma.account.delete({ where: { id } }),
   ])

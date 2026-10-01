@@ -25,6 +25,8 @@ interface NavItem {
   label: string
   icon: LucideIcon
   live?: boolean
+  /** Not built yet — shows a "Soon" badge; its page is a placeholder. */
+  soon?: boolean
 }
 
 const PRIMARY: NavItem[] = [
@@ -37,20 +39,18 @@ const PRIMARY: NavItem[] = [
 const SECONDARY: NavItem[] = [
   { href: '/budget', label: 'Budget', icon: Banknote },
   { href: '/goals', label: 'Goals', icon: Target },
-  { href: '/', label: 'Compliance', icon: ShieldCheck },
-  { href: '/', label: 'Deadlines', icon: CalendarClock },
+  { href: '/compliance', label: 'Compliance', icon: ShieldCheck, soon: true },
+  { href: '/deadlines', label: 'Deadlines', icon: CalendarClock, soon: true },
 ]
 
 interface NavGroupDef {
   label: string
   items: NavItem[]
-  /** Placeholder items (href '/') render muted/non-active in this group. */
-  mutePlaceholders?: boolean
 }
 
 const GROUPS: NavGroupDef[] = [
   { label: 'Overview', items: PRIMARY },
-  { label: 'Planning', items: SECONDARY, mutePlaceholders: true },
+  { label: 'Planning', items: SECONDARY },
 ]
 
 const GROUPS_STORAGE_KEY = 'nriwb:sidebar-groups'
@@ -175,19 +175,17 @@ function NavLink({
   item,
   pathname,
   collapsed,
-  muted,
 }: {
   item: NavItem
   pathname: string
   collapsed: boolean
-  muted?: boolean
 }) {
-  const active = pathname === item.href && !muted
+  const active = pathname === item.href
   const Icon = item.icon
   return (
     <Link
       href={item.href}
-      title={collapsed ? item.label : undefined}
+      title={collapsed ? (item.soon ? `${item.label} (coming soon)` : item.label) : undefined}
       className={cn(
         'group relative flex items-center rounded-xl py-2 text-sm transition-all duration-150',
         collapsed ? 'justify-center px-0' : 'px-2.5',
@@ -210,6 +208,11 @@ function NavLink({
       {!collapsed && item.live && (
         <span className="ai-chip ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide">
           AI
+        </span>
+      )}
+      {!collapsed && item.soon && (
+        <span className="ml-auto rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground ring-1 ring-border/70">
+          Soon
         </span>
       )}
     </Link>
@@ -264,7 +267,6 @@ function NavGroup({
               item={item}
               pathname={pathname}
               collapsed={collapsed}
-              muted={group.mutePlaceholders && item.href === '/'}
             />
           ))}
         </div>

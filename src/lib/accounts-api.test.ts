@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { TYPE_LABELS } from '@/lib/portfolio'
+import { TYPE_LABELS, ownershipLabel } from '@/lib/portfolio'
 import {
   ACCOUNT_TYPES,
   createAccountSchema,
@@ -25,6 +25,8 @@ function row(overrides: Partial<AccountRecord> = {}): AccountRecord {
     source: 'manual',
     kind: 'asset',
     securedAgainstId: null,
+    ownership: 'self',
+    coOwners: null,
     details: null,
     lastSyncedAt: new Date('2026-01-01'),
     ...overrides,
@@ -237,6 +239,50 @@ describe('toUpdateData', () => {
   it('clears details when the cleaned object is empty', () => {
     const data = toUpdateData(updateAccountSchema.parse({ details: {} }))
     expect(data.details).toBeNull()
+  })
+})
+
+describe('ownership', () => {
+  const base = { nickname: 'Home', institution: 'Self', accountType: 'property', country: 'IN' } as const
+
+  it('defaults to self with no co-owners', () => {
+    const data = toCreateData(createAccountSchema.parse(base), 'u')
+    expect(data.ownership).toBe('self')
+    expect(data.coOwners).toBeUndefined()
+    const h = toHolding(row())
+    expect(h).not.toHaveProperty('ownership')
+    expect(h).not.toHaveProperty('coOwners')
+  })
+
+  it('persists joint co-owners and drops them for self', () => {
+    const joint = createAccountSchema.parse({ ...base, ownership: 'joint', coOwners: [{ name: ' Ramesh ', relation: 'father' }] })
+    expect(toCreateData(joint, 'u').coOwners).toEqual([{ name: 'Ramesh', relation: 'father' }])
+    const self = createAccountSchema.parse({ ...base, ownership: 'self', coOwners: [{ name: 'x', relation: 'father' }] })
+    expect(toCreateData(self, 'u').coOwners).toBeUndefined()
+  })
+
+  it('rejects an unknown ownership or relation', () => {
+    expect(createAccountSchema.safeParse({ ...base, ownership: 'trust' }).success).toBe(false)
+    expect(createAccountSchema.safeParse({ ...base, coOwners: [{ name: 'x', relation: 'cousin' }] }).success).toBe(false)
+  })
+
+  it('maps a family-held row back to a Holding', () => {
+    const h = toHolding(row({ ownership: 'family', coOwners: [{ name: '', relation: 'mother' }] }))
+    expect(h.ownership).toBe('family')
+    expect(h.coOwners).toEqual([{ name: '', relation: 'mother' }])
+  })
+
+  it('switching to self on PATCH clears co-owners', () => {
+    const data = toUpdateData(updateAccountSchema.parse({ ownership: 'self', coOwners: [{ name: 'x', relation: 'spouse' }] }))
+    expect(data.ownership).toBe('self')
+    expect(data.coOwners).toBeNull()
+  })
+
+  it('labels who holds title', () => {
+    expect(ownershipLabel({})).toBeNull()
+    expect(ownershipLabel({ ownership: 'joint', coOwners: [{ name: 'Ramesh', relation: 'father' }] })).toBe('You + Father (Ramesh)')
+    expect(ownershipLabel({ ownership: 'family', coOwners: [{ name: '', relation: 'mother' }] })).toBe('Mother')
+    expect(ownershipLabel({ ownership: 'joint', coOwners: [{ name: 'Anita', relation: 'other' }] })).toBe('You + Anita')
   })
 })
 

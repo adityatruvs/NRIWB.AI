@@ -30,10 +30,18 @@ model Account {
   // -> the home). App-managed reference (not a DB FK) so bulk-restore ordering is
   // free and the DELETE handler unlinks explicitly. Nulled when the asset is deleted.
   securedAgainstId String?
+  // Whose name the asset/debt is held in: self | joint | family. Foundational
+  // data for the Legacy ("who owns what") view.
+  ownership      String    @default("self")
+  // Co-holders for joint, or the title-holder(s) for family: [{ name, relation }].
+  coOwners       Json?
   // Instrument-specific attributes (interestRate, maturityDate, tdsRate, ...).
   // Mirrors the HoldingDetails shape; only fields relevant to the type are set.
   details        Json?
   plaidAccountId String?   @unique
+  // The PlaidItem.itemId this account syncs through — lets a row show "Reconnect"
+  // when its item needs re-login. Set on link and on every sync.
+  plaidItemId    String?
   setuConsentId  String?
   lastSyncedAt   DateTime?
   createdAt      DateTime  @default(now())
@@ -44,17 +52,57 @@ model Account {
   @@index([userId])
 }
 
-// Stores daily balance history — required for FBAR peak balance calculation in Tranche 2
+// Daily balance history (net-worth trend; FBAR peak balance later). At most one
+// row per account per UTC day: `day` is the UTC date, and a later write that day
+// updates the row in place (see src/lib/snapshots.ts). Rows written before `day`
+// existed have it null.
 model BalanceSnapshot {
-  id         String   @id @default(cuid())
+  id         String    @id @default(cuid())
   accountId  String
   balanceUsd Float
   balanceInr Float
-  recordedAt DateTime @default(now())
+  day        DateTime? @db.Date
+  recordedAt DateTime  @default(now())
 
   account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
+  @@unique([accountId, day])
   @@index([accountId, recordedAt])
+}
+
+// A savings goal. Mirrors the client `Goal` shape (src/lib/goals.ts).
+model Goal {
+  id                String   @id @default(cuid())
+  userId            String
+  name              String
+  category          String
+  // retirement | education | property | travel | emergency | other | debt
+  kind              String?
+  // cost | investment — null means the category default
+  targetUsd         Float
+  currentUsd        Float    @default(0)
+  targetYear        Int
+  // Account ids earmarked to this goal. App-managed (not FKs): an account funds at
+  // most one goal, and the account DELETE handler removes its id from here.
+  linkedAccountIds  String[] @default([])
+  // What the user plans to put in each month (drives the on-track status chip).
+  plannedMonthlyUsd Float?
+  // Debt payoff only: the liability being paid off (app-managed; nulled when the
+  // loan is deleted) and its starting balance in the loan's own currency.
+  linkedLiabilityId String?
+  originalAmount    Float?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([userId])
+}
+
+// One budget per user: monthly income + categories ({ id, label, amount, color }[]).
+model Budget {
+  userId     String   @id
+  incomeUsd  Float    @default(0)
+  categories Json
+  updatedAt  DateTime @updatedAt
 }
 
 model FxRate {

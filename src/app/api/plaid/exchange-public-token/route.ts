@@ -5,6 +5,7 @@ import { requireUserId, unauthorized, UnauthorizedError } from '@/lib/auth'
 import { plaidAccountFields, type PlaidAccountInput } from '@/lib/plaid-map'
 import { toHolding } from '@/lib/accounts-api'
 import { getFxSnapshot } from '@/lib/fx'
+import { writeDailySnapshot } from '@/lib/snapshots'
 
 export const runtime = 'nodejs'
 
@@ -70,12 +71,16 @@ export async function POST(request: Request) {
         update: {
           balanceUsd: fields.balanceUsd,
           balanceInr: fields.balanceInr,
+          plaidItemId: item_id,
           lastSyncedAt: now,
         },
-        create: { ...fields, lastSyncedAt: now },
+        create: { ...fields, plaidItemId: item_id, lastSyncedAt: now },
       })
     }),
   )
+
+  // History starts the day an account is linked.
+  await Promise.all(rows.map((r) => writeDailySnapshot(r.id, r.balanceUsd, r.balanceInr, now)))
 
   // Log a non-sensitive identifier only — never the access_token.
   console.log('[plaid] item linked — item_id:', item_id, 'user:', userId, 'accounts:', rows.length)
