@@ -1,11 +1,12 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { requireUserId, unauthorized, UnauthorizedError } from '@/lib/auth'
+import { AI_MODEL, AI_QUICK } from '@/lib/ai'
 import { GOAL_CATEGORY_ORDER, type GoalCategory, type GoalKind } from '@/lib/goals'
 
 export const runtime = 'nodejs'
 
 const client = new Anthropic() // reads ANTHROPIC_API_KEY from the environment
-const MODEL = 'claude-sonnet-4-6'
+const MODEL = AI_MODEL
 
 interface SuggestRequest {
   /** Plain-language description, e.g. "fund my 8-year-old's US college". */
@@ -103,7 +104,8 @@ export async function POST(req: Request) {
   try {
     const resp = await client.messages.create({
       model: MODEL,
-      max_tokens: 600,
+      max_tokens: 2000,
+      ...AI_QUICK,
       system: buildSystem(currentYear, body.age ?? null, body.country ?? null),
       messages: [{ role: 'user', content: description.slice(0, 500) }],
     })

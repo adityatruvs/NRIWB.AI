@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { requireUserId, unauthorized, UnauthorizedError } from '@/lib/auth'
+import { AI_MODEL } from '@/lib/ai'
 import { netWorth, type Holding } from '@/lib/portfolio'
 import {
   recommendedAllocation,
@@ -14,7 +15,7 @@ import {
 export const runtime = 'nodejs'
 
 const client = new Anthropic() // reads ANTHROPIC_API_KEY from the environment
-const MODEL = 'claude-sonnet-4-6'
+const MODEL = AI_MODEL
 
 interface AnalyzerRequest {
   age: number
@@ -86,7 +87,7 @@ export async function POST(req: Request) {
 
   const stream = client.messages.stream({
     model: MODEL,
-    max_tokens: 4096,
+    max_tokens: 8000,
     thinking: { type: 'adaptive' },
     system: buildSystemPrompt(body),
     messages: [

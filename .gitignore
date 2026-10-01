@@ -12,6 +12,10 @@
 
 # testing
 /coverage
+# e2e: signed-in session (a live token), run output, screenshots
+/e2e/.auth
+/e2e/.results
+/e2e/screenshots
 
 # next.js
 /.next/
@@ -39,6 +43,9 @@ yarn-error.log*
 
 # vercel
 .vercel
+
+# clerk keyless-mode dev instance (contains a secret key — never commit)
+.clerk
 
 # typescript
 *.tsbuildinfo

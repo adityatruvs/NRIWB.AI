@@ -1,4 +1,5 @@
 import type { AccountType, AccountSource } from '@/types/accounts'
+import type { RecordedFbarPeak } from '@/lib/fbar'
 
 /**
  * Optional, instrument-specific attributes. Only the fields relevant to a
@@ -39,6 +40,39 @@ export interface HoldingDetails {
 }
 
 /**
+ * Whose name a holding is in. `self` = solely yours; `joint` = you plus the
+ * `coOwners`; `family` = held in a family member's name (the `coOwners`), not yours.
+ */
+export type Ownership = 'self' | 'joint' | 'family'
+
+export type OwnerRelation = 'spouse' | 'father' | 'mother' | 'sibling' | 'child' | 'other'
+
+export interface CoOwner {
+  name: string
+  relation: OwnerRelation
+}
+
+export const RELATION_LABELS: Record<OwnerRelation, string> = {
+  spouse: 'Spouse',
+  father: 'Father',
+  mother: 'Mother',
+  sibling: 'Sibling',
+  child: 'Child',
+  other: 'Other',
+}
+
+/** Short label for who holds title, e.g. "You + Father (Ramesh)". Null when solely yours. */
+export function ownershipLabel(h: Pick<Holding, 'ownership' | 'coOwners'>): string | null {
+  const own = h.ownership ?? 'self'
+  const people = (h.coOwners ?? []).map((c) =>
+    c.relation === 'other' ? c.name || 'Other' : `${RELATION_LABELS[c.relation]}${c.name ? ` (${c.name})` : ''}`,
+  )
+  if (own === 'joint') return people.length ? `You + ${people.join(' + ')}` : 'Joint'
+  if (own === 'family') return people.length ? people.join(' + ') : 'Family member'
+  return null
+}
+
+/**
  * A normalized holding. Both mock accounts and Plaid-linked accounts conform
  * to this shape, so every selector below works uniformly across sources.
  */
@@ -65,6 +99,10 @@ export interface Holding {
    * value minus these. Purely for attribution — net worth still nets all debt.
    */
   securedAgainstId?: string
+  /** Whose name this is held in. Absent ⇒ `self`. */
+  ownership?: Ownership
+  /** Joint co-holders, or the family title-holder(s). Only set when `ownership` isn't `self`. */
+  coOwners?: CoOwner[]
   /** Instrument-specific attributes (interest rate, maturity, …). Optional. */
   details?: HoldingDetails
   /**
@@ -73,6 +111,10 @@ export interface Holding {
    * demo/seed rows. Drives the freshness indicator (see `@/lib/freshness`).
    */
   lastSyncedAt?: string
+  /** Linked (Plaid) account whose bank login expired — show "Reconnect". Server-set. */
+  needsReauth?: boolean
+  /** The Plaid item this account syncs through; present with `needsReauth`. */
+  plaidItemId?: string
 }
 
 /** Account types that represent debt. Used to set `kind` and drive the form. */
@@ -202,7 +244,7 @@ const TYPE_TO_CLASS: Record<AccountType, AssetClass> = {
   savings: 'cash',
   nre: 'cash',
   nro: 'cash',
-  fcnr: 'cash',
+  fcnr: 'fixedDeposits', // FCNR(B) is always a 1–5 yr term deposit
   cd: 'fixedDeposits',
   bond: 'fixedDeposits',
   brokerage: 'investments',
@@ -330,28 +372,76 @@ export const FBAR_THRESHOLD_USD = 10_000
 export const FATCA_THRESHOLD_USD = 50_000
 
 export interface FbarStatus {
+  /** India account balances today, USD. */
   currentUsd: number
+  /**
+   * The figure compared with the threshold: the recorded yearly maxima when the
+   * app has balance history this year, otherwise just today's balances. Never an
+   * estimate — FBAR is a legal filing, so the app only states what it knows.
+   */
   peakUsd: number
+  /** `recorded`: highest balances recorded since `since`. `current`: today's balances only. */
+  basis: 'recorded' | 'current'
+  /** First day (YYYY-MM-DD) of this year's recorded history, when basis is `recorded`. */
+  since: string | null
+  /**
+   * When the India balances were last confirmed (oldest and newest `lastSyncedAt`),
+   * so a current-balance figure says how current it is. Null when any India
+   * account has no update time.
+   */
+  updated: { oldest: string; newest: string } | null
   pctOfThreshold: number
   crossed: boolean
 }
 
 /**
- * FBAR tracks the *peak* aggregate balance of all India financial accounts.
- * We approximate the yearly peak as a modest premium over the current
- * aggregate (live demo data) — in production this is the true running max.
+ * Where the user stands against the $10,000 FBAR threshold. Pass `recorded`
+ * (see `recordedFbarPeak` in lib/fbar) when balance history exists this year.
  */
-export function fbarStatus(holdings: Holding[], rate: number): FbarStatus {
-  const currentUsd = holdings
-    .filter((h) => h.country === 'IN' && !isLiability(h))
-    .reduce((s, h) => s + h.balanceInr / rate, 0)
-  const peakUsd = currentUsd * 1.04
+export function fbarStatus(holdings: Holding[], rate: number, recorded?: RecordedFbarPeak | null): FbarStatus {
+  const india = holdings.filter((h) => h.country === 'IN' && !isLiability(h))
+  const currentUsd = india.reduce((s, h) => s + h.balanceInr / rate, 0)
+  const peakUsd = recorded ? Math.max(recorded.usd, currentUsd) : currentUsd
+  const stamps = india.map((h) => h.lastSyncedAt ?? null)
+  const known = stamps.filter((s): s is string => !!s).sort()
   return {
     currentUsd,
     peakUsd,
+    basis: recorded ? 'recorded' : 'current',
+    since: recorded?.since ?? null,
+    updated:
+      known.length > 0 && known.length === stamps.length
+        ? { oldest: known[0], newest: known[known.length - 1] }
+        : null,
     pctOfThreshold: (peakUsd / FBAR_THRESHOLD_USD) * 100,
     crossed: peakUsd >= FBAR_THRESHOLD_USD,
   }
+}
+
+/** One plain sentence saying what the FBAR figure is and where it comes from. */
+export function fbarBasisPhrase(f: FbarStatus, now: Date = new Date()): string {
+  if (f.basis === 'recorded' && f.since) {
+    return `Highest India balances recorded since ${shortDate(f.since, now)}: ${usd(f.peakUsd)} combined`
+  }
+  // Say how current "current" is: the balances as the user last entered or synced them.
+  const total = `India accounts total ${usd(f.currentUsd)}`
+  if (!f.updated) return `${total} at balances as entered (update date not recorded)`
+  const oldest = shortDate(f.updated.oldest, now)
+  const newest = shortDate(f.updated.newest, now)
+  return oldest === newest
+    ? `${total} at balances last updated ${oldest}`
+    : `${total} at balances last updated between ${oldest} and ${newest}`
+}
+
+/** "Mar 3", or "Mar 3, 2025" outside the current year. Dates are read in UTC. */
+function shortDate(iso: string, now: Date): string {
+  const d = new Date(iso.length === 10 ? `${iso}T00:00:00Z` : iso)
+  return d.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    ...(d.getUTCFullYear() !== now.getUTCFullYear() ? { year: 'numeric' } : {}),
+    timeZone: 'UTC',
+  })
 }
 
 export type ComplianceLevel = 'ok' | 'attention' | 'overdue'
@@ -362,14 +452,17 @@ export interface ComplianceItem {
   title: string
   detail: string
   meta: string
+  /** Where to go to fix it — set by `withHrefs` (lib/attention-links), never by the model. */
+  href?: string
 }
 
 export function complianceItems(
   holdings: Holding[],
   rate: number,
+  recordedPeak?: RecordedFbarPeak | null,
 ): ComplianceItem[] {
   const items: ComplianceItem[] = []
-  const fbar = fbarStatus(holdings, rate)
+  const fbar = fbarStatus(holdings, rate, recordedPeak)
   const pfics = pficHoldings(holdings)
   // FATCA reports foreign *assets*, so exclude India liabilities (use gross, not net).
   const indiaUsd = holdings
@@ -380,9 +473,12 @@ export function complianceItems(
     key: 'fbar',
     level: fbar.crossed ? 'overdue' : fbar.pctOfThreshold > 70 ? 'attention' : 'ok',
     title: 'FBAR — FinCEN 114',
+    // Only what the app knows: a current balance is never called a peak.
     detail: fbar.crossed
-      ? `India accounts peaked at ${usd(fbar.peakUsd)} — above the $10,000 threshold. Filing required.`
-      : `India accounts peaked at ${usd(fbar.peakUsd)} — ${Math.round(fbar.pctOfThreshold)}% of the $10,000 limit.`,
+      ? `${fbarBasisPhrase(fbar)}, above the $10,000 threshold. Filing required.`
+      : fbar.basis === 'current'
+        ? `${fbarBasisPhrase(fbar)}, ${Math.round(fbar.pctOfThreshold)}% of the $10,000 limit. FBAR counts each account's highest balance this year, which may be higher.`
+        : `${fbarBasisPhrase(fbar)}, ${Math.round(fbar.pctOfThreshold)}% of the $10,000 limit.`,
     meta: 'Due Apr 15 (auto-ext. Oct 15)',
   })
 
@@ -431,9 +527,10 @@ export const TYPE_LABELS: Record<string, string> = {
   ira: 'IRA',
   roth_ira: 'Roth IRA',
   real_estate: 'Real Estate',
-  nre: 'NRE',
-  nro: 'NRO',
-  fcnr: 'FCNR',
+  // "Savings" so an NRE/NRO FD isn't filed here — an FD is 'fd' + fdScheme.
+  nre: 'NRE Savings',
+  nro: 'NRO Savings',
+  fcnr: 'FCNR Deposit',
   fd: 'Fixed Deposit',
   mutual_fund: 'Mutual Fund',
   property: 'Property',

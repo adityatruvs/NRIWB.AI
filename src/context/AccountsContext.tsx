@@ -2,9 +2,8 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { useUser } from '@clerk/nextjs'
-import { MOCK_ACCOUNTS } from '@/data/mock/accounts'
+import { DEMO_HOLDINGS } from '@/lib/demo'
 import { isLiability, type Holding } from '@/lib/portfolio'
-
 interface AccountsContextValue {
   /** The user's holdings — loaded from the server (or the demo seed when in demo mode). */
   holdings: Holding[]
@@ -17,8 +16,11 @@ interface AccountsContextValue {
   addLinked: (accounts: Holding[]) => void
   clearLinked: () => void
   addManual: (account: Holding) => void
-  /** Replace the holding with this id (keeps its id and position in the list). */
-  updateAccount: (id: string, account: Holding) => void
+  /**
+   * Replace the holding with this id (keeps its id and position in the list).
+   * `confirmBalance` = "mark updated": records today's balance in history.
+   */
+  updateAccount: (id: string, account: Holding, opts?: { confirmBalance?: boolean }) => void
   removeAccount: (id: string) => void
   /** Re-fetch the ledger from the server (e.g. after a balance sync). */
   refresh: () => Promise<void>
@@ -26,6 +28,8 @@ interface AccountsContextValue {
   loadDemoData: () => void
   /** Leave demo mode and return to the user's real (server) data. */
   exitDemo: () => void
+  /** Be told when accounts are removed (e.g. so goals drop the link). Returns an unsubscribe. */
+  onRemoved: (listener: (ids: string[]) => void) => () => void
 }
 
 const AccountsContext = createContext<AccountsContextValue | null>(null)
@@ -37,18 +41,7 @@ const demoKeyFor = (userId: string) => `nriwb:demo:${userId}`
 // Pre-scoping key — cleared on mount so a stale global flag can't leak across users.
 const LEGACY_DEMO_KEY = 'nriwb:demo'
 
-// Deterministic ids for the seed set keep the demo overlay stable across renders.
-const SEED_HOLDINGS: Holding[] = MOCK_ACCOUNTS.map((a, i) => ({
-  id: `seed-${i}`,
-  nickname: a.nickname,
-  institution: a.institution,
-  accountType: a.accountType,
-  country: a.country,
-  balanceUsd: a.balanceUsd,
-  balanceInr: a.balanceInr,
-  isPfic: a.isPfic,
-  source: a.source,
-}))
+const SEED_HOLDINGS = DEMO_HOLDINGS
 
 /** The subset of a Holding the /api/accounts body accepts (id + client-only fields dropped). */
 function createBody(h: Holding) {
@@ -65,6 +58,8 @@ function createBody(h: Holding) {
   }
   if (h.securedAgainstId) body.securedAgainstId = h.securedAgainstId
   if (h.details) body.details = h.details
+  if (h.ownership) body.ownership = h.ownership
+  if (h.coOwners?.length) body.coOwners = h.coOwners
   return body
 }
 
@@ -74,6 +69,8 @@ function updateBody(h: Holding) {
     ...createBody(h),
     securedAgainstId: h.securedAgainstId ?? null,
     details: h.details ?? null,
+    ownership: h.ownership ?? 'self',
+    coOwners: h.coOwners?.length ? h.coOwners : null,
   }
 }
 
@@ -88,6 +85,12 @@ export function AccountsProvider({ children }: { children: React.ReactNode }) {
   // `isLoaded` gates the mount effect so we don't decide before Clerk resolves.
   const { isLoaded, user } = useUser()
   const userId = user?.id ?? null
+
+  const removedListeners = useRef(new Set<(ids: string[]) => void>())
+  const onRemoved = useCallback((listener: (ids: string[]) => void) => {
+    removedListeners.current.add(listener)
+    return () => void removedListeners.current.delete(listener)
+  }, [])
 
   // A live mirror of `holdings` so async handlers can snapshot the pre-change
   // state for rollback without re-subscribing to every render.
@@ -166,7 +169,7 @@ export function AccountsProvider({ children }: { children: React.ReactNode }) {
   )
 
   const updateAccount = useCallback(
-    (id: string, account: Holding) => {
+    (id: string, account: Holding, opts?: { confirmBalance?: boolean }) => {
       const prevItem = holdingsRef.current.find((h) => h.id === id)
       setHoldings((prev) => prev.map((h) => (h.id === id ? { ...account, id } : h)))
       if (demo) return
@@ -175,7 +178,7 @@ export function AccountsProvider({ children }: { children: React.ReactNode }) {
           const res = await fetch(`/api/accounts/${id}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(updateBody(account)),
+            body: JSON.stringify({ ...updateBody(account), ...(opts?.confirmBalance ? { confirmBalance: true } : {}) }),
           })
           if (!res.ok) throw new Error(`PATCH /api/accounts/${id} ${res.status}`)
           const { account: saved } = (await res.json()) as { account: Holding }
@@ -198,6 +201,7 @@ export function AccountsProvider({ children }: { children: React.ReactNode }) {
           .filter((h) => h.id !== id)
           .map((h) => (h.securedAgainstId === id ? { ...h, securedAgainstId: undefined } : h)),
       )
+      removedListeners.current.forEach((l) => l([id]))
       if (demo) return
       void (async () => {
         try {
@@ -230,6 +234,8 @@ export function AccountsProvider({ children }: { children: React.ReactNode }) {
     if (linked.length === 0) return
     const snapshot = holdingsRef.current
     setHoldings((prev) => prev.filter((h) => h.source === 'manual'))
+    const ids = linked.flatMap((h) => (h.id ? [h.id] : []))
+    removedListeners.current.forEach((l) => l(ids))
     if (demo) return
     void (async () => {
       try {
@@ -269,6 +275,7 @@ export function AccountsProvider({ children }: { children: React.ReactNode }) {
     refresh: loadFromServer,
     loadDemoData,
     exitDemo,
+    onRemoved,
   }
 
   return <AccountsContext.Provider value={value}>{children}</AccountsContext.Provider>

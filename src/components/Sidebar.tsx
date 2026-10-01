@@ -25,6 +25,8 @@ interface NavItem {
   label: string
   icon: LucideIcon
   live?: boolean
+  /** Not built yet — shows a "Soon" badge; its page is a placeholder. */
+  soon?: boolean
 }
 
 const PRIMARY: NavItem[] = [
@@ -37,27 +39,37 @@ const PRIMARY: NavItem[] = [
 const SECONDARY: NavItem[] = [
   { href: '/budget', label: 'Budget', icon: Banknote },
   { href: '/goals', label: 'Goals', icon: Target },
-  { href: '/', label: 'Compliance', icon: ShieldCheck },
-  { href: '/', label: 'Deadlines', icon: CalendarClock },
+  { href: '/compliance', label: 'Compliance', icon: ShieldCheck, soon: true },
+  { href: '/deadlines', label: 'Deadlines', icon: CalendarClock, soon: true },
 ]
 
 interface NavGroupDef {
   label: string
   items: NavItem[]
-  /** Placeholder items (href '/') render muted/non-active in this group. */
-  mutePlaceholders?: boolean
 }
 
 const GROUPS: NavGroupDef[] = [
   { label: 'Overview', items: PRIMARY },
-  { label: 'Planning', items: SECONDARY, mutePlaceholders: true },
+  { label: 'Planning', items: SECONDARY },
 ]
 
 const GROUPS_STORAGE_KEY = 'nriwb:sidebar-groups'
 
+export function fxStatus(updatedAt: string | null, now: Date = new Date()): { label: string; fresh: boolean } {
+  if (!updatedAt) return { label: 'no live rate yet', fresh: false }
+
+  const ms = now.getTime() - new Date(updatedAt).getTime()
+  const min = 60_000
+  const hr = 60 * min
+  const day = 24 * hr
+  const age = ms < min ? 'just now' : ms < hr ? `${Math.floor(ms / min)}m ago` : ms < day ? `${Math.floor(ms / hr)}h ago` : `${Math.floor(ms / day)}d ago`
+  return { label: ms < min ? age : `Updated ${age}`, fresh: ms < 2 * hr }
+}
+
 export default function Sidebar() {
   const pathname = usePathname()
-  const { rate } = useCurrency()
+  const { rate, updatedAt } = useCurrency()
+  const { label: fxLabel, fresh: fxFresh } = fxStatus(updatedAt)
   const [collapsed, setCollapsed] = useState(false)
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(GROUPS.map((g) => [g.label, true])),
@@ -120,9 +132,14 @@ export default function Sidebar() {
             />
             <div className="flex items-center justify-between">
               <span className="text-[12px] font-medium text-muted-foreground">USD / INR</span>
-              <span className="flex items-center gap-1 text-[12px] font-medium text-success">
-                <span className="size-1.5 rounded-full bg-success animate-pulse-ring text-success" />
-                live
+              <span
+                className={cn(
+                  'flex items-center gap-1 text-[12px] font-medium',
+                  fxFresh ? 'text-success' : 'text-muted-foreground',
+                )}
+              >
+                <span className={cn('size-1.5 rounded-full', fxFresh ? 'bg-success' : 'bg-muted-foreground/40')} />
+                {fxLabel}
               </span>
             </div>
             <p className="mt-1 tabular-nums text-[15px] font-semibold tabular-nums tracking-tight">
@@ -131,7 +148,10 @@ export default function Sidebar() {
           </div>
         ) : (
           <div className="flex justify-center">
-            <span className="size-2 rounded-full bg-success" title={`USD/INR ₹${rate.toFixed(2)}`} />
+            <span
+              className={cn('size-2 rounded-full', fxFresh ? 'bg-success' : 'bg-muted-foreground/40')}
+              title={`USD/INR ₹${rate.toFixed(2)} — ${fxLabel}`}
+            />
           </div>
         )}
 
@@ -155,19 +175,17 @@ function NavLink({
   item,
   pathname,
   collapsed,
-  muted,
 }: {
   item: NavItem
   pathname: string
   collapsed: boolean
-  muted?: boolean
 }) {
-  const active = pathname === item.href && !muted
+  const active = pathname === item.href
   const Icon = item.icon
   return (
     <Link
       href={item.href}
-      title={collapsed ? item.label : undefined}
+      title={collapsed ? (item.soon ? `${item.label} (coming soon)` : item.label) : undefined}
       className={cn(
         'group relative flex items-center rounded-xl py-2 text-sm transition-all duration-150',
         collapsed ? 'justify-center px-0' : 'px-2.5',
@@ -190,6 +208,11 @@ function NavLink({
       {!collapsed && item.live && (
         <span className="ai-chip ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide">
           AI
+        </span>
+      )}
+      {!collapsed && item.soon && (
+        <span className="ml-auto rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground ring-1 ring-border/70">
+          Soon
         </span>
       )}
     </Link>
@@ -244,7 +267,6 @@ function NavGroup({
               item={item}
               pathname={pathname}
               collapsed={collapsed}
-              muted={group.mutePlaceholders && item.href === '/'}
             />
           ))}
         </div>

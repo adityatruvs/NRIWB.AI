@@ -29,6 +29,8 @@ export async function purgeUserData(userId: string): Promise<void> {
   //    (onDelete: Cascade in the schema), so deleting accounts clears snapshots too.
   await prisma.$transaction([
     prisma.account.deleteMany({ where: { userId } }),
+    prisma.goal.deleteMany({ where: { userId } }),
+    prisma.budget.deleteMany({ where: { userId } }),
     prisma.plaidItem.deleteMany({ where: { userId } }),
     prisma.conversation.deleteMany({ where: { userId } }),
     prisma.complianceData.deleteMany({ where: { userId } }),

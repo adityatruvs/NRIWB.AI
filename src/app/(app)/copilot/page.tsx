@@ -19,22 +19,21 @@ import {
 import { CopilotLogo } from '@/components/ui/logos'
 import { useAccounts } from '@/context/AccountsContext'
 import { useCurrency } from '@/context/CurrencyContext'
-import { useBudget, BUDGET_COLORS } from '@/context/BudgetContext'
+import { useBudget } from '@/context/BudgetContext'
 import { useGoals } from '@/context/GoalsContext'
-import { useProfile } from '@/context/ProfileContext'
+import { useApplyProposal } from '@/components/copilot/useApplyProposal'
 import { netWorth } from '@/lib/portfolio'
 import { formatUSD } from '@/lib/currency'
 import { splitProposals, parseProposals } from '@/lib/copilot-actions'
 import {
   ProposalCard,
   resolveProposal,
-  accountToHolding,
-  goalToGoal,
   type EditableProposal,
   type ProposalStatus,
 } from '@/components/copilot/ProposalCard'
 import { Rich, Typing, AssistantAvatar } from '@/components/copilot/chat-ui'
 import { cn } from '@/lib/utils'
+import { AI_ERROR_TEXT } from '@/lib/ai'
 
 interface ProposalItem {
   pid: string
@@ -59,8 +58,7 @@ interface Chat {
 
 const STORE_KEY = 'nriwb:copilot-chats'
 
-const ERROR_TEXT =
-  "Sorry — I couldn't reach Claude just now. Make sure **ANTHROPIC_API_KEY** is set in `.env.local`, restart the dev server, and try again."
+const ERROR_TEXT = AI_ERROR_TEXT
 
 const VIOLET = 'oklch(0.55 0.18 292)'
 
@@ -120,18 +118,13 @@ function relTime(ts: number, now: number): string {
 }
 
 export default function CopilotPage() {
-  const { holdings, addManual, updateAccount } = useAccounts()
+  const { holdings, demo } = useAccounts()
   const { rate } = useCurrency()
-  const { income, categories, setIncome, addCategory, updateCategory } = useBudget()
-  const { goals, addGoal, updateGoal } = useGoals()
-  const { age } = useProfile()
+  const { categories } = useBudget()
+  const { goals } = useGoals()
+  const applyProposal = useApplyProposal()
   const nw = netWorth(holdings, rate)
   const idBase = useId()
-
-  // Monthly investing — same basis as the analyzer/budget (the "invest" lines).
-  const monthlyContribution = categories
-    .filter((c) => /invest/i.test(c.label))
-    .reduce((s, c) => s + (c.amount > 0 ? c.amount : 0), 0)
 
   // Personalize the goals starter prompt with the user's actual top goal.
   const topGoalName = goals.find((g) => g.category === 'retirement')?.name ?? goals[0]?.name ?? null
@@ -300,12 +293,8 @@ export default function CopilotPage() {
         signal: controller.signal,
         body: JSON.stringify({
           messages: [...prior, userMsg].map(({ role, text }) => ({ role, text })),
-          holdings,
           rate,
-          income,
-          monthlyContribution,
-          age,
-          goals,
+          demo,
         }),
       })
       if (!res.ok || !res.body) throw new Error(`Copilot request failed (${res.status})`)
@@ -399,33 +388,7 @@ export default function CopilotPage() {
 
   /** Apply a proposal through the shared contexts, then mark it applied. */
   function acceptProposal(messageId: string, pid: string, ep: EditableProposal) {
-    switch (ep.type) {
-      case 'add_account':
-        addManual(accountToHolding(ep.account))
-        break
-      case 'update_account':
-        if (ep.id) updateAccount(ep.id, accountToHolding(ep.account))
-        break
-      case 'add_goal':
-        addGoal(goalToGoal(ep.goal))
-        break
-      case 'update_goal':
-        if (ep.id) updateGoal(ep.id, goalToGoal(ep.goal))
-        break
-      case 'set_income':
-        setIncome(ep.amount)
-        break
-      case 'add_category':
-        addCategory({
-          label: ep.label,
-          amount: ep.amount,
-          color: BUDGET_COLORS[categories.length % BUDGET_COLORS.length],
-        })
-        break
-      case 'update_category':
-        updateCategory(ep.id, { label: ep.label, amount: ep.amount })
-        break
-    }
+    applyProposal(ep)
     patchProposal(messageId, pid, (p) => ({ ...p, status: 'applied' }))
   }
 

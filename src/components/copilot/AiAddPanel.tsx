@@ -18,13 +18,11 @@ import { Sparkles, ArrowUp, Minimize2, Square } from 'lucide-react'
 import { CardHeader } from '@/components/ui/Card'
 import { useAccounts } from '@/context/AccountsContext'
 import { useCurrency } from '@/context/CurrencyContext'
-import { useBudget, BUDGET_COLORS } from '@/context/BudgetContext'
+import { useBudget } from '@/context/BudgetContext'
 import { useGoals } from '@/context/GoalsContext'
-import { useProfile } from '@/context/ProfileContext'
+import { useApplyProposal } from '@/components/copilot/useApplyProposal'
 import {
   ProposalCard,
-  accountToHolding,
-  goalToGoal,
   type EditableProposal,
 } from '@/components/copilot/ProposalCard'
 import { useCopilotStream } from '@/components/copilot/useCopilotStream'
@@ -41,59 +39,20 @@ const EXAMPLES = [
 const SURFACE_ID = 'ai-add-surface'
 
 export function AiAdd() {
-  const { holdings, addManual, updateAccount } = useAccounts()
+  const { holdings, demo } = useAccounts()
   const { rate } = useCurrency()
-  const { income, categories, setIncome, addCategory, updateCategory } = useBudget()
-  const { goals, addGoal, updateGoal } = useGoals()
-  const { age } = useProfile()
+  const { categories } = useBudget()
+  const { goals } = useGoals()
+  const applyProposal = useApplyProposal()
 
-  // Same investing basis as the analyzer/budget — the "invest" budget lines.
-  const monthlyContribution = categories
-    .filter((c) => /invest/i.test(c.label))
-    .reduce((s, c) => s + (c.amount > 0 ? c.amount : 0), 0)
-
-  const chat = useCopilotStream({
-    holdings,
-    rate,
-    income,
-    monthlyContribution,
-    age,
-    goals,
-    categories,
-  })
+  const chat = useCopilotStream({ holdings, rate, demo, goals, categories })
 
   const [expanded, setExpanded] = useState(false)
   const [draft, setDraft] = useState('')
 
   /** Apply a proposal through the shared contexts, then mark its card applied. */
   function accept(messageId: string, pid: string, ep: EditableProposal) {
-    switch (ep.type) {
-      case 'add_account':
-        addManual(accountToHolding(ep.account))
-        break
-      case 'update_account':
-        if (ep.id) updateAccount(ep.id, accountToHolding(ep.account))
-        break
-      case 'add_goal':
-        addGoal(goalToGoal(ep.goal))
-        break
-      case 'update_goal':
-        if (ep.id) updateGoal(ep.id, goalToGoal(ep.goal))
-        break
-      case 'set_income':
-        setIncome(ep.amount)
-        break
-      case 'add_category':
-        addCategory({
-          label: ep.label,
-          amount: ep.amount,
-          color: BUDGET_COLORS[categories.length % BUDGET_COLORS.length],
-        })
-        break
-      case 'update_category':
-        updateCategory(ep.id, { label: ep.label, amount: ep.amount })
-        break
-    }
+    applyProposal(ep)
     chat.patchProposal(messageId, pid, (p) => ({ ...p, status: 'applied' }))
   }
 
@@ -354,7 +313,7 @@ function ExpandedPanel({
 
 /* ── One turn in the panel thread ───────────────────────────────────────────── */
 
-function PanelBubble({
+export function PanelBubble({
   message,
   streaming,
   onAccept,

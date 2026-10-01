@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { requireUserId, unauthorized, UnauthorizedError } from '@/lib/auth'
+import { AI_MODEL, AI_QUICK } from '@/lib/ai'
 import {
   validateCasFile,
   buildExtractionContent,
@@ -11,7 +12,7 @@ export const runtime = 'nodejs'
 export const maxDuration = 60
 
 const client = new Anthropic()
-const MODEL = 'claude-sonnet-4-6'
+const MODEL = AI_MODEL
 
 const GENERIC_FAILURE =
   "Couldn't read that statement — it may be scanned, password-protected, or in an unexpected format. Add your holdings manually instead."
@@ -55,8 +56,9 @@ export async function POST(request: Request) {
     message = await client.messages.create({
       model: MODEL,
       max_tokens: 8192,
+      ...AI_QUICK,
       tools: [CAS_EXTRACTION_TOOL],
-      tool_choice: { type: 'tool', name: CAS_EXTRACTION_TOOL.name },
+      tool_choice: { type: 'auto' },
       messages: [{ role: 'user', content }],
     })
   } catch (e) {

@@ -787,3 +787,11 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Floating Copilot: on wide screens the open panel (420px + gutter) reserves its
+   space, so it never covers the page's own buttons. */
+@media (min-width: 1024px) {
+  body[data-copilot-open] main {
+    padding-right: 436px;
+  }
+}

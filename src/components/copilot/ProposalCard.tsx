@@ -8,8 +8,15 @@
  */
 
 import { Check, X, Wallet, Target, Banknote, Pencil, type LucideIcon } from 'lucide-react'
-import { TYPE_LABELS, type Holding, type HoldingDetails } from '@/lib/portfolio'
-import { detailSpec } from '@/lib/account-details'
+import type { Holding, HoldingDetails } from '@/lib/portfolio'
+import {
+  detailSpec,
+  fromTypeChoice,
+  mistypedFdScheme,
+  typeChoice,
+  typeChoiceLabel,
+  type TypeChoice,
+} from '@/lib/account-details'
 import {
   GOAL_CATEGORY_ORDER,
   GOAL_CATEGORY_META,
@@ -63,9 +70,10 @@ export type EditableProposal =
 
 export type ProposalStatus = 'pending' | 'applied' | 'discarded'
 
-const ACCOUNT_TYPE_OPTIONS: AccountType[] = [
+// India FDs are offered per scheme, as in the Accounts dialog (see TypeChoice).
+const ACCOUNT_TYPE_OPTIONS: TypeChoice[] = [
   'checking', 'savings', 'brokerage', '401k', 'ira', 'roth_ira', 'real_estate', 'property',
-  'nre', 'nro', 'fcnr', 'fd', 'mutual_fund', 'gold', 'vehicle', 'cd', 'bond', 'notes_receivable',
+  'nre', 'nro', 'fd_nre', 'fd_nro', 'fcnr', 'mutual_fund', 'gold', 'vehicle', 'cd', 'bond', 'notes_receivable',
   'other', 'mortgage', 'home_loan', 'heloc', 'auto_loan', 'student_loan', 'education_loan',
   'personal_loan', 'credit_card', 'notes_payable', 'other_debt',
 ]
@@ -208,7 +216,7 @@ function buildDetails(a: AccountFields): HoldingDetails | undefined {
   if (spec.maturityDate && a.maturityDate) d.maturityDate = a.maturityDate
   if (spec.compounding) d.compounding = a.compounding ?? 'quarterly'
   if (spec.depositCurrency) d.depositCurrency = a.depositCurrency ?? 'USD'
-  if (spec.schemeToggle) d.fdScheme = a.fdScheme ?? 'NRE'
+  if (spec.hasScheme) d.fdScheme = a.fdScheme ?? 'NRE'
   if (spec.tdsRate && a.tdsRate != null) d.tdsRate = a.tdsRate
   if (spec.minPayment && a.minPayment != null) d.minPayment = a.minPayment
   if (spec.goldToggle && a.isSgb) d.isSgb = true
@@ -399,6 +407,8 @@ function AccountFieldset({
 }) {
   const liability = a.kind === 'liability'
   const spec = detailSpec(a.country, a.accountType, a.isSgb ?? false, a.fdScheme ?? 'NRE')
+  // The model can still file an "NRE FD" as NRE Savings — suggest the fix, don't make it.
+  const suggestedScheme = liability ? null : mistypedFdScheme(a)
   return (
     <>
       <Field label="Nickname">
@@ -408,9 +418,15 @@ function AccountFieldset({
         <TextInput value={a.institution} onChange={(institution) => onChange({ ...a, institution })} placeholder="e.g. ICICI Bank" />
       </Field>
       <Field label="Type">
-        <Select value={a.accountType} onChange={(v) => onChange({ ...a, accountType: v as AccountType })}>
+        <Select
+          value={typeChoice(a.country, a.accountType, a.fdScheme)}
+          onChange={(v) => {
+            const next = fromTypeChoice(v as TypeChoice)
+            onChange({ ...a, accountType: next.accountType, fdScheme: next.fdScheme ?? a.fdScheme })
+          }}
+        >
           {ACCOUNT_TYPE_OPTIONS.map((t) => (
-            <option key={t} value={t}>{TYPE_LABELS[t] ?? t}</option>
+            <option key={t} value={t}>{typeChoiceLabel(t)}</option>
           ))}
         </Select>
       </Field>
@@ -429,6 +445,19 @@ function AccountFieldset({
           <option value="liability">Liability (debt)</option>
         </Select>
       </Field>
+
+      {suggestedScheme && (
+        <p className="col-span-2 text-[11.5px] text-muted-foreground">
+          Sounds like a fixed deposit.{' '}
+          <button
+            type="button"
+            onClick={() => onChange({ ...a, accountType: 'fd', fdScheme: suggestedScheme })}
+            className="font-medium text-foreground underline underline-offset-2"
+          >
+            Use {suggestedScheme} Fixed Deposit
+          </button>
+        </p>
+      )}
 
       {/* Instrument-specific fields — only the ones that fit this type */}
       {spec.interestRate && (
@@ -449,14 +478,6 @@ function AccountFieldset({
       {spec.minPayment && (
         <Field label="Min. payment / mo">
           <NumberInput prefix={cur} value={a.minPayment ?? 0} onChange={(minPayment) => onChange({ ...a, minPayment })} />
-        </Field>
-      )}
-      {spec.schemeToggle && (
-        <Field label="Scheme">
-          <Select value={a.fdScheme ?? 'NRE'} onChange={(v) => onChange({ ...a, fdScheme: v as 'NRE' | 'NRO' })}>
-            <option value="NRE">NRE — tax-free</option>
-            <option value="NRO">NRO — taxable</option>
-          </Select>
         </Field>
       )}
       {spec.tdsRate && (

@@ -109,7 +109,7 @@ Account detail fields — include the ones that fit the type (with a real value 
 - "expectedReturn" (% per year): growth assets — brokerage, 401k, ira, roth_ira, mutual_fund, real_estate, property, gold.
 - "maturityDate" ("YYYY-MM-DD"): fd, cd, fcnr, bond, notes_receivable, and term loans (the payoff date).
 - "minPayment" (per month, native currency): loans.
-- "fdScheme": "NRE" or "NRO" for an India fd. "tdsRate" (%) for an India nro. "isPfic": true for an India mutual_fund. "isSgb": true for an India Sovereign Gold Bond.
+- "fdScheme": "NRE" or "NRO" for an India fd. An NRE FD or NRO FD (fixed/term deposit) is accountType "fd" with that fdScheme — NEVER "nre"/"nro", which mean the savings account only. "tdsRate" (%) for an India nro. "isPfic": true for an India mutual_fund. "isSgb": true for an India Sovereign Gold Bond.
 - {"type":"add_goal","summary":"...","goal":{"name":"","category":"retirement|education|property|travel|emergency|other","targetUsd":<number>,"currentUsd":<number, optional>,"targetYear":<year>,"kind":"cost|investment"}}
 - {"type":"update_goal","summary":"...","id":"<ref>","goal":{ ... }}
 - {"type":"set_income","summary":"...","amount":<USD per month>}
