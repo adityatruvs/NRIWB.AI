@@ -7,7 +7,7 @@ vi.mock('@/lib/prisma', () => ({
   prisma: { fxRate: { findUnique: (...args: unknown[]) => findUnique(...args), upsert: (...args: unknown[]) => upsert(...args) } },
 }))
 
-const { refreshFxRate, getFxSnapshot, FX_PAIR, FX_FALLBACK_RATE } = await import('./fx')
+const { refreshFxRate, getFxSnapshot, FX_PAIR, FX_FALLBACK_RATE, FX_STALE_AFTER_MS } = await import('./fx')
 
 const NOW = new Date('2026-09-25T12:00:00.000Z')
 
@@ -20,6 +20,8 @@ describe('fx', () => {
   const originalFetch = global.fetch
 
   beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW)
     findUnique.mockReset()
     upsert.mockReset()
     process.env.EXCHANGE_RATE_API_KEY = 'test-key'
@@ -28,6 +30,7 @@ describe('fx', () => {
   afterEach(() => {
     process.env.EXCHANGE_RATE_API_KEY = originalKey
     global.fetch = originalFetch
+    vi.useRealTimers()
     vi.restoreAllMocks()
   })
 
@@ -72,7 +75,7 @@ describe('fx', () => {
   })
 
   describe('getFxSnapshot', () => {
-    it('serves the cached row without calling the provider', async () => {
+    it('serves a fresh cached row without calling the provider', async () => {
       findUnique.mockResolvedValue({ rate: 83.9, updatedAt: NOW })
       global.fetch = vi.fn() as unknown as typeof fetch
 
@@ -80,6 +83,28 @@ describe('fx', () => {
 
       expect(snapshot).toEqual({ rate: 83.9, updatedAt: NOW.toISOString(), source: 'cached' })
       expect(global.fetch).not.toHaveBeenCalled()
+    })
+
+    it('refreshes from the provider when the cached row is stale', async () => {
+      const stale = new Date(NOW.getTime() - FX_STALE_AFTER_MS - 1000)
+      findUnique.mockResolvedValue({ rate: 83.9, updatedAt: stale })
+      upsert.mockResolvedValue({ rate: 96.4, updatedAt: NOW })
+      global.fetch = vi.fn().mockResolvedValue(okProviderResponse(96.4)) as unknown as typeof fetch
+
+      const snapshot = await getFxSnapshot()
+
+      expect(snapshot).toEqual({ rate: 96.4, updatedAt: NOW.toISOString(), source: 'live' })
+    })
+
+    it('serves the stale cached rate when the refresh fails', async () => {
+      const stale = new Date(NOW.getTime() - FX_STALE_AFTER_MS - 1000)
+      findUnique.mockResolvedValue({ rate: 83.9, updatedAt: stale })
+      global.fetch = vi.fn().mockRejectedValue(new Error('network down')) as unknown as typeof fetch
+
+      const snapshot = await getFxSnapshot()
+
+      expect(snapshot).toEqual({ rate: 83.9, updatedAt: stale.toISOString(), source: 'cached' })
+      expect(upsert).not.toHaveBeenCalled()
     })
 
     it('bootstraps from the provider when the table has never been populated', async () => {
