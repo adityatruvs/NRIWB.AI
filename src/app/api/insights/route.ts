@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { requireUserId, unauthorized, UnauthorizedError } from '@/lib/auth'
-import { AI_MODEL } from '@/lib/ai'
+import { AI_MODEL, AI_QUICK } from '@/lib/ai'
 import {
   netWorth,
   byAssetClass,
@@ -191,7 +191,8 @@ export async function POST(req: Request) {
   try {
     const resp = await client.messages.create({
       model: MODEL,
-      max_tokens: 1500,
+      max_tokens: 4000,
+      ...AI_QUICK,
       system: SYSTEM,
       messages: [{ role: 'user', content: buildContext(holdings, rate, fbarSnapshots) }],
     })

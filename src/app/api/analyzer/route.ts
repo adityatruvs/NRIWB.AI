@@ -87,7 +87,7 @@ export async function POST(req: Request) {
 
   const stream = client.messages.stream({
     model: MODEL,
-    max_tokens: 4096,
+    max_tokens: 8000,
     thinking: { type: 'adaptive' },
     system: buildSystemPrompt(body),
     messages: [
