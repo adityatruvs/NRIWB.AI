@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { requireUserId, unauthorized, UnauthorizedError } from '@/lib/auth'
+import { getFxSnapshot } from '@/lib/fx'
 import { AI_MODEL } from '@/lib/ai'
 import {
   netWorth,
@@ -203,6 +204,7 @@ export async function POST(req: Request) {
   }
 
   const ctx = await loadUserContext(userId, { demo: body.demo === true })
+  const rate = body.rate ? parseRate(body.rate) : (await getFxSnapshot()).rate
 
   const stream = client.messages.stream({
     model: MODEL,
@@ -210,7 +212,7 @@ export async function POST(req: Request) {
     thinking: { type: 'adaptive' },
     system: buildSystemPrompt(
       ctx.holdings,
-      parseRate(body.rate),
+      rate,
       ctx.budget.incomeUsd,
       ctx.monthlyContribution,
       ctx.age,

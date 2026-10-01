@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { requireUserId, unauthorized, UnauthorizedError } from '@/lib/auth'
+import { getFxSnapshot } from '@/lib/fx'
 import { AI_MODEL, AI_QUICK } from '@/lib/ai'
 import {
   netWorth,
@@ -170,7 +171,7 @@ export async function POST(req: Request) {
     return Response.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const rate = parseRate(body.rate)
+  const rate = body.rate ? parseRate(body.rate) : (await getFxSnapshot()).rate
   let holdings: Holding[]
   let fbarSnapshots: FbarSnapshot[]
   try {

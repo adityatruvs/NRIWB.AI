@@ -1,12 +1,10 @@
 import { prisma } from '@/lib/prisma'
 import { requireUserId, unauthorized, UnauthorizedError } from '@/lib/auth'
 import { toHolding } from '@/lib/accounts-api'
+import { getFxSnapshot } from '@/lib/fx'
 import { syncPlaidItem } from '@/lib/plaid-sync'
 
 export const runtime = 'nodejs'
-
-/** Fallback USD/INR until the live FX service (later story) populates the FxRate table. */
-const DEFAULT_USD_INR = 83
 
 /**
  * POST /api/plaid/sync — refresh live balances for the user's linked institutions
@@ -23,7 +21,7 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json().catch(() => null)
-  const rate = Number(body?.rate) > 0 ? Number(body.rate) : DEFAULT_USD_INR
+  const rate = Number(body?.rate) > 0 ? Number(body.rate) : (await getFxSnapshot()).rate
   const onlyItemId: string | null = typeof body?.item_id === 'string' ? body.item_id : null
 
   // Every non-disconnected linked institution for this user (scoped — never trust a client id).
