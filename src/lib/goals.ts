@@ -229,6 +229,19 @@ export function goalMonthlyNeeded(
   return gap / annuityFactor
 }
 
+/**
+ * True when a goal isn't reached yet but what's already saved is projected to
+ * grow past the target by its year — so the monthly "needed" is ~$0. The card
+ * says "on track" instead of a "$0/mo" that reads like missing data.
+ */
+export function onTrackOnSavings(g: Goal, currentYear: number, annualReturn = DEFAULT_GOAL_RETURN): boolean {
+  return (
+    g.targetYear > currentYear &&
+    g.currentUsd < g.targetUsd &&
+    goalMonthlyNeeded(g, currentYear, annualReturn) < 1 // under $1/mo would display as "$0"
+  )
+}
+
 /* ── Seed goals (demo) ────────────────────────────────────────────────────── */
 // Mirrors the original mock so the dashboard tells the same story out of the box.
 export const SEED_GOALS: Goal[] = [

@@ -12,9 +12,13 @@ export const QA_LEDGER = [
   { nickname: 'ICICI FCNR', institution: 'ICICI', accountType: 'fcnr', country: 'IN', balanceUsd: 20_000, balanceInr: 20_000 * 83.5, details: { depositCurrency: 'USD' } },
 ]
 
-/** The QA user's real goals, reset before every run (mirrors two of the demo seed goals). */
+/**
+ * The QA user's real goals, reset before every run (mirrors two of the demo seed goals).
+ * Retirement is on track on savings alone ($1.3M clears $2M by 2041 even at 3%/yr);
+ * education is behind, so it still shows a monthly amount.
+ */
 export const QA_GOALS = [
-  { name: 'Retirement', category: 'retirement', targetUsd: 2_000_000, currentUsd: 400_000, targetYear: 2041 },
+  { name: 'Retirement', category: 'retirement', targetUsd: 2_000_000, currentUsd: 1_300_000, targetYear: 2041 },
   { name: "Child's Education", category: 'education', targetUsd: 250_000, currentUsd: 60_000, targetYear: 2035 },
 ]
 

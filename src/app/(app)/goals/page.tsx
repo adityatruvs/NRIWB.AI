@@ -50,6 +50,7 @@ import {
   resolveGoal,
   isGoalLinked,
   showsOwnAge,
+  onTrackOnSavings,
   type Goal,
   type GoalCategory,
   type GoalKind,
@@ -297,7 +298,10 @@ function GoalCard({
   const Icon = CATEGORY_ICON[goal.category]
   // Grow the goal at the expected return of the accounts funding it (linked →
   // those accounts; else the whole portfolio), not a flat guess.
-  const monthly = goalMonthlyNeeded(rg, currentYear, goalExpectedReturn(goal, holdings, rate))
+  const growth = goalExpectedReturn(goal, holdings, rate)
+  const monthly = goalMonthlyNeeded(rg, currentYear, growth)
+  // Savings alone are projected to clear the target — say so, not "~$0/mo".
+  const onTrack = onTrackOnSavings(rg, currentYear, growth)
   const yearsLeft = goal.targetYear - currentYear
   const reached = funded >= goal.targetUsd
   // Funding accounts that still exist (a deleted one never shows).
@@ -420,6 +424,18 @@ function GoalCard({
           <span className="inline-flex items-center gap-1.5">
             <Money usd={goalRemaining(goal)} className="font-medium text-foreground" /> left · target year
             passed
+          </span>
+        ) : onTrack ? (
+          <span
+            className="inline-flex items-start gap-1.5"
+            title="Illustrative: assumes this growth rate holds every year. Not a guarantee."
+          >
+            <TrendingUp size={13} className="mt-px shrink-0 text-success" />
+            <span>
+              <span className="font-medium text-success">On track</span> — at ~
+              {(growth * 100).toFixed(1).replace(/\.0$/, '')}%/yr, what you&apos;ve saved grows to this by{' '}
+              {goal.targetYear}
+            </span>
           </span>
         ) : (
           <span className="inline-flex items-center gap-1.5">
