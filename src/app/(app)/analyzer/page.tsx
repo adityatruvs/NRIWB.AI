@@ -47,6 +47,7 @@ import {
 import { formatAmount } from '@/lib/currency'
 import { useBudget, BUDGET_COLORS } from '@/context/BudgetContext'
 import { monthlyContribution as sumInvesting } from '@/lib/budget'
+import { AI_ERROR_TEXT } from '@/lib/ai'
 
 /** Moderate long-run rate used until we have ≥3 months of tracked history. */
 const MODERATE_RATE = 0.07
@@ -1375,8 +1376,7 @@ function Stepper({
 
 /* ── AI explanation panel ─────────────────────────────────────────────────── */
 
-const AI_ERROR =
-  "Sorry — I couldn't reach Claude just now. Make sure **ANTHROPIC_API_KEY** is set in `.env.local`, restart the dev server, and try again."
+const AI_ERROR = AI_ERROR_TEXT
 
 /** Short "Jun 25" style stamp for "based on …" labels. */
 function fmtStamp(ts: number): string {
@@ -1482,7 +1482,7 @@ function AiExplainer({
             <p className="text-xs text-muted-foreground">
               {ts
                 ? `Based on ${fmtStamp(ts)} — refresh after changes`
-                : 'Claude reviews your live split & income, then your next move'}
+                : 'NRIWB AI reviews your live split & income, then your next move'}
             </p>
           </div>
         </div>

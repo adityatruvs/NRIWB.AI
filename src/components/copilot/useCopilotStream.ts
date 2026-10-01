@@ -18,6 +18,7 @@ import {
 import type { Holding } from '@/lib/portfolio'
 import type { Goal } from '@/lib/goals'
 import type { BudgetCategory } from '@/context/BudgetContext'
+import { AI_ERROR_TEXT } from '@/lib/ai'
 
 export interface StreamProposal {
   pid: string
@@ -45,8 +46,7 @@ export interface CopilotContext {
   categories: BudgetCategory[]
 }
 
-const ERROR_TEXT =
-  "Sorry — I couldn't reach Claude just now. Make sure **ANTHROPIC_API_KEY** is set in `.env.local`, restart the dev server, and try again."
+const ERROR_TEXT = AI_ERROR_TEXT
 
 export function useCopilotStream(ctx: CopilotContext) {
   const [messages, setMessages] = useState<StreamMessage[]>([])

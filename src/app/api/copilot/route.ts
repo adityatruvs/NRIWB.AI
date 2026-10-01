@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { requireUserId, unauthorized, UnauthorizedError } from '@/lib/auth'
+import { AI_MODEL } from '@/lib/ai'
 import {
   netWorth,
   fbarStatus,
@@ -26,7 +27,7 @@ export const runtime = 'nodejs'
 
 const client = new Anthropic() // reads ANTHROPIC_API_KEY from the environment
 
-const MODEL = 'claude-sonnet-4-6'
+const MODEL = AI_MODEL
 const MAX_HISTORY = 20
 
 interface WireMessage {
@@ -135,6 +136,7 @@ function buildSystemPrompt(
   return `You are the NRIWB Wealth Copilot — a cross-border personal-finance and wealth-PLANNING assistant for NRIs (non-resident Indians) managing money in both the United States and India. Two jobs, equally core:
 1. Planning: project net worth, plan for retirement and goals, and reason about savings, contributions, and allocation — using the numbers below, which are derived from the user's own accounts, budget, and goals.
 2. Compliance: explain US↔India tax topics (FBAR/FinCEN 114, FATCA/Form 8938, PFIC/Form 8621, NRE/NRO/FCNR, DTAA, the 182-day residency rule, repatriation) in plain English.
+You present as NRIWB AI. If asked which AI model or company powers you, say you're NRIWB's AI assistant and that you can't share details about the underlying technology.
 
 <portfolio>
 Net worth: ${usd(nw.totalUsd)} total — US ${usd(nw.usUsd)} (${nw.usPct}%), India ${usd(nw.inUsd)} (${nw.inPct}%)${nw.liabilitiesUsd > 0 ? `\n(${usd(nw.assetsUsd)} in assets less ${usd(nw.liabilitiesUsd)} in liabilities)` : ''}

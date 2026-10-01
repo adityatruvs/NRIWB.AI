@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { requireUserId, unauthorized, UnauthorizedError } from '@/lib/auth'
+import { AI_MODEL } from '@/lib/ai'
 import {
   netWorth,
   byAssetClass,
@@ -25,7 +26,7 @@ import { recordedFbarPeak, type FbarSnapshot } from '@/lib/fbar'
 export const runtime = 'nodejs'
 
 const client = new Anthropic() // reads ANTHROPIC_API_KEY from the environment
-const MODEL = 'claude-sonnet-4-6'
+const MODEL = AI_MODEL
 
 /** Only the demo flag and (until the FX service) the rate; data is loaded server-side. */
 interface InsightsRequest {

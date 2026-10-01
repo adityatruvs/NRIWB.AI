@@ -33,6 +33,7 @@ import {
 } from '@/components/copilot/ProposalCard'
 import { Rich, Typing, AssistantAvatar } from '@/components/copilot/chat-ui'
 import { cn } from '@/lib/utils'
+import { AI_ERROR_TEXT } from '@/lib/ai'
 
 interface ProposalItem {
   pid: string
@@ -57,8 +58,7 @@ interface Chat {
 
 const STORE_KEY = 'nriwb:copilot-chats'
 
-const ERROR_TEXT =
-  "Sorry — I couldn't reach Claude just now. Make sure **ANTHROPIC_API_KEY** is set in `.env.local`, restart the dev server, and try again."
+const ERROR_TEXT = AI_ERROR_TEXT
 
 const VIOLET = 'oklch(0.55 0.18 292)'
 

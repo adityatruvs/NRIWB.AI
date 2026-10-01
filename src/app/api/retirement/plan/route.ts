@@ -1,10 +1,11 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { requireUserId, unauthorized, UnauthorizedError } from '@/lib/auth'
+import { AI_MODEL } from '@/lib/ai'
 
 export const runtime = 'nodejs'
 
 const client = new Anthropic() // reads ANTHROPIC_API_KEY from the environment
-const MODEL = 'claude-sonnet-4-6'
+const MODEL = AI_MODEL
 
 interface PlanRequest {
   /** Plain-language description, e.g. "retire at 60 with $100k/year". */
