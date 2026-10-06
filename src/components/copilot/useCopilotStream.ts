@@ -19,6 +19,8 @@ import type { Holding } from '@/lib/portfolio'
 import type { Goal } from '@/lib/goals'
 import type { BudgetCategory } from '@/context/BudgetContext'
 import { AI_ERROR_TEXT } from '@/lib/ai'
+import { localDay } from '@/lib/deadlines'
+import { useCurrency } from '@/context/CurrencyContext'
 
 export interface StreamProposal {
   pid: string
@@ -57,6 +59,10 @@ export function useCopilotStream(ctx: CopilotContext) {
   // without being torn down and recreated on every keystroke.
   const ctxRef = useRef(ctx)
   ctxRef.current = ctx
+  // The currency view, so Copilot answers in $ or ₹ to match the rest of the app.
+  const { mode } = useCurrency()
+  const modeRef = useRef(mode)
+  modeRef.current = mode
   const messagesRef = useRef<StreamMessage[]>([])
   const abortRef = useRef<AbortController | null>(null)
   const counter = useRef(0)
@@ -106,6 +112,8 @@ export function useCopilotStream(ctx: CopilotContext) {
             messages: withUser.map(({ role, text }) => ({ role, text })),
             rate: c.rate,
             demo: c.demo,
+            today: localDay(),
+            mode: modeRef.current,
           }),
         })
         if (!res.ok || !res.body) throw new Error(`Copilot request failed (${res.status})`)
@@ -141,6 +149,7 @@ export function useCopilotStream(ctx: CopilotContext) {
                   goals: c.goals,
                   categories: c.categories,
                   currentYear: new Date().getFullYear(),
+                  rate: c.rate,
                 }),
               )
               .filter((ep): ep is EditableProposal => ep !== null)

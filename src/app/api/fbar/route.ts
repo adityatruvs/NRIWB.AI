@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/prisma'
 import { requireUserId, unauthorized, UnauthorizedError } from '@/lib/auth'
 import { toHolding } from '@/lib/accounts-api'
-import { parseRate } from '@/lib/user-context'
+import { resolveRate } from '@/lib/user-context'
 import { recordedFbarPeak } from '@/lib/fbar'
 
 export const runtime = 'nodejs'
@@ -20,13 +20,13 @@ export async function GET(request: Request) {
     throw e
   }
 
-  const rate = parseRate(new URL(request.url).searchParams.get('rate'))
+  const rate = await resolveRate(new URL(request.url).searchParams.get('rate'))
   const year = new Date().getUTCFullYear()
   const [accounts, snapshots] = await Promise.all([
     prisma.account.findMany({ where: { userId, country: 'IN' } }),
     prisma.balanceSnapshot.findMany({
       where: { account: { userId, country: 'IN' }, recordedAt: { gte: new Date(Date.UTC(year, 0, 1)) } },
-      select: { accountId: true, day: true, recordedAt: true, balanceInr: true },
+      select: { accountId: true, day: true, recordedAt: true, balanceInr: true, balanceUsd: true },
     }),
   ])
   const recorded = recordedFbarPeak(
@@ -35,6 +35,7 @@ export async function GET(request: Request) {
       accountId: s.accountId,
       day: (s.day ?? s.recordedAt).toISOString().slice(0, 10),
       balanceInr: s.balanceInr,
+      balanceUsd: s.balanceUsd,
     })),
     rate,
     year,

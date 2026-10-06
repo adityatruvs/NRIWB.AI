@@ -55,6 +55,13 @@ const GROUPS: NavGroupDef[] = [
 
 const GROUPS_STORAGE_KEY = 'nriwb:sidebar-groups'
 
+/**
+ * The rate refreshes once a day (FX_STALE_AFTER_MS in lib/fx), so it counts as
+ * current for a day plus slack. Older means a refresh failed and the app is on
+ * the last saved rate: the dot goes grey.
+ */
+const FX_FRESH_MS = 26 * 60 * 60 * 1000
+
 export function fxStatus(updatedAt: string | null, now: Date = new Date()): { label: string; fresh: boolean } {
   if (!updatedAt) return { label: 'no live rate yet', fresh: false }
 
@@ -63,13 +70,23 @@ export function fxStatus(updatedAt: string | null, now: Date = new Date()): { la
   const hr = 60 * min
   const day = 24 * hr
   const age = ms < min ? 'just now' : ms < hr ? `${Math.floor(ms / min)}m ago` : ms < day ? `${Math.floor(ms / hr)}h ago` : `${Math.floor(ms / day)}d ago`
-  return { label: ms < min ? age : `Updated ${age}`, fresh: ms < 2 * hr }
+  return { label: ms < min ? age : `Updated ${age}`, fresh: ms < FX_FRESH_MS }
 }
 
 export default function Sidebar() {
   const pathname = usePathname()
   const { rate, updatedAt } = useCurrency()
-  const { label: fxLabel, fresh: fxFresh } = fxStatus(updatedAt)
+  // The age ("Updated 5m ago") depends on the clock, so it's worked out after
+  // mount: the server and the browser would otherwise render different text.
+  const [now, setNow] = useState<Date | null>(null)
+  useEffect(() => {
+    setNow(new Date())
+    const t = setInterval(() => setNow(new Date()), 60_000)
+    return () => clearInterval(t)
+  }, [])
+  const { label: fxLabel, fresh: fxFresh } = now
+    ? fxStatus(updatedAt, now)
+    : { label: updatedAt ? 'Updated' : 'no live rate yet', fresh: false }
   const [collapsed, setCollapsed] = useState(false)
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(GROUPS.map((g) => [g.label, true])),

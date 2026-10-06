@@ -7,6 +7,7 @@ vi.mock('@/lib/fx', () => ({
   refreshFxRate: (...args: unknown[]) => refreshFxRate(...args),
   getFxSnapshot: (...args: unknown[]) => getFxSnapshot(...args),
   FX_PAIR: 'USD_INR',
+  FxUnavailableError: class extends Error {},
 }))
 
 const { GET } = await import('./route')
@@ -69,11 +70,11 @@ describe('GET /api/fx/update', () => {
   it('falls back to the last-known snapshot (still 200) when the provider refresh fails', async () => {
     process.env.CRON_SECRET = 'secret123'
     refreshFxRate.mockRejectedValue(new Error('provider down'))
-    getFxSnapshot.mockResolvedValue({ rate: 83.5, updatedAt: null, source: 'fallback' })
+    getFxSnapshot.mockResolvedValue({ rate: 94.8, updatedAt: '2026-09-24T10:00:00.000Z', source: 'cached' })
 
     const res = await GET(req({ authorization: 'Bearer secret123' }))
 
     expect(res.status).toBe(200)
-    expect(await res.json()).toEqual({ rate: 83.5, updatedAt: null, source: 'fallback' })
+    expect(await res.json()).toEqual({ rate: 94.8, updatedAt: '2026-09-24T10:00:00.000Z', source: 'cached' })
   })
 })

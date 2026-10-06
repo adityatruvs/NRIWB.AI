@@ -27,6 +27,27 @@ describe('fbarStatus', () => {
     expect(f.since).toBeNull()
   })
 
+  it('counts only financial accounts: no property, vehicle, physical gold, loans given or "Other"', () => {
+    const holdings = [
+      nre, // $10,000
+      fd, // $5,000
+      h({ id: 'sgb', accountType: 'gold', balanceInr: 80_000, details: { isSgb: true } }), // $1,000
+      h({ id: 'mf', accountType: 'mutual_fund', balanceInr: 160_000 }), // $2,000
+      h({ id: 'flat', accountType: 'property', balanceInr: 12_000_000 }),
+      h({ id: 'car', accountType: 'vehicle', balanceInr: 800_000 }),
+      h({ id: 'jewel', accountType: 'gold', balanceInr: 400_000 }),
+      h({ id: 'lent', accountType: 'notes_receivable', balanceInr: 400_000 }),
+      h({ id: 'misc', accountType: 'other', balanceInr: 400_000 }),
+      h({ id: 'us', country: 'US', accountType: 'savings', balanceUsd: 50_000 }),
+      loan,
+    ]
+    expect(fbarStatus(holdings, RATE).currentUsd).toBe(18_000)
+    // Snapshots of a non-account asset don't feed the recorded peak either.
+    expect(
+      recordedFbarPeak(holdings, [{ accountId: 'flat', day: '2026-02-01', balanceInr: 99_000_000 }], RATE, 2026),
+    ).toBeNull()
+  })
+
   it('with history, uses the recorded maxima (never below today)', () => {
     const recorded = recordedFbarPeak(
       [nre, fd],

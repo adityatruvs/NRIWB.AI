@@ -1,7 +1,8 @@
 import { prisma } from '@/lib/prisma'
 import { requireUserId, unauthorized, UnauthorizedError } from '@/lib/auth'
 import { isLiability, type Holding } from '@/lib/portfolio'
-import { parseRate } from '@/lib/user-context'
+import type { AccountType } from '@/types/accounts'
+import { resolveRate } from '@/lib/user-context'
 import { buildHistory, isoDay, type HistoryRange } from '@/lib/networth-history'
 
 export const runtime = 'nodejs'
@@ -21,7 +22,7 @@ export async function GET(request: Request) {
 
   const url = new URL(request.url)
   const range: HistoryRange = url.searchParams.get('range') === '12m' ? '12m' : '90d'
-  const rate = parseRate(url.searchParams.get('rate'))
+  const rate = await resolveRate(url.searchParams.get('rate'))
 
   const accounts = await prisma.account.findMany({
     where: { userId },
@@ -40,6 +41,7 @@ export async function GET(request: Request) {
     accounts: accounts.map((a) => ({
       id: a.id,
       country: a.country === 'IN' ? 'IN' : 'US',
+      accountType: a.accountType as AccountType,
       liability: isLiability({ kind: a.kind, accountType: a.accountType } as Holding),
     })),
     // Rows written before `day` existed fall back to their UTC recording date.

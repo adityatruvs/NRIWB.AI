@@ -6,8 +6,12 @@
  * contributes nothing, so a newly added account joins the series from the day it
  * was added, never retroactively. Liabilities count negative. India balances are
  * converted from INR at the *current* rate, like the rest of the app, so the trend
- * isn't distorted by whatever rate was stored at save time.
+ * isn't distorted by whatever rate was stored at save time. Dollar-held FCNR
+ * deposits keep their USD value (see `grossUsd`).
  */
+
+import { grossUsd } from '@/lib/portfolio'
+import type { AccountType } from '@/types/accounts'
 
 export type HistoryRange = '90d' | '12m'
 
@@ -23,6 +27,8 @@ export interface HistoryAccount {
   id: string
   country: 'US' | 'IN'
   liability: boolean
+  /** Lets an India FCNR deposit (held in dollars) be valued from its USD balance. */
+  accountType?: AccountType
 }
 
 export interface HistoryPoint {
@@ -86,7 +92,7 @@ export function buildHistory(opts: {
     const p: HistoryPoint = { date, all: 0, us: 0, in: 0 }
     for (const s of latest.values()) {
       const a = byId.get(s.accountId)!
-      const gross = a.country === 'IN' ? s.balanceInr / opts.rate : s.balanceUsd
+      const gross = grossUsd({ country: a.country, accountType: a.accountType ?? 'other', balanceUsd: s.balanceUsd, balanceInr: s.balanceInr }, opts.rate)
       const v = a.liability ? -gross : gross
       p.all += v
       if (a.country === 'US') p.us += v

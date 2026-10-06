@@ -27,7 +27,6 @@ import {
   byAssetClass,
   complianceItems,
   fbarStatus,
-  pficHoldings,
   usdValue,
   TYPE_LABELS,
   FBAR_THRESHOLD_USD,
@@ -45,7 +44,9 @@ import { goalProgress, goalAccent, resolveGoal } from '@/lib/goals'
 import { goalStatus } from '@/lib/goal-status'
 import { GoalStatusChip } from '@/components/GoalStatusChip'
 import { withHrefs } from '@/lib/attention-links'
-import { fbarSinceLabel, type RecordedFbarPeak } from '@/lib/fbar'
+import { fbarSinceLabel } from '@/lib/fbar'
+import { attentionItems } from '@/lib/attention'
+import { useFbarRecorded } from '@/hooks/useFbarRecorded'
 import { monthAgoValue, isoDay, type HistoryRange, type NetWorthHistory } from '@/lib/networth-history'
 import { useUser } from '@clerk/nextjs'
 import { NET_WORTH_HISTORY, RESIDENCY, TARGET_INDIA_PCT } from '@/data/mock/insights'
@@ -60,6 +61,7 @@ import { DebtSummaryCard, mismatchCopy, useMismatchDismissal } from '@/component
 import { currencyMismatch } from '@/lib/debt'
 import { freshnessMix, ageInDays, relativeAge } from '@/lib/freshness'
 import { cn } from '@/lib/utils'
+import { localDay } from '@/lib/deadlines'
 
 type CountryFilter = 'all' | 'us' | 'in'
 
@@ -93,7 +95,8 @@ export default function DashboardPage() {
   const [aiTs, setAiTs] = useState<number | null>(null)
   const [aiLoading, setAiLoading] = useState(false)
   // v2: items cached before the FBAR wording fix said "peaked at" an estimated figure.
-  const insightsCacheKey = user?.id ? `nriwb:insights:v2:${user.id}` : null
+  // v3: items cached before FBAR stopped being called "overdue" (it's due next April).
+  const insightsCacheKey = user?.id ? `nriwb:insights:v3:${user.id}` : null
 
   const refreshInsights = useCallback(async () => {
     if (holdings.length === 0 || aiLoading) return
@@ -102,7 +105,7 @@ export default function DashboardPage() {
       const r = await fetch('/api/insights', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rate, demo }),
+        body: JSON.stringify({ rate, demo, today: localDay() }),
       })
       const d = r.ok ? await r.json() : null
       if (Array.isArray(d?.insights)) {
@@ -199,24 +202,12 @@ export default function DashboardPage() {
 
   // FBAR: the recorded yearly maxima when balance history exists, else today's
   // balances, labelled as such. Never an estimate (it's a legal filing).
-  const [fbarRecorded, setFbarRecorded] = useState<RecordedFbarPeak | null>(null)
-  useEffect(() => {
-    if (demo || accountsLoading) {
-      setFbarRecorded(null)
-      return
-    }
-    let live = true
-    fetch(`/api/fbar?rate=${rate}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d: { recorded: RecordedFbarPeak | null } | null) => live && setFbarRecorded(d?.recorded ?? null))
-      .catch(() => live && setFbarRecorded(null))
-    return () => {
-      live = false
-    }
-  }, [demo, accountsLoading, rate, balanceKey])
+  // The header pill reads the same figure, so the two never disagree.
+  const fbarRecorded = useFbarRecorded()
   const fbar = fbarStatus(holdings, rate, fbarRecorded)
-  const pfics = pficHoldings(holdings)
   const compliance = withHrefs(complianceItems(holdings, rate, fbarRecorded), holdings)
+  // Every flagged obligation (the ones the header names) plus the AI's extras.
+  const attention = attentionItems(compliance, aiCompliance)
 
   // Debt in rupees vs income in dollars — shown first when it applies, until the
   // user dismisses it on Accounts (it returns if the INR debt share moves 10+ pts).
@@ -348,7 +339,7 @@ export default function DashboardPage() {
                   >
                     <TrendingUp size={12} className={monthDelta < 0 ? 'rotate-180' : ''} />
                     {monthDelta >= 0 ? '+' : ''}
-                    {formatUSD(Math.abs(monthDelta))} ({monthPct >= 0 ? '+' : ''}
+                    {formatAmount(Math.abs(monthDelta), mode, rate)} ({monthPct >= 0 ? '+' : ''}
                     {monthPct.toFixed(1)}%)
                   </span>
                   <span className="pl-1 text-xs text-muted-foreground">this month</span>
@@ -358,9 +349,9 @@ export default function DashboardPage() {
 
             {nw.liabilitiesUsd > 0 && filter === 'all' && (
               <p className="mt-3 text-[13px] text-muted-foreground">
-                <span className="font-medium tabular-nums text-foreground">{formatUSD(nw.assetsUsd)}</span> in assets
+                <span className="font-medium tabular-nums text-foreground">{formatAmount(nw.assetsUsd, mode, rate)}</span> in assets
                 {' − '}
-                <span className="font-medium tabular-nums text-foreground">{formatUSD(nw.liabilitiesUsd)}</span> in debt
+                <span className="font-medium tabular-nums text-foreground">{formatAmount(nw.liabilitiesUsd, mode, rate)}</span> in debt
               </p>
             )}
 
@@ -498,7 +489,7 @@ export default function DashboardPage() {
             }
           />
           <div className="flex flex-1 flex-col gap-1.5">
-            {holdings.length === 0 || (aiCompliance && aiCompliance.length === 0 && mismatchItem.length === 0) ? (
+            {holdings.length === 0 || (attention.length === 0 && mismatchItem.length === 0) ? (
               <div className="flex flex-1 flex-col items-center justify-center gap-2 py-6 text-center">
                 <span className="flex size-9 items-center justify-center rounded-full bg-success-muted text-success">
                   <CheckCircle2 size={18} />
@@ -515,7 +506,7 @@ export default function DashboardPage() {
             ) : (
               /* Top 3 most-urgent on the dashboard to keep the card compact;
                  the AI analyzes & ranks the full set server-side. */
-              [...mismatchItem, ...(aiCompliance ?? compliance).filter((i) => !i.key.startsWith('debt_currency'))]
+              [...mismatchItem, ...attention.filter((i) => !i.key.startsWith('debt_currency'))]
                 .slice(0, 3)
                 .map((item) => (
                 <ComplianceRow
@@ -533,14 +524,8 @@ export default function DashboardPage() {
             <div className="mt-4 rounded-xl border border-border bg-muted/50 px-3.5 py-3">
               <p className="text-xs leading-relaxed text-muted-foreground">
                 <Sparkles size={12} className="mb-0.5 mr-1 inline text-muted-foreground" />
-                {pfics.length > 0 ? (
-                  <>
-                    <span className="font-medium text-foreground">{pfics.length} India mutual fund{pfics.length > 1 ? 's' : ''}</span>{' '}
-                    need Form 8621.{' '}
-                  </>
-                ) : (
-                  <>You&apos;re {Math.abs(driftDelta)} pts {driftDelta < 0 ? 'below' : 'above'} your India target. </>
-                )}
+                {/* PFIC is a row above when it applies; this is the portfolio tip. */}
+                <>You&apos;re {Math.abs(driftDelta)} pts {driftDelta < 0 ? 'below' : 'above'} your India target. </>
                 <Link href="/copilot" className="font-medium text-foreground underline-offset-2 hover:underline">
                   Ask Copilot how to handle it →
                 </Link>
@@ -573,13 +558,13 @@ export default function DashboardPage() {
           sub={
             fbar.basis === 'recorded' && fbar.since ? (
               <>
-                Highest India balances recorded since {fbarSinceLabel(fbar.since)}, vs the{' '}
+                Highest India account balances recorded since {fbarSinceLabel(fbar.since)}, vs the{' '}
                 {formatUSD(FBAR_THRESHOLD_USD)} limit
               </>
             ) : (
               <>
-                India balances today (as entered) vs the {formatUSD(FBAR_THRESHOLD_USD)} limit. The year&apos;s
-                highest may be higher.
+                India bank, deposit &amp; fund balances today (as entered) vs the {formatUSD(FBAR_THRESHOLD_USD)}{' '}
+                limit. The year&apos;s highest may be higher.
               </>
             )
           }

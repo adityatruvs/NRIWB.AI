@@ -3,7 +3,6 @@ import { Geist, Geist_Mono, Source_Serif_4 } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import { shadcn } from "@clerk/ui/themes";
 import "./globals.css";
-import { CurrencyProvider } from "@/context/CurrencyContext";
 import { AccountsProvider } from "@/context/AccountsContext";
 import { GoalsProvider } from "@/context/GoalsContext";
 import { BudgetProvider } from "@/context/BudgetContext";
@@ -57,13 +56,12 @@ export default function RootLayout({
         <div aria-hidden className="page-aurora" />
         <ClerkProvider appearance={{ theme: shadcn }}>
           <ThemeProvider>
-            <CurrencyProvider>
-              <AccountsProvider>
-                <BudgetProvider>
-                  <GoalsProvider>{children}</GoalsProvider>
-                </BudgetProvider>
-              </AccountsProvider>
-            </CurrencyProvider>
+            {/* CurrencyProvider lives in (app)/layout, seeded with the live rate. */}
+            <AccountsProvider>
+              <BudgetProvider>
+                <GoalsProvider>{children}</GoalsProvider>
+              </BudgetProvider>
+            </AccountsProvider>
           </ThemeProvider>
         </ClerkProvider>
       </body>

@@ -8,14 +8,20 @@ const items = vi.hoisted(() => [
 ])
 vi.mock('@/lib/prisma', () => ({
   prisma: {
-    fxRate: { findUnique: async () => null },
     plaidItem: { findMany: async () => items },
   },
 }))
-const seen = vi.hoisted(() => [] as string[])
+const fx = vi.hoisted(() => ({ rate: 95.2 as number | null }))
+vi.mock('@/lib/fx', () => ({
+  getFxSnapshot: async () => {
+    if (fx.rate == null) throw new Error('no rate')
+    return { rate: fx.rate, updatedAt: null, source: 'cached' }
+  },
+}))
+const seen = vi.hoisted(() => [] as { itemId: string; rate: number }[])
 vi.mock('@/lib/plaid-sync', () => ({
-  syncPlaidItem: async (item: { itemId: string }) => {
-    seen.push(item.itemId)
+  syncPlaidItem: async (item: { itemId: string }, opts: { rate: number }) => {
+    seen.push({ itemId: item.itemId, rate: opts.rate })
     if (item.itemId === 'boom') return { status: 'failed', accounts: [], error: 'x' }
     if (item.itemId === 'login') return { status: 'reauth', accounts: [] }
     return { status: 'synced', accounts: [{}, {}] }
@@ -27,6 +33,7 @@ const req = (auth?: string) => new Request('http://x/api/cron/plaid-sync', { hea
 
 beforeEach(() => {
   seen.length = 0
+  fx.rate = 95.2
   process.env.CRON_SECRET = 's3cret'
 })
 
@@ -45,7 +52,16 @@ describe('GET /api/cron/plaid-sync', () => {
   it('syncs every item; one failure does not stop the rest; reports counts', async () => {
     const res = await GET(req('Bearer s3cret'))
     expect(res.status).toBe(200)
-    expect(seen).toEqual(['ok', 'boom', 'login', 'ok2'])
+    expect(seen.map((s) => s.itemId)).toEqual(['ok', 'boom', 'login', 'ok2'])
+    // The live (or last saved live) rate — the old lookup used the wrong key and always fell back to ₹83.
+    expect(seen.every((s) => s.rate === 95.2)).toBe(true)
     expect(await res.json()).toEqual({ items: 4, synced: 2, failed: 1, reauth: 1, accounts: 4 })
+  })
+
+  it('skips the run (503) rather than sync at a made-up rate when there is no rate', async () => {
+    fx.rate = null
+    const res = await GET(req('Bearer s3cret'))
+    expect(res.status).toBe(503)
+    expect(seen).toEqual([])
   })
 })

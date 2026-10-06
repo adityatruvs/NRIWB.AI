@@ -3,6 +3,7 @@
 import { useAccounts } from '@/context/AccountsContext'
 import { useBudget, BUDGET_COLORS } from '@/context/BudgetContext'
 import { useGoals } from '@/context/GoalsContext'
+import { useCurrency } from '@/context/CurrencyContext'
 import { accountToHolding, goalToGoal, type EditableProposal } from '@/components/copilot/ProposalCard'
 
 /**
@@ -14,14 +15,15 @@ export function useApplyProposal() {
   const { addManual, updateAccount } = useAccounts()
   const { categories, setIncome, addCategory, updateCategory } = useBudget()
   const { goals, addGoal, updateGoal } = useGoals()
+  const { rate } = useCurrency()
 
   return (ep: EditableProposal) => {
     switch (ep.type) {
       case 'add_account':
-        addManual(accountToHolding(ep.account))
+        addManual(accountToHolding(ep.account, rate))
         break
       case 'update_account':
-        if (ep.id) updateAccount(ep.id, accountToHolding(ep.account))
+        if (ep.id) updateAccount(ep.id, accountToHolding(ep.account, rate))
         break
       case 'add_goal':
         addGoal(goalToGoal(ep.goal))

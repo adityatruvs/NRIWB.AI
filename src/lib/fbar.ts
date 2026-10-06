@@ -8,7 +8,7 @@
  * and says so; with history it reports the recorded maxima and since when.
  */
 
-import { isLiability, type Holding } from '@/lib/portfolio'
+import { grossUsd, isFbarAccount, type Holding } from '@/lib/portfolio'
 
 export interface RecordedFbarPeak {
   /** Sum of each India account's highest recorded balance this year (incl. today's), USD at the current rate. */
@@ -22,10 +22,12 @@ export interface FbarSnapshot {
   /** UTC date, YYYY-MM-DD. */
   day: string
   balanceInr: number
+  /** Needed for a dollar-held FCNR deposit; rupee accounts use `balanceInr`. */
+  balanceUsd?: number
 }
 
-/** India accounts FBAR looks at here (assets; debts aren't reported). */
-export const fbarAccounts = (holdings: Holding[]) => holdings.filter((h) => h.country === 'IN' && !isLiability(h))
+/** India financial accounts FBAR looks at (no property, vehicles or debts). */
+export const fbarAccounts = (holdings: Holding[]) => holdings.filter(isFbarAccount)
 
 /**
  * The recorded peak for `year`, or null when no India account has a snapshot in
@@ -43,9 +45,14 @@ export function recordedFbarPeak(
   const inYear = snapshots.filter((s) => ids.has(s.accountId) && s.day.startsWith(`${year}-`))
   if (inYear.length === 0) return null
 
-  const maxInr = new Map<string, number>()
-  for (const s of inYear) maxInr.set(s.accountId, Math.max(maxInr.get(s.accountId) ?? 0, s.balanceInr))
-  const usd = accounts.reduce((sum, h) => sum + Math.max(maxInr.get(h.id!) ?? 0, h.balanceInr) / rate, 0)
+  // Each snapshot valued in the account's own currency (an FCNR holds dollars).
+  const byId = new Map(accounts.map((h) => [h.id, h]))
+  const maxUsd = new Map<string, number>()
+  for (const s of inYear) {
+    const v = grossUsd({ ...byId.get(s.accountId)!, balanceUsd: s.balanceUsd, balanceInr: s.balanceInr }, rate)
+    maxUsd.set(s.accountId, Math.max(maxUsd.get(s.accountId) ?? 0, v))
+  }
+  const usd = accounts.reduce((sum, h) => sum + Math.max(maxUsd.get(h.id!) ?? 0, grossUsd(h, rate)), 0)
   const since = inYear.reduce((min, s) => (s.day < min ? s.day : min), inYear[0].day)
   return { usd, since }
 }

@@ -27,7 +27,7 @@ import { useGoals } from '@/context/GoalsContext'
 import { useProfile } from '@/context/ProfileContext'
 import { useAccounts } from '@/context/AccountsContext'
 import { formatAmount } from '@/lib/currency'
-import { usdValue, isLiability, TYPE_LABELS, type Holding } from '@/lib/portfolio'
+import { usdValue, isLiability, isGoalFundingAccount, TYPE_LABELS, type Holding } from '@/lib/portfolio'
 import { formatLakhs, formatUSD } from '@/lib/currency'
 import {
   debtProgress,
@@ -43,14 +43,12 @@ import {
   goalAccent,
   goalProgress,
   goalRemaining,
-  goalMonthlyNeeded,
-  goalExpectedReturn,
   goalKind,
   defaultGoalKind,
   resolveGoal,
   isGoalLinked,
   showsOwnAge,
-  onTrackOnSavings,
+  goalPlan,
   type Goal,
   type GoalCategory,
   type GoalKind,
@@ -296,18 +294,15 @@ function GoalCard({
   const rg = { ...goal, currentUsd: funded }
   const pct = goalProgress(rg)
   const Icon = CATEGORY_ICON[goal.category]
-  // Grow the goal at the expected return of the accounts funding it (linked →
-  // those accounts; else the whole portfolio), not a flat guess.
-  const growth = goalExpectedReturn(goal, holdings, rate)
-  const monthly = goalMonthlyNeeded(rg, currentYear, growth)
-  // Savings alone are projected to clear the target — say so, not "~$0/mo".
-  const onTrack = onTrackOnSavings(rg, currentYear, growth)
-  const yearsLeft = goal.targetYear - currentYear
-  const reached = funded >= goal.targetUsd
-  // Funding accounts that still exist (a deleted one never shows).
+  // The same plan Copilot quotes (lib/goals goalPlan): growth at the funding
+  // accounts' expected return, the monthly needed, and "on track" when savings
+  // alone get there (not "~$0/mo").
+  const { growth, monthly, onTrack, yearsLeft, reached } = goalPlan(goal, holdings, rate, currentYear)
+  // Funding accounts that still exist (a deleted one never shows) and can fund a
+  // goal (an old link to a loan, flat or car isn't shown or counted).
   const funders = (goal.linkedAccountIds ?? [])
     .map((id) => holdings.find((h) => h.id === id))
-    .filter((h): h is Holding => !!h)
+    .filter((h): h is Holding => !!h && isGoalFundingAccount(h))
   const status = goalStatus(rg, holdings, rate, currentYear)
 
   return (
@@ -705,9 +700,34 @@ function GoalDialog({
       const res = await fetch('/api/goals/suggest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ description, currentYear, age, country: countryOfResidence }),
+        body: JSON.stringify({
+          description,
+          currentYear,
+          age,
+          country: countryOfResidence,
+          rate,
+          // Editing: the goal as it stands in the form, so the AI changes only what's asked.
+          ...(isEdit && { current: { name, category, kind, targetUsd: Number(target) || 0, targetYear: year } }),
+        }),
       })
       const data = await res.json()
+      if (res.ok && data.edit) {
+        const { patch, summary, conversion, rationale } = data.edit as {
+          patch: Partial<{ name: string; category: GoalCategory; kind: GoalKind; targetUsd: number; targetYear: number }>
+          summary: string
+          conversion: string | null
+          rationale: string
+        }
+        // Apply only the fields that changed; everything else keeps its value.
+        if (patch.name != null) setName(patch.name)
+        if (patch.category != null) setCategory(patch.category)
+        if (patch.kind != null) setKind(patch.kind)
+        if (patch.targetUsd != null) setTarget(String(patch.targetUsd))
+        if (patch.targetYear != null) setYear(Math.min(maxYear, Math.max(minYear, patch.targetYear)))
+        // The summary and conversion come from the app, never the model's arithmetic.
+        setAiRationale([summary, conversion, rationale].filter(Boolean).join('. '))
+        return
+      }
       if (!res.ok || !data.suggestion) throw new Error(data.error || 'Could not reach the assistant.')
       const s = data.suggestion as {
         name: string
@@ -716,13 +736,15 @@ function GoalDialog({
         targetYear: number
         kind: GoalKind
         rationale: string
+        conversion: string | null
       }
       setName(s.name)
       setCategory(s.category)
       setKind(s.kind)
       setTarget(s.targetUsd ? String(s.targetUsd) : '')
       setYear(Math.min(maxYear, Math.max(minYear, s.targetYear)))
-      setAiRationale(s.rationale ?? '')
+      // The conversion line comes from the app (its own rate), never the model.
+      setAiRationale([s.conversion, s.rationale].filter(Boolean).join('. '))
     } catch (e) {
       setAiError(e instanceof Error ? e.message : 'Could not reach the assistant.')
     } finally {
@@ -734,7 +756,7 @@ function GoalDialog({
   const linkedUsd = useMemo(
     () =>
       holdings
-        .filter((h) => h.id && linkedIds.includes(h.id))
+        .filter((h) => h.id && linkedIds.includes(h.id) && isGoalFundingAccount(h))
         .reduce((s, h) => s + usdValue(h, rate), 0),
     [holdings, linkedIds, rate],
   )
@@ -812,7 +834,9 @@ function GoalDialog({
         </div>
 
         <div className="flex flex-1 flex-col gap-3.5 overflow-y-auto px-6 pb-2">
-          {/* AI assist — describe it, let Claude fill the amount + timing */}
+          {/* AI assist — describe it, let Claude fill the amount + timing. Not for a
+              debt payoff goal: it tracks a loan, which AI Fill can't edit. */}
+          {!isDebt && (
           <div className="ai-ring p-2.5">
             <div className="mb-1.5 flex items-center gap-1.5">
               <Sparkles size={13} className="text-brand" />
@@ -852,6 +876,7 @@ function GoalDialog({
               </p>
             ) : null}
           </div>
+          )}
 
           <Field label="Goal name">
             <input
@@ -997,9 +1022,12 @@ function GoalDialog({
             ) : (
               <>
                 <div className="max-h-44 space-y-1 overflow-y-auto rounded-xl border border-border/70 p-1">
-                  {holdings.filter((h) => !isLiability(h) || (h.id && linkedIds.includes(h.id))).map((h) => {
+                  {/* Cash, deposits and investments only. One linked before that rule
+                      (a loan, flat or car) stays listed so it can be unticked. */}
+                  {holdings.filter((h) => isGoalFundingAccount(h) || (h.id && linkedIds.includes(h.id))).map((h) => {
                     const id = h.id ?? ''
                     const on = linkedIds.includes(id)
+                    const cantFund = !isGoalFundingAccount(h)
                     const owner = accountToGoal.get(id)
                     const elsewhere = owner && owner.id !== initial?.id ? owner.name : null
                     return (
@@ -1027,6 +1055,11 @@ function GoalDialog({
                               · {TYPE_LABELS[h.accountType] ?? h.accountType}
                             </span>
                           </span>
+                          {cantFund && (
+                            <span className="block truncate text-[10.5px] text-warning">
+                              Can&apos;t fund a goal, so it isn&apos;t counted. Untick to remove.
+                            </span>
+                          )}
                           {elsewhere && (
                             <span className="block truncate text-[10.5px] text-warning">
                               moves from “{elsewhere}”

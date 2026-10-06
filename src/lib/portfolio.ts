@@ -1,5 +1,6 @@
 import type { AccountType, AccountSource } from '@/types/accounts'
 import type { RecordedFbarPeak } from '@/lib/fbar'
+import { fbarDueMeta } from '@/lib/deadlines'
 
 /**
  * Optional, instrument-specific attributes. Only the fields relevant to a
@@ -150,17 +151,57 @@ export const SECURABLE_ASSET_TYPES: ReadonlySet<AccountType> = new Set<AccountTy
   'other',
 ])
 
+/**
+ * Asset types that can't fund a goal: you don't spend a flat, a car, money lent
+ * to family or an unknown "Other" toward a goal. Shared with the server check.
+ */
+export const NON_FUNDING_TYPES: ReadonlySet<AccountType> = new Set<AccountType>([
+  'real_estate',
+  'property',
+  'vehicle',
+  'notes_receivable',
+  'other',
+])
+
+/** An account a goal can draw on: an asset that's cash, a deposit or an investment. */
+export function isGoalFundingAccount(h: Pick<Holding, 'kind' | 'accountType'>): boolean {
+  return !isLiability(h as Holding) && !NON_FUNDING_TYPES.has(h.accountType)
+}
+
 /** An asset (not a debt) that a loan can be secured against. */
 export function isSecurableAsset(h: Holding): boolean {
   return !isLiability(h) && SECURABLE_ASSET_TYPES.has(h.accountType)
 }
 
 /**
- * Signed USD value at the *live* rate (India balances are INR-native).
+ * Held in dollars: US accounts, and India FCNR deposits (foreign-currency, entered
+ * in USD). Their dollar value is fixed and their rupee value moves with the rate;
+ * every other India holding is rupee-native, so the reverse.
+ */
+export function isUsdNative(h: { country: 'US' | 'IN'; accountType: AccountType }): boolean {
+  return h.country === 'US' || h.accountType === 'fcnr'
+}
+
+/**
+ * Unsigned USD value at the *live* rate, from the holding's own currency. An FCNR
+ * row saved before FCNR was dollar-native can have no USD balance (the Copilot
+ * path stored 0); it falls back to its rupees.
+ */
+export function grossUsd(
+  h: { country: 'US' | 'IN'; accountType: AccountType; balanceUsd?: number; balanceInr: number },
+  rate: number,
+): number {
+  if (h.country === 'US') return h.balanceUsd ?? 0
+  if (isUsdNative(h) && (h.balanceUsd ?? 0) > 0) return h.balanceUsd!
+  return h.balanceInr / rate
+}
+
+/**
+ * Signed USD value at the *live* rate (see `grossUsd`).
  * Liabilities return a negative value, so any sum over holdings nets debt out.
  */
 export function usdValue(h: Holding, rate: number): number {
-  const gross = h.country === 'IN' ? h.balanceInr / rate : h.balanceUsd
+  const gross = grossUsd(h, rate)
   return isLiability(h) ? -gross : gross
 }
 
@@ -371,6 +412,55 @@ export function pficHoldings(holdings: Holding[]): Holding[] {
 export const FBAR_THRESHOLD_USD = 10_000
 export const FATCA_THRESHOLD_USD = 50_000
 
+/**
+ * A "specified foreign financial asset" for Form 8938 (FATCA): the FBAR accounts
+ * (bank, deposits, funds, SGBs) plus money lent to someone in India (a financial
+ * instrument with a foreign counterparty). Property and vehicles held directly in
+ * your own name, physical gold and "Other" are not, so they never count. Rental
+ * income isn't an asset either: it's reported as income (Schedule E), and once it
+ * sits in an NRO account that balance already counts.
+ */
+export function isFatcaAsset(h: Holding): boolean {
+  if (isFbarAccount(h)) return true
+  return h.country === 'IN' && !isLiability(h) && h.accountType === 'notes_receivable'
+}
+
+/** The FATCA line both AI prompts get, so neither model totals assets itself. */
+export const fatcaLine = (totalUsd: number) =>
+  `India financial assets for Form 8938 total ${usd(totalUsd)} (bank, deposit, fund and bond accounts, plus money lent; property and vehicles held directly, physical gold and "Other" are excluded) vs the ${usd(FATCA_THRESHOLD_USD)} threshold — ${totalUsd > FATCA_THRESHOLD_USD ? 'ABOVE, Form 8938 required' : 'below, not required on this basis'}`
+
+/** Total of the user's Form 8938 assets, USD at the live rate. */
+export const fatcaAssetsUsd = (holdings: Holding[], rate: number) =>
+  holdings.filter(isFatcaAsset).reduce((s, h) => s + grossUsd(h, rate), 0)
+
+/**
+ * Asset types that are financial accounts for FBAR: bank accounts, deposits,
+ * funds and securities. Property, vehicles, physical gold, money lent to family
+ * and "Other" are not accounts, so they never count toward the threshold.
+ */
+const FBAR_ACCOUNT_TYPES: ReadonlySet<AccountType> = new Set<AccountType>([
+  'checking',
+  'savings',
+  'cd',
+  'bond',
+  'brokerage',
+  '401k',
+  'ira',
+  'roth_ira',
+  'nre',
+  'nro',
+  'fcnr',
+  'fd',
+  'mutual_fund',
+])
+
+/** An India financial account FBAR counts: an asset of a financial type, or a Sovereign Gold Bond. */
+export function isFbarAccount(h: Holding): boolean {
+  if (h.country !== 'IN' || isLiability(h)) return false
+  if (h.accountType === 'gold') return h.details?.isSgb === true
+  return FBAR_ACCOUNT_TYPES.has(h.accountType)
+}
+
 export interface FbarStatus {
   /** India account balances today, USD. */
   currentUsd: number
@@ -399,8 +489,8 @@ export interface FbarStatus {
  * (see `recordedFbarPeak` in lib/fbar) when balance history exists this year.
  */
 export function fbarStatus(holdings: Holding[], rate: number, recorded?: RecordedFbarPeak | null): FbarStatus {
-  const india = holdings.filter((h) => h.country === 'IN' && !isLiability(h))
-  const currentUsd = india.reduce((s, h) => s + h.balanceInr / rate, 0)
+  const india = holdings.filter(isFbarAccount)
+  const currentUsd = india.reduce((s, h) => s + grossUsd(h, rate), 0)
   const peakUsd = recorded ? Math.max(recorded.usd, currentUsd) : currentUsd
   const stamps = india.map((h) => h.lastSyncedAt ?? null)
   const known = stamps.filter((s): s is string => !!s).sort()
@@ -464,14 +554,14 @@ export function complianceItems(
   const items: ComplianceItem[] = []
   const fbar = fbarStatus(holdings, rate, recordedPeak)
   const pfics = pficHoldings(holdings)
-  // FATCA reports foreign *assets*, so exclude India liabilities (use gross, not net).
-  const indiaUsd = holdings
-    .filter((h) => h.country === 'IN' && !isLiability(h))
-    .reduce((s, h) => s + h.balanceInr / rate, 0)
+  // FATCA counts foreign *financial* assets, gross: no property, vehicles or debts.
+  const indiaUsd = fatcaAssetsUsd(holdings, rate)
 
   items.push({
     key: 'fbar',
-    level: fbar.crossed ? 'overdue' : fbar.pctOfThreshold > 70 ? 'attention' : 'ok',
+    // Crossing $10k this year means a filing is due next April: action needed,
+    // not overdue. Nothing here knows of a missed deadline.
+    level: fbar.crossed || fbar.pctOfThreshold > 70 ? 'attention' : 'ok',
     title: 'FBAR — FinCEN 114',
     // Only what the app knows: a current balance is never called a peak.
     detail: fbar.crossed
@@ -479,7 +569,7 @@ export function complianceItems(
       : fbar.basis === 'current'
         ? `${fbarBasisPhrase(fbar)}, ${Math.round(fbar.pctOfThreshold)}% of the $10,000 limit. FBAR counts each account's highest balance this year, which may be higher.`
         : `${fbarBasisPhrase(fbar)}, ${Math.round(fbar.pctOfThreshold)}% of the $10,000 limit.`,
-    meta: 'Due Apr 15 (auto-ext. Oct 15)',
+    meta: fbarDueMeta(),
   })
 
   items.push({
@@ -499,8 +589,8 @@ export function complianceItems(
     title: 'FATCA — Form 8938',
     detail:
       indiaUsd > FATCA_THRESHOLD_USD
-        ? `Foreign assets total ${usd(indiaUsd)} — above the $50,000 reporting threshold.`
-        : 'Foreign assets below the $50,000 reporting threshold.',
+        ? `India financial assets total ${usd(indiaUsd)} — above the $50,000 reporting threshold (property you hold directly isn't counted).`
+        : 'India financial assets are below the $50,000 reporting threshold.',
     meta: 'File with US tax return',
   })
 

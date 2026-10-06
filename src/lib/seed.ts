@@ -17,12 +17,8 @@ async function seed() {
     })
   }
 
-  // Seed a starting FX rate
-  await prisma.fxRate.upsert({
-    where: { pair: "USD_INR" },
-    update: { rate: 83.5 },
-    create: { pair: "USD_INR", rate: 83.5 },
-  })
+  // No FX row is seeded: a fixed rate would pass as fresh for an hour. The app
+  // fetches the live USD/INR rate on first use (see getFxSnapshot in lib/fx).
 
   // Seed compliance data baseline
   await prisma.complianceData.upsert({

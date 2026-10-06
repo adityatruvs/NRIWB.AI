@@ -23,7 +23,7 @@ import { useBudget } from '@/context/BudgetContext'
 import { useGoals } from '@/context/GoalsContext'
 import { useApplyProposal } from '@/components/copilot/useApplyProposal'
 import { netWorth } from '@/lib/portfolio'
-import { formatUSD } from '@/lib/currency'
+import { formatAmount } from '@/lib/currency'
 import { splitProposals, parseProposals } from '@/lib/copilot-actions'
 import {
   ProposalCard,
@@ -34,6 +34,7 @@ import {
 import { Rich, Typing, AssistantAvatar } from '@/components/copilot/chat-ui'
 import { cn } from '@/lib/utils'
 import { AI_ERROR_TEXT } from '@/lib/ai'
+import { localDay } from '@/lib/deadlines'
 
 interface ProposalItem {
   pid: string
@@ -119,7 +120,7 @@ function relTime(ts: number, now: number): string {
 
 export default function CopilotPage() {
   const { holdings, demo } = useAccounts()
-  const { rate } = useCurrency()
+  const { rate, mode } = useCurrency()
   const { categories } = useBudget()
   const { goals } = useGoals()
   const applyProposal = useApplyProposal()
@@ -295,6 +296,8 @@ export default function CopilotPage() {
           messages: [...prior, userMsg].map(({ role, text }) => ({ role, text })),
           rate,
           demo,
+          today: localDay(),
+          mode,
         }),
       })
       if (!res.ok || !res.body) throw new Error(`Copilot request failed (${res.status})`)
@@ -339,6 +342,7 @@ export default function CopilotPage() {
                 goals,
                 categories,
                 currentYear: new Date().getFullYear(),
+                rate,
               }),
             )
             .filter((ep): ep is EditableProposal => ep !== null)
@@ -410,7 +414,7 @@ export default function CopilotPage() {
               </span>
             </h1>
             <p className="text-xs text-muted-foreground">
-              Aware of your {holdings.length} accounts · {formatUSD(nw.totalUsd)} net worth
+              Aware of your {holdings.length} accounts · {formatAmount(nw.totalUsd, mode, rate)} net worth
             </p>
           </div>
         </div>

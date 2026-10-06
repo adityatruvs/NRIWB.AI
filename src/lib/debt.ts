@@ -2,7 +2,7 @@
  * Debt summaries across both countries. Pure + testable.
  */
 
-import { isLiability, type Holding } from '@/lib/portfolio'
+import { grossUsd, isLiability, type Holding } from '@/lib/portfolio'
 
 export interface DebtRollup {
   /** Total owed, USD at the current rate. */
@@ -20,7 +20,7 @@ export interface DebtRollup {
 }
 
 /** Amount owed on one loan in USD (positive). */
-export const owedUsd = (h: Holding, rate: number) => (h.country === 'IN' ? h.balanceInr / rate : h.balanceUsd)
+export const owedUsd = (h: Holding, rate: number) => grossUsd(h, rate)
 
 export function debtRollup(holdings: Holding[], rate: number): DebtRollup {
   const loans = holdings.filter(isLiability)

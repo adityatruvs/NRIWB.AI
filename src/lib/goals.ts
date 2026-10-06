@@ -8,7 +8,7 @@
  * GoalsContext holds them client-side, and demo mode uses SEED_GOALS only.
  */
 
-import { usdValue, type Holding } from '@/lib/portfolio'
+import { isGoalFundingAccount, usdValue, type Holding } from '@/lib/portfolio'
 import { portfolioExpectedReturn } from '@/lib/allocation'
 import { resolveDebtGoal } from '@/lib/debt-goal'
 
@@ -103,13 +103,20 @@ export function isGoalLinked(g: Goal): boolean {
   return !!g.linkedAccountIds && g.linkedAccountIds.length > 0
 }
 
+/**
+ * The accounts that fund a goal. A goal saved before loans, property and vehicles
+ * were excluded may still link one; it's ignored, never counted (a loan would
+ * make the goal's funding negative).
+ */
+function fundingAccounts(g: Goal, holdings: Holding[]): Holding[] {
+  const ids = new Set(g.linkedAccountIds ?? [])
+  return holdings.filter((h) => h.id && ids.has(h.id) && isGoalFundingAccount(h))
+}
+
 /** Live USD value of the accounts earmarked to a goal (0 if none/missing). */
 export function goalLinkedUsd(g: Goal, holdings: Holding[], rate: number): number {
   if (!g.linkedAccountIds?.length) return 0
-  const ids = new Set(g.linkedAccountIds)
-  return holdings
-    .filter((h) => h.id && ids.has(h.id))
-    .reduce((s, h) => s + usdValue(h, rate), 0)
+  return fundingAccounts(g, holdings).reduce((s, h) => s + usdValue(h, rate), 0)
 }
 
 /**
@@ -119,7 +126,9 @@ export function goalLinkedUsd(g: Goal, holdings: Holding[], rate: number): numbe
  */
 export function resolveGoal(g: Goal, holdings: Holding[], rate: number): Goal {
   if (g.category === 'debt') return resolveDebtGoal(g, holdings, rate)
-  if (!isGoalLinked(g)) return g
+  // Linked only to accounts that can't fund a goal (an old link to a loan or a
+  // flat): it's tracked by hand, as its card says, so keep the amount entered.
+  if (!isGoalLinked(g) || fundingAccounts(g, holdings).length === 0) return g
   return { ...g, currentUsd: goalLinkedUsd(g, holdings, rate) }
 }
 
@@ -192,9 +201,7 @@ export function goalRemaining(g: Goal): number {
  */
 export function goalExpectedReturn(g: Goal, holdings: Holding[], rate: number): number {
   if (isGoalLinked(g)) {
-    const ids = new Set(g.linkedAccountIds)
-    const linked = holdings.filter((h) => h.id && ids.has(h.id))
-    const r = portfolioExpectedReturn(linked, rate)
+    const r = portfolioExpectedReturn(fundingAccounts(g, holdings), rate)
     if (r != null) return r
   }
   return portfolioExpectedReturn(holdings, rate) ?? DEFAULT_GOAL_RETURN
@@ -240,6 +247,37 @@ export function onTrackOnSavings(g: Goal, currentYear: number, annualReturn = DE
     g.currentUsd < g.targetUsd &&
     goalMonthlyNeeded(g, currentYear, annualReturn) < 1 // under $1/mo would display as "$0"
   )
+}
+
+/** Everything a goal card shows about the plan, worked out one way for every screen. */
+export interface GoalPlan {
+  /** The goal with its funded amount resolved (linked accounts, or the number entered). */
+  goal: Goal
+  /** Expected annual return the goal grows at (its funding accounts, else the portfolio). */
+  growth: number
+  /** Monthly saving needed to reach the target by its year (0 when reached / on track). */
+  monthly: number
+  yearsLeft: number
+  reached: boolean
+  /** Savings alone are projected to clear the target. */
+  onTrack: boolean
+}
+
+/**
+ * The plan for one goal — the same figures on the Goals page and in Copilot, so
+ * the two can never disagree. Not for debt-payoff goals (they have their own).
+ */
+export function goalPlan(g: Goal, holdings: Holding[], rate: number, currentYear: number): GoalPlan {
+  const goal = resolveGoal(g, holdings, rate)
+  const growth = goalExpectedReturn(g, holdings, rate)
+  return {
+    goal,
+    growth,
+    monthly: goalMonthlyNeeded(goal, currentYear, growth),
+    yearsLeft: g.targetYear - currentYear,
+    reached: goal.currentUsd >= goal.targetUsd,
+    onTrack: onTrackOnSavings(goal, currentYear, growth),
+  }
 }
 
 /* ── Seed goals (demo) ────────────────────────────────────────────────────── */

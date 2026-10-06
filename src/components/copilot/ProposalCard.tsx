@@ -10,7 +10,10 @@
 import { Check, X, Wallet, Target, Banknote, Pencil, type LucideIcon } from 'lucide-react'
 import type { Holding, HoldingDetails } from '@/lib/portfolio'
 import {
+  balancesFromEntry,
   detailSpec,
+  entryAmount,
+  entryCurrency,
   fromTypeChoice,
   mistypedFdScheme,
   typeChoice,
@@ -91,7 +94,7 @@ const META: Record<EditableProposal['type'], { icon: LucideIcon; verb: string }>
 /** Build a full editable entity from a model proposal + the user's current data. */
 export function resolveProposal(
   raw: RawProposal,
-  ctx: { holdings: Holding[]; goals: Goal[]; categories: BudgetCategory[]; currentYear: number },
+  ctx: { holdings: Holding[]; goals: Goal[]; categories: BudgetCategory[]; currentYear: number; rate: number },
 ): EditableProposal | null {
   const summary = raw.summary?.trim() || ''
   switch (raw.type) {
@@ -100,7 +103,7 @@ export function resolveProposal(
     case 'update_account': {
       const h = ctx.holdings.find((x) => x.id === raw.id)
       if (!h) return null
-      const base = accountFromHolding(h)
+      const base = accountFromHolding(h, ctx.rate)
       return { type: 'update_account', id: h.id, summary, account: accountFromRaw(raw.account, base) }
     }
     case 'add_goal':
@@ -159,14 +162,15 @@ function accountFromRaw(a: RawAccount | undefined, base?: AccountFields): Accoun
   }
 }
 
-function accountFromHolding(h: Holding): AccountFields {
+/** `rate` lets an older FCNR row saved with rupees only start from its dollar value, not $0. */
+function accountFromHolding(h: Holding, rate: number): AccountFields {
   const d = h.details
   return {
     nickname: h.nickname,
     institution: h.institution,
     accountType: h.accountType,
     country: h.country,
-    balance: Math.round(h.country === 'IN' ? h.balanceInr : h.balanceUsd),
+    balance: Math.round(entryAmount(h, rate)),
     kind: h.kind === 'liability' ? 'liability' : 'asset',
     isPfic: h.isPfic,
     interestRate: d?.interestRate,
@@ -223,14 +227,14 @@ function buildDetails(a: AccountFields): HoldingDetails | undefined {
   return Object.keys(d).length ? d : undefined
 }
 
-export function accountToHolding(a: AccountFields): Omit<Holding, 'id'> {
+/** `balance` is in the entry currency (dollars for US and FCNR, else rupees). */
+export function accountToHolding(a: AccountFields, rate: number): Omit<Holding, 'id'> {
   return {
     nickname: a.nickname.trim(),
     institution: a.institution.trim(),
     accountType: a.accountType,
     country: a.country,
-    balanceUsd: a.country === 'US' ? a.balance : 0,
-    balanceInr: a.country === 'IN' ? a.balance : 0,
+    ...balancesFromEntry(a.country, a.accountType, a.balance, rate),
     // Mirror the dialog: an India mutual fund is a PFIC.
     isPfic: a.kind !== 'liability' && a.country === 'IN' && a.accountType === 'mutual_fund' ? true : a.isPfic,
     source: 'manual',
@@ -286,7 +290,7 @@ export function ProposalCard({
   const Icon = status === 'applied' ? Check : meta.icon
   const pending = status === 'pending'
   const cur = proposal.type === 'add_account' || proposal.type === 'update_account'
-    ? proposal.account.country === 'IN' ? '₹' : '$'
+    ? entryCurrency(proposal.account.country, proposal.account.accountType) === 'INR' ? '₹' : '$'
     : '$'
 
   return (

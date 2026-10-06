@@ -6,21 +6,24 @@ import { useClerk, useUser, UserButton } from '@clerk/nextjs'
 import { useAccounts } from '@/context/AccountsContext'
 import { useCurrency } from '@/context/CurrencyContext'
 import { useTheme } from '@/context/ThemeContext'
-import { complianceItems, type ComplianceLevel } from '@/lib/portfolio'
+import { complianceItems } from '@/lib/portfolio'
+import { complianceSummary } from '@/lib/attention'
+import { useFbarRecorded } from '@/hooks/useFbarRecorded'
 import CurrencyToggle from './CurrencyToggle'
 
-const LEVEL_RANK: Record<ComplianceLevel, number> = { ok: 0, attention: 1, overdue: 2 }
-
 const PILL = {
-  ok: { dot: 'bg-success', text: 'text-success', label: 'All clear', bg: 'bg-success-muted/60', ring: 'ring-success/25' },
-  attention: { dot: 'bg-warning', text: 'text-warning', label: 'Action needed', bg: 'bg-warning-muted/60', ring: 'ring-warning/25' },
-  overdue: { dot: 'bg-danger', text: 'text-danger', label: 'Overdue', bg: 'bg-danger-muted/60', ring: 'ring-danger/25' },
+  ok: { dot: 'bg-success', text: 'text-success', bg: 'bg-success-muted/60', ring: 'ring-success/25' },
+  attention: { dot: 'bg-warning', text: 'text-warning', bg: 'bg-warning-muted/60', ring: 'ring-warning/25' },
+  overdue: { dot: 'bg-danger', text: 'text-danger', bg: 'bg-danger-muted/60', ring: 'ring-danger/25' },
 }
 
+const PILL_CHECKING = { dot: 'bg-muted-foreground/40', text: 'text-muted-foreground', bg: 'bg-muted/60', ring: 'ring-border' }
+
 export default function TopNav() {
-  const { holdings } = useAccounts()
+  const { holdings, loading: accountsLoading } = useAccounts()
   const { rate } = useCurrency()
   const { theme, toggle } = useTheme()
+  const fbarRecorded = useFbarRecorded()
   const { user } = useUser()
   const { signOut } = useClerk()
   const displayName = user?.fullName ?? user?.firstName ?? 'Your account'
@@ -46,11 +49,12 @@ export default function TopNav() {
     }
   }
 
-  const worst = complianceItems(holdings, rate).reduce<ComplianceLevel>(
-    (acc, it) => (LEVEL_RANK[it.level] > LEVEL_RANK[acc] ? it.level : acc),
-    'ok',
-  )
-  const pill = PILL[worst]
+  // Same items (and FBAR figure) as the dashboard, so the pill names what it lists.
+  const status = complianceSummary(complianceItems(holdings, rate, fbarRecorded))
+  // Until the accounts load there's nothing to judge: say so, never a premature "All clear".
+  const worst = accountsLoading ? 'ok' : status.level
+  const pill = accountsLoading ? PILL_CHECKING : PILL[worst]
+  const pillLabel = accountsLoading ? 'Checking…' : status.label
 
   return (
     <header className="glass relative z-20 flex h-[60px] shrink-0 items-center justify-between border-b border-border/70 px-4 sm:px-6">
@@ -81,7 +85,7 @@ export default function TopNav() {
           <span className={`relative flex size-1.5 ${worst !== 'ok' ? 'animate-pulse-ring' : ''} ${pill.text}`}>
             <span className={`size-1.5 rounded-full ${pill.dot}`} />
           </span>
-          <span className={pill.text}>{pill.label}</span>
+          <span className={pill.text}>{pillLabel}</span>
         </Link>
 
         <CurrencyToggle />

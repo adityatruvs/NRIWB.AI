@@ -35,22 +35,22 @@ describe('Sidebar — FX badge', () => {
     expect(screen.getByText('₹87.50')).toBeInTheDocument()
   })
 
-  it('marks the rate stale (no green dot) once it is older than 2 hours', () => {
-    useCurrency.mockReturnValue({ rate: 83.5, updatedAt: before(3 * 3600_000), source: 'cached' })
+  it('marks the rate stale (no green dot) once a daily refresh was missed (older than 26 hours)', () => {
+    useCurrency.mockReturnValue({ rate: 83.5, updatedAt: before(30 * 3600_000), source: 'cached' })
 
     render(<Sidebar />)
 
-    const dot = screen.getByText('Updated 3h ago').firstElementChild
+    const dot = screen.getByText('Updated 1d ago').firstElementChild
     expect(dot).toHaveClass('bg-muted-foreground/40')
     expect(dot).not.toHaveClass('bg-success')
   })
 
-  it('shows a green dot when the rate was refreshed within the last 2 hours', () => {
-    useCurrency.mockReturnValue({ rate: 83.5, updatedAt: before(5 * 60_000), source: 'cached' })
+  it("shows a green dot while the rate is from today's refresh (e.g. 20 hours old)", () => {
+    useCurrency.mockReturnValue({ rate: 83.5, updatedAt: before(20 * 3600_000), source: 'cached' })
 
     render(<Sidebar />)
 
-    const dot = screen.getByText('Updated 5m ago').firstElementChild
+    const dot = screen.getByText('Updated 20h ago').firstElementChild
     expect(dot).toHaveClass('bg-success')
   })
 
