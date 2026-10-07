@@ -91,9 +91,12 @@ export async function POST(request: Request) {
     await writeDailySnapshot(created.id, created.balanceUsd, created.balanceInr)
     return Response.json({ account: toHolding(created) }, { status: 201 })
   } catch (e) {
-    // Duplicate Plaid account id (the only unique constraint on Account).
+    // Duplicate Plaid account id, or an imported holding with the same import key.
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-      return Response.json({ error: 'This account is already linked' }, { status: 409 })
+      const error = input.details?.assetType
+        ? 'You already have this holding — re-upload the statement to update it instead.'
+        : 'This account is already linked'
+      return Response.json({ error }, { status: 409 })
     }
     throw e
   }

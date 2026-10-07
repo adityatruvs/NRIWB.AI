@@ -38,6 +38,19 @@ export interface HoldingDetails {
   isSgb?: boolean
   /** Minimum / planned monthly payment, in the holding's native currency. Liabilities. */
   minPayment?: number
+  /**
+   * Statement-import identity (see `@/lib/import-key`): how re-uploads find this
+   * holding instead of creating a duplicate. Only set on imported holdings.
+   */
+  assetType?: 'folio_fund' | 'custodial_security' | 'deposit' | 'other'
+  /** Normalized folio number (registrar-style funds). */
+  folio?: string
+  /** Normalized account number (custodian / bank), possibly just the last digits. */
+  accountRef?: string
+  /** Canonical instrument id: `ISIN:…`, `CUSIP:…`, `SEDOL:…`, or a weak `NAME:…`. */
+  instrumentId?: string
+  /** ISO YYYY-MM-DD of the statement this balance came from. Guards against older uploads. */
+  statementDate?: string
 }
 
 /**

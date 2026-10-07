@@ -19,11 +19,11 @@ const { mockValidateCasFile, mockBuildExtractionContent, mockParseExtractionResu
   mockBuildExtractionContent: vi.fn(),
   mockParseExtractionResult: vi.fn(),
 }))
-vi.mock('@/lib/cas-import', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/lib/cas-import')>()
+vi.mock('@/lib/statement-import', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/statement-import')>()
   return {
     ...actual,
-    validateCasFile: mockValidateCasFile,
+    validateStatementFile: mockValidateCasFile,
     buildExtractionContent: mockBuildExtractionContent,
     parseExtractionResult: mockParseExtractionResult,
   }
@@ -34,7 +34,7 @@ const { POST } = await import('./route')
 function requestWithFile(file: File | null): Request {
   const form = new FormData()
   if (file) form.set('file', file)
-  return new Request('http://localhost/api/accounts/import-cas', { method: 'POST', body: form })
+  return new Request('http://localhost/api/accounts/import-statement', { method: 'POST', body: form })
 }
 
 const fakePdf = () => new File([new Uint8Array([1, 2, 3])], 'CAS.pdf', { type: 'application/pdf' })
@@ -52,7 +52,7 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('POST /api/accounts/import-cas', () => {
+describe('POST /api/accounts/import-statement', () => {
   it('returns 401 when the user is unauthenticated', async () => {
     mockRequireUserId.mockRejectedValue(new UnauthorizedError())
     const res = await POST(requestWithFile(fakePdf()))
@@ -130,19 +130,19 @@ describe('POST /api/accounts/import-cas', () => {
     expect(res.status).toBe(422)
     expect(mockParseExtractionResult).not.toHaveBeenCalled()
     const body = await res.json()
-    expect(body.error).toMatch(/no mutual fund holdings/i)
+    expect(body.error).toMatch(/no supported holdings/i)
   })
 
   it('returns 422 when extraction succeeds but yields zero holdings', async () => {
     mockValidateCasFile.mockReturnValue({ ok: true, ext: '.pdf' })
     mockBuildExtractionContent.mockResolvedValue([{ type: 'text', text: 'stub' }])
     mockCreate.mockResolvedValue({ content: [{ type: 'tool_use', id: 't1', name: 'report_holdings', input: { holdings: [] } }] })
-    mockParseExtractionResult.mockReturnValue({ proposals: [], skipped: 3 })
+    mockParseExtractionResult.mockReturnValue({ proposals: [], skipped: { stocks: 3, unsupportedCurrency: 0, invalid: 0 } })
 
     const res = await POST(requestWithFile(fakePdf()))
     expect(res.status).toBe(422)
     const body = await res.json()
-    expect(body.error).toMatch(/no mutual fund holdings/i)
+    expect(body.error).toMatch(/no supported holdings/i)
   })
 
   it('returns 200 with the parsed proposals on a genuine success', async () => {
@@ -151,12 +151,31 @@ describe('POST /api/accounts/import-cas', () => {
     const toolInput = { holdings: [{ schemeName: 'HDFC Flexi Cap Fund', marketValueInr: 250000 }] }
     mockCreate.mockResolvedValue({ content: [{ type: 'tool_use', id: 't1', name: 'report_holdings', input: toolInput }] })
     const fakeProposals = [{ summary: 'Import HDFC Flexi Cap Fund — ₹250,000', account: { nickname: 'HDFC Flexi Cap Fund' } }]
-    mockParseExtractionResult.mockReturnValue({ proposals: fakeProposals, skipped: 0 })
+    mockParseExtractionResult.mockReturnValue({ proposals: fakeProposals, skipped: { stocks: 0, unsupportedCurrency: 0, invalid: 0 } })
 
     const res = await POST(requestWithFile(fakePdf()))
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body.proposals).toEqual(fakeProposals)
     expect(mockParseExtractionResult).toHaveBeenCalledWith(toolInput)
+  })
+
+  it('flags a truncated extraction instead of importing a partial list quietly', async () => {
+    mockValidateCasFile.mockReturnValue({ ok: true, ext: '.pdf' })
+    mockBuildExtractionContent.mockResolvedValue([{ type: 'text', text: 'stub' }])
+    mockCreate.mockResolvedValue({ stop_reason: 'max_tokens', content: [{ type: 'tool_use', id: 't1', name: 'report_holdings', input: {} }] })
+    const skipped = { stocks: 0, unsupportedCurrency: 0, invalid: 0 }
+
+    // Rows came through but the model ran out of room: succeed, but tell the client.
+    mockParseExtractionResult.mockReturnValue({ proposals: [{ summary: 's', account: {} }], skipped })
+    const partial = await POST(requestWithFile(fakePdf()))
+    expect(partial.status).toBe(200)
+    expect((await partial.json()).truncated).toBe(true)
+
+    // Nothing usable came through: explain that the file is too long.
+    mockParseExtractionResult.mockReturnValue({ proposals: [], skipped })
+    const none = await POST(requestWithFile(fakePdf()))
+    expect(none.status).toBe(422)
+    expect((await none.json()).error).toMatch(/too long/i)
   })
 })

@@ -1,13 +1,13 @@
 /**
  * Provenance + confidence for a holding's numbers — where a figure came from
- * (Plaid / CAS / manual / estimate) and how much to trust it. Pure + testable;
+ * (Plaid / statement / manual / estimate) and how much to trust it. Pure + testable;
  * the row UI renders the badge from this.
  */
 
 import type { Holding } from '@/lib/portfolio'
 import type { AccountType } from '@/types/accounts'
 
-export type ProvenanceSource = 'plaid' | 'setu' | 'cas' | 'manual' | 'estimate'
+export type ProvenanceSource = 'plaid' | 'setu' | 'statement' | 'manual' | 'estimate'
 export type Confidence = 'high' | 'medium' | 'low'
 
 export interface Provenance {
@@ -35,7 +35,7 @@ export const CONFIDENCE_LABELS: Record<Confidence, string> = {
 
 /**
  * Classify a holding's provenance + confidence:
- * - plaid / setu / CAS (statement) → high (came from an institution or document)
+ * - plaid / setu / statement upload → high (came from an institution or document)
  * - manual with a known balance → medium (you typed it)
  * - manual value of an illiquid asset (home, gold, …) → low, flagged as an estimate
  */
@@ -46,7 +46,7 @@ export function provenanceOf(h: Holding): Provenance {
     case 'setu':
       return { source: 'setu', label: 'Setu', confidence: 'high' }
     case 'pdf_upload':
-      return { source: 'cas', label: 'CAS', confidence: 'high' }
+      return { source: 'statement', label: 'Statement', confidence: 'high' }
     case 'manual':
     default:
       if (ESTIMATE_TYPES.has(h.accountType)) {

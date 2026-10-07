@@ -89,7 +89,7 @@ import { Donut } from '@/components/ui/charts'
 import { Money } from '@/components/ui/Money'
 import { Reveal } from '@/components/ui/Reveal'
 import { AddAccountChooser } from '@/components/AddAccountChooser'
-import { CasImportPanel } from '@/components/CasImportPanel'
+import { StatementImportPanel } from '@/components/StatementImportPanel'
 import { AiAdd } from '@/components/copilot/AiAddPanel'
 import { SearchParamsReader } from '@/components/SearchParamsReader'
 import { ReconnectButton } from '@/components/ReconnectButton'
@@ -185,7 +185,7 @@ export default function AccountsPage() {
   }, [goals])
   const [adding, setAdding] = useState(false)
   const [choosing, setChoosing] = useState(false)
-  const [importingCas, setImportingCas] = useState(false)
+  const [importingStatement, setImportingStatement] = useState(false)
   const [editing, setEditing] = useState<Holding | null>(null)
   const [deleting, setDeleting] = useState<Holding | null>(null)
   const [prepayFor, setPrepayFor] = useState<Holding | null>(null)
@@ -541,12 +541,12 @@ export default function AccountsPage() {
           fxRate={rate}
           onLinked={addLinked}
           onManual={() => setAdding(true)}
-          onImportCas={() => setImportingCas(true)}
+          onImportStatement={() => setImportingStatement(true)}
           onClose={() => setChoosing(false)}
         />
       )}
-      {importingCas && (
-        <CasImportPanel onClose={() => setImportingCas(false)} onManual={() => setAdding(true)} />
+      {importingStatement && (
+        <StatementImportPanel onClose={() => setImportingStatement(false)} onManual={() => setAdding(true)} />
       )}
       {adding && (
         <AccountDialog
