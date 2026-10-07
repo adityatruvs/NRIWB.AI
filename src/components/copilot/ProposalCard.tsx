@@ -279,12 +279,18 @@ export function ProposalCard({
   onChange,
   onAccept,
   onDiscard,
+  notice,
+  acceptLabel = 'Accept',
+  acceptDisabled = false,
 }: {
   proposal: EditableProposal
   status: ProposalStatus
   onChange: (next: EditableProposal) => void
   onAccept: () => void
   onDiscard: () => void
+  notice?: React.ReactNode
+  acceptLabel?: string
+  acceptDisabled?: boolean
 }) {
   const meta = META[proposal.type]
   const Icon = status === 'applied' ? Check : meta.icon
@@ -335,6 +341,7 @@ export function ProposalCard({
       {/* body — editable while pending, read-only summary once resolved */}
       {pending && (
         <>
+          {notice}
           <div className="grid grid-cols-2 gap-2.5 p-3">
             {(proposal.type === 'add_account' || proposal.type === 'update_account') && (
               <AccountFieldset
@@ -385,11 +392,11 @@ export function ProposalCard({
             </button>
             <button
               onClick={onAccept}
-              disabled={!canApply(proposal)}
+              disabled={acceptDisabled || !canApply(proposal)}
               className="btn-primary inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-[12px] font-medium disabled:pointer-events-none disabled:opacity-40"
             >
               <Check size={13} />
-              Accept
+              {acceptLabel}
             </button>
           </div>
         </>

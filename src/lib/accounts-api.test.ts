@@ -8,6 +8,7 @@ import {
   toCreateData,
   toUpdateData,
   formatZodError,
+  isOlderStatement,
   type AccountRecord,
 } from '@/lib/accounts-api'
 
@@ -291,5 +292,50 @@ describe('formatZodError', () => {
     const res = createAccountSchema.safeParse({ institution: 'y', accountType: 'savings', country: 'US' })
     expect(res.success).toBe(false)
     if (!res.success) expect(formatZodError(res.error)).toContain('nickname')
+  })
+})
+
+describe('statement-import identity', () => {
+  const identity = { assetType: 'folio_fund', folio: '123', instrumentId: 'ISIN:INF179K01XQ1', statementDate: '2026-09-30' } as const
+  const base = { nickname: 'HDFC Flexi Cap (Folio 123)', institution: 'HDFC Mutual Fund', accountType: 'mutual_fund', country: 'IN' } as const
+
+  it('stores identity in columns + importKey, not in the details JSON', () => {
+    const input = createAccountSchema.parse({ ...base, details: { ...identity, expectedReturn: 11 } })
+    const data = toCreateData(input, 'user_1') as Record<string, unknown>
+    expect(data).toMatchObject({
+      importAssetType: 'folio_fund', folio: '123', instrumentId: 'ISIN:INF179K01XQ1',
+      statementDate: '2026-09-30', importKey: 'ff|123|ISIN:INF179K01XQ1',
+    })
+    expect(data.details).toEqual({ expectedReturn: 11 })
+  })
+
+  it('round-trips the columns back into holding.details', () => {
+    const h = toHolding(row({ importAssetType: 'folio_fund', folio: '123', instrumentId: 'ISIN:X', statementDate: '2026-09-30', details: { expectedReturn: 11 } }))
+    expect(h.details).toEqual({ expectedReturn: 11, assetType: 'folio_fund', folio: '123', instrumentId: 'ISIN:X', statementDate: '2026-09-30' })
+  })
+
+  it('leaves manual rows without identity columns', () => {
+    const data = toCreateData(createAccountSchema.parse({ ...base, details: { expectedReturn: 11 } }), 'user_1') as Record<string, unknown>
+    expect(data).not.toHaveProperty('importKey')
+  })
+
+  it('a plain edit (details without identity) does not touch the identity columns', () => {
+    const data = toUpdateData(updateAccountSchema.parse({ details: { expectedReturn: 12 } }), 'HDFC')
+    expect(data).not.toHaveProperty('importKey')
+    expect(data).not.toHaveProperty('folio')
+    expect(data.details).toEqual({ expectedReturn: 12 })
+  })
+
+  it('an import update refreshes the identity columns using the existing institution', () => {
+    const data = toUpdateData(updateAccountSchema.parse({ details: { assetType: 'deposit', accountRef: '42', statementDate: '2026-10-01' } }), 'State Bank of India')
+    expect(data).toMatchObject({ importAssetType: 'deposit', accountRef: '42', statementDate: '2026-10-01', importKey: 'dp|statebankofindia|42' })
+  })
+
+  it('flags only a strictly older statement', () => {
+    expect(isOlderStatement('2026-03-31', '2026-09-30')).toBe(true)
+    expect(isOlderStatement('2026-09-30', '2026-09-30')).toBe(false)
+    expect(isOlderStatement('2026-10-31', '2026-09-30')).toBe(false)
+    expect(isOlderStatement('2026-03-31', null)).toBe(false)
+    expect(isOlderStatement(undefined, '2026-09-30')).toBe(false)
   })
 })

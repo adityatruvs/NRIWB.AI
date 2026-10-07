@@ -12,6 +12,7 @@
 import { z } from 'zod'
 import { LIABILITY_TYPES, type CoOwner, type Holding, type HoldingDetails, type Ownership } from '@/lib/portfolio'
 import type { AccountType } from '@/types/accounts'
+import { buildImportKey, type ImportIdentity } from '@/lib/import-key'
 
 /**
  * Every account type, as a runtime tuple for zod. `satisfies` keeps it in lockstep
@@ -48,6 +49,11 @@ export const detailsSchema = z.object({
   fdScheme: z.enum(['NRE', 'NRO']).optional(),
   isSgb: z.boolean().optional(),
   minPayment: z.number().optional(),
+  assetType: z.enum(['folio_fund', 'custodial_security', 'deposit', 'other']).optional(),
+  folio: z.string().max(64).optional(),
+  accountRef: z.string().max(64).optional(),
+  instrumentId: z.string().max(160).optional(),
+  statementDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'statementDate must be YYYY-MM-DD').optional(),
 })
 
 // Shared field definitions. `createAccountSchema` layers required-ness + defaults on
@@ -91,9 +97,11 @@ export const createAccountSchema = z.object({
  * PATCH: any subset of fields, no defaults (so omitted fields stay untouched).
  * `confirmBalance` isn't stored: it marks a "mark updated" (the user confirming
  * today's balance), which records a history snapshot even though nothing changed.
+ * `allowOlder` isn't stored either: it lets a statement import overwrite a balance with
+ * one from an older statement (see `isOlderStatement`).
  */
 export const updateAccountSchema = z
-  .object({ ...baseFields, confirmBalance: z.boolean() })
+  .object({ ...baseFields, confirmBalance: z.boolean(), allowOlder: z.boolean() })
   .partial()
 
 export type CreateAccountInput = z.infer<typeof createAccountSchema>
@@ -116,6 +124,41 @@ export interface AccountRecord {
   coOwners: unknown
   details: unknown
   lastSyncedAt: Date | null
+  importAssetType?: string | null
+  folio?: string | null
+  accountRef?: string | null
+  instrumentId?: string | null
+  statementDate?: string | null
+}
+
+type IdentityDetails = Pick<HoldingDetails, 'assetType' | 'folio' | 'accountRef' | 'instrumentId' | 'statementDate'>
+
+function splitIdentity(details: HoldingDetails | null | undefined): {
+  identity: IdentityDetails | undefined
+  rest: HoldingDetails | undefined
+} {
+  if (!details) return { identity: undefined, rest: undefined }
+  const { assetType, folio, accountRef, instrumentId, statementDate, ...rest } = details
+  const identity = assetType ? { assetType, folio, accountRef, instrumentId, statementDate } : undefined
+  return { identity, rest: cleanDetails(rest) }
+}
+
+function identityColumns(identity: IdentityDetails | undefined, institution: string) {
+  if (!identity?.assetType) return {}
+  const parts: ImportIdentity = { assetType: identity.assetType, institution, folio: identity.folio, accountRef: identity.accountRef, instrumentId: identity.instrumentId }
+  return {
+    importAssetType: identity.assetType,
+    folio: identity.folio ?? null,
+    accountRef: identity.accountRef ?? null,
+    instrumentId: identity.instrumentId ?? null,
+    statementDate: identity.statementDate ?? null,
+    importKey: buildImportKey(parts),
+  }
+}
+
+/** True when an incoming statement is older than the one a holding was last updated from. */
+export function isOlderStatement(incoming: string | undefined, existing: string | null | undefined): boolean {
+  return !!incoming && !!existing && incoming < existing
 }
 
 /** Drop undefined keys and re-validate; returns undefined when nothing meaningful is left. */
@@ -165,8 +208,15 @@ export function toHolding(row: AccountRecord): Holding {
     const coOwners = cleanCoOwners(row.ownership, row.coOwners)
     if (coOwners) holding.coOwners = coOwners
   }
-  const details = cleanDetails(row.details)
-  if (details) holding.details = details
+  const details: HoldingDetails = { ...cleanDetails(row.details) }
+  if (row.importAssetType) {
+    details.assetType = row.importAssetType as HoldingDetails['assetType']
+    if (row.folio) details.folio = row.folio
+    if (row.accountRef) details.accountRef = row.accountRef
+    if (row.instrumentId) details.instrumentId = row.instrumentId
+    if (row.statementDate) details.statementDate = row.statementDate
+  }
+  if (Object.keys(details).length > 0) holding.details = details
   // Serialize the Date to an ISO string — the client reads freshness off this.
   if (row.lastSyncedAt) holding.lastSyncedAt = row.lastSyncedAt.toISOString()
   return holding
@@ -175,8 +225,9 @@ export function toHolding(row: AccountRecord): Holding {
 /** Build the Prisma `create` payload from validated input, scoped to a user. */
 export function toCreateData(input: CreateAccountInput, userId: string) {
   const kind = resolveKind(input.accountType, input.kind)
-  const details = cleanDetails(input.details)
+  const { identity, rest: details } = splitIdentity(input.details)
   return {
+    ...identityColumns(identity, input.institution),
     userId,
     nickname: input.nickname,
     institution: input.institution,
@@ -205,7 +256,7 @@ export function toCreateData(input: CreateAccountInput, userId: string) {
  * `details` may be `null` here to mean "clear it"; the route translates that to
  * Prisma's JSON-null sentinel. `lastSyncedAt` is always refreshed on an edit.
  */
-export function toUpdateData(patch: UpdateAccountInput): Record<string, unknown> {
+export function toUpdateData(patch: UpdateAccountInput, existingInstitution = ''): Record<string, unknown> {
   const data: Record<string, unknown> = {}
 
   if (patch.nickname !== undefined) data.nickname = patch.nickname
@@ -243,7 +294,9 @@ export function toUpdateData(patch: UpdateAccountInput): Record<string, unknown>
 
   if (patch.details !== undefined) {
     // null => clear; an object => cleaned (an all-empty object also clears).
-    data.details = patch.details === null ? null : (cleanDetails(patch.details) ?? null)
+    const { identity, rest } = splitIdentity(patch.details)
+    data.details = patch.details === null ? null : (rest ?? null)
+    Object.assign(data, identityColumns(identity, patch.institution ?? existingInstitution))
   }
 
   if (Object.keys(data).length > 0) data.lastSyncedAt = new Date()

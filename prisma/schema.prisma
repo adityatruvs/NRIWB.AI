@@ -38,6 +38,18 @@ model Account {
   // Instrument-specific attributes (interestRate, maturityDate, tdsRate, ...).
   // Mirrors the HoldingDetails shape; only fields relevant to the type are set.
   details        Json?
+  // Statement-import identity (see src/lib/import-key.ts): lets a re-upload find the
+  // holding it already created instead of inserting a duplicate. All null for manual
+  // and Plaid rows. `importKey` is derived from the parts; Postgres treats nulls as
+  // distinct, so the unique constraint below only ever bites on imported rows.
+  importAssetType String?
+  // folio_fund | custodial_security | deposit | other
+  folio           String?
+  accountRef      String?
+  instrumentId    String?
+  // ISO YYYY-MM-DD of the statement this balance came from (guards older uploads).
+  statementDate   String?
+  importKey       String?
   plaidAccountId String?   @unique
   // The PlaidItem.itemId this account syncs through — lets a row show "Reconnect"
   // when its item needs re-login. Set on link and on every sync.
@@ -49,6 +61,7 @@ model Account {
 
   snapshots BalanceSnapshot[]
 
+  @@unique([userId, importKey])
   @@index([userId])
 }
 

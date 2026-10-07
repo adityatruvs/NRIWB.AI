@@ -9,11 +9,11 @@ interface Props {
   fxRate: number
   onLinked: (accounts: Holding[]) => void
   onManual: () => void
-  onImportCas: () => void
+  onImportStatement: () => void
   onClose: () => void
 }
 
-export function AddAccountChooser({ fxRate, onLinked, onManual, onImportCas, onClose }: Props) {
+export function AddAccountChooser({ fxRate, onLinked, onManual, onImportStatement, onClose }: Props) {
   const [linkToken, setLinkToken] = useState<string | null>(null)
 
   useEffect(() => {
@@ -97,10 +97,10 @@ export function AddAccountChooser({ fxRate, onLinked, onManual, onImportCas, onC
           <Option
             icon={<FileUp size={18} strokeWidth={1.75} />}
             accent="india"
-            title="Mutual funds via CAS statement"
-            subtitle="Upload a CAMS/KFintech statement — PDF, Word, Excel, CSV, or a photo"
+            title="Import a statement"
+            subtitle="Funds, bonds and deposits from any country — PDF, Word, Excel, CSV, or a photo"
             onClick={() => {
-              onImportCas()
+              onImportStatement()
               onClose()
             }}
           />

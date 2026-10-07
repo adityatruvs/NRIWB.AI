@@ -4,6 +4,14 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import { useUser } from '@clerk/nextjs'
 import { DEMO_HOLDINGS } from '@/lib/demo'
 import { isLiability, type Holding } from '@/lib/portfolio'
+
+export type SaveResult = { ok: true } | { ok: false; error: string }
+
+async function failure(res: Response, fallback: string): Promise<SaveResult> {
+  const data = (await res.json().catch(() => ({}))) as { error?: string }
+  return { ok: false, error: data.error || fallback }
+}
+
 interface AccountsContextValue {
   /** The user's holdings — loaded from the server (or the demo seed when in demo mode). */
   holdings: Holding[]
@@ -15,12 +23,12 @@ interface AccountsContextValue {
   /** Merge accounts the server just persisted (e.g. a Plaid link) into the ledger. */
   addLinked: (accounts: Holding[]) => void
   clearLinked: () => void
-  addManual: (account: Holding) => void
+  addManual: (account: Holding) => Promise<SaveResult>
   /**
    * Replace the holding with this id (keeps its id and position in the list).
    * `confirmBalance` = "mark updated": records today's balance in history.
    */
-  updateAccount: (id: string, account: Holding, opts?: { confirmBalance?: boolean }) => void
+  updateAccount: (id: string, account: Holding, opts?: { confirmBalance?: boolean; allowOlder?: boolean }) => Promise<SaveResult>
   removeAccount: (id: string) => void
   /** Re-fetch the ledger from the server (e.g. after a balance sync). */
   refresh: () => Promise<void>
@@ -143,51 +151,64 @@ export function AccountsProvider({ children }: { children: React.ReactNode }) {
   }, [isLoaded, userId, loadFromServer])
 
   const addManual = useCallback(
-    (account: Holding) => {
+    async (account: Holding): Promise<SaveResult> => {
       const tempId = account.id ?? crypto.randomUUID()
       const optimistic: Holding = { ...account, id: tempId }
       setHoldings((prev) => [...prev, optimistic])
-      if (demo) return
+      if (demo) return { ok: true }
       // Persist, then swap the temp row for the server row (which has the real id).
-      void (async () => {
-        try {
-          const res = await fetch('/api/accounts', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(createBody(account)),
-          })
-          if (!res.ok) throw new Error(`POST /api/accounts ${res.status}`)
-          const { account: saved } = (await res.json()) as { account: Holding }
-          setHoldings((prev) => prev.map((h) => (h.id === tempId ? saved : h)))
-        } catch (e) {
-          console.error('Failed to add account:', e)
+      try {
+        const res = await fetch('/api/accounts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(createBody(account)),
+        })
+        if (!res.ok) {
           setHoldings((prev) => prev.filter((h) => h.id !== tempId)) // roll back the add
+          return await failure(res, "Couldn't save that holding.")
         }
-      })()
+        const { account: saved } = (await res.json()) as { account: Holding }
+        setHoldings((prev) => prev.map((h) => (h.id === tempId ? saved : h)))
+        return { ok: true }
+      } catch (e) {
+        console.error('Failed to add account:', e)
+        setHoldings((prev) => prev.filter((h) => h.id !== tempId))
+        return { ok: false, error: 'Could not reach the server — check your connection.' }
+      }
     },
     [demo],
   )
 
   const updateAccount = useCallback(
-    (id: string, account: Holding, opts?: { confirmBalance?: boolean }) => {
+    async (id: string, account: Holding, opts?: { confirmBalance?: boolean; allowOlder?: boolean }): Promise<SaveResult> => {
       const prevItem = holdingsRef.current.find((h) => h.id === id)
+      const rollback = () => {
+        if (prevItem) setHoldings((prev) => prev.map((h) => (h.id === id ? prevItem : h)))
+      }
       setHoldings((prev) => prev.map((h) => (h.id === id ? { ...account, id } : h)))
-      if (demo) return
-      void (async () => {
-        try {
-          const res = await fetch(`/api/accounts/${id}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...updateBody(account), ...(opts?.confirmBalance ? { confirmBalance: true } : {}) }),
-          })
-          if (!res.ok) throw new Error(`PATCH /api/accounts/${id} ${res.status}`)
-          const { account: saved } = (await res.json()) as { account: Holding }
-          setHoldings((prev) => prev.map((h) => (h.id === id ? saved : h)))
-        } catch (e) {
-          console.error('Failed to update account:', e)
-          if (prevItem) setHoldings((prev) => prev.map((h) => (h.id === id ? prevItem : h)))
+      if (demo) return { ok: true }
+      try {
+        const res = await fetch(`/api/accounts/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...updateBody(account),
+            ...(opts?.confirmBalance ? { confirmBalance: true } : {}),
+            ...(opts?.allowOlder ? { allowOlder: true } : {}),
+          }),
+        })
+        if (!res.ok) {
+          rollback()
+          return await failure(res, "Couldn't update that holding.")
         }
-      })()
+        const { account: saved } = (await res.json()) as { account: Holding }
+        setHoldings((prev) => prev.map((h) => (h.id === id ? saved : h)))
+        return { ok: true }
+      } catch (e) {
+        console.error('Failed to update account:', e)
+        rollback()
+        return { ok: false, error: 'Could not reach the server — check your connection.' }
+      }
     },
     [demo],
   )

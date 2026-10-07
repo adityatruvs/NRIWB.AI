@@ -20,7 +20,7 @@ describe('provenanceOf', () => {
   it('maps linked/imported sources to high confidence', () => {
     expect(provenanceOf(h('plaid', 'checking'))).toMatchObject({ source: 'plaid', label: 'Plaid', confidence: 'high' })
     expect(provenanceOf(h('setu', 'savings'))).toMatchObject({ source: 'setu', confidence: 'high' })
-    expect(provenanceOf(h('pdf_upload', 'mutual_fund'))).toMatchObject({ source: 'cas', label: 'CAS', confidence: 'high' })
+    expect(provenanceOf(h('pdf_upload', 'mutual_fund'))).toMatchObject({ source: 'statement', label: 'Statement', confidence: 'high' })
   })
 
   it('treats a manual known balance as medium confidence', () => {

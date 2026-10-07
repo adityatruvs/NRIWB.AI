@@ -6,6 +6,7 @@ import {
   toUpdateData,
   toHolding,
   formatZodError,
+  isOlderStatement,
 } from '@/lib/accounts-api'
 import { balanceChanged, writeDailySnapshot } from '@/lib/snapshots'
 
@@ -65,7 +66,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   // Confirm the row exists AND belongs to this user before touching it.
   const existing = await prisma.account.findFirst({
     where: { id, userId },
-    select: { id: true, balanceUsd: true, balanceInr: true },
+    select: { id: true, balanceUsd: true, balanceInr: true, institution: true, statementDate: true },
   })
   if (!existing) return Response.json({ error: 'Account not found' }, { status: 404 })
 
@@ -86,7 +87,17 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     }
   }
 
-  const data = toUpdateData(parsed.data)
+  if (
+    !parsed.data.allowOlder &&
+    isOlderStatement(parsed.data.details?.statementDate, existing.statementDate)
+  ) {
+    return Response.json(
+      { error: `This statement (${parsed.data.details?.statementDate}) is older than the one already imported (${existing.statementDate}).`, code: 'older_statement' },
+      { status: 409 },
+    )
+  }
+
+  const data = toUpdateData(parsed.data, existing.institution)
   // Translate the mapper's "clear it" sentinel into Prisma's JSON-null.
   if (data.details === null) data.details = Prisma.DbNull
   if (data.coOwners === null) data.coOwners = Prisma.DbNull
@@ -104,7 +115,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     return Response.json({ account: toHolding(updated) })
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-      return Response.json({ error: 'This account is already linked' }, { status: 409 })
+      return Response.json({ error: 'You already have a holding with this folio / account number' }, { status: 409 })
     }
     throw e
   }
