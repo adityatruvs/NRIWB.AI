@@ -23,6 +23,8 @@ export async function POST(request: Request) {
   // own DB. Standard name fields promote to Clerk's first/last; everything else
   // goes in private (server-only) metadata.
   const client = await clerkClient();
+  const existing = await client.users.getUser(userId);
+  const onboardedAt = (existing.privateMetadata as { onboardedAt?: string }).onboardedAt;
   await client.users.updateUser(userId, {
     firstName: profile.firstName,
     lastName: profile.lastName,
@@ -57,7 +59,7 @@ export async function POST(request: Request) {
       occupation: profile.occupation,
       employer: profile.employer,
       onboardingComplete: true,
-      onboardedAt: new Date().toISOString(),
+      onboardedAt: onboardedAt ?? new Date().toISOString(),
     },
   });
 
