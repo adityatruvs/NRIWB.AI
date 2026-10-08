@@ -35,7 +35,7 @@ interface ChecklistItem {
 export function DataCompletion() {
   const { holdings } = useAccounts()
   const { goals } = useGoals()
-  const { age } = useProfile()
+  const { age, missingFields } = useProfile()
   const { rate } = useCurrency()
 
   const [collapsed, setCollapsed] = useState(false)
@@ -69,9 +69,12 @@ export function DataCompletion() {
     {
       key: 'profile',
       label: 'Complete your profile',
-      hint: age !== null ? `Age ${age} on file` : 'Add your date of birth',
-      done: age !== null,
-      href: '/',
+      hint:
+        missingFields.length > 0
+          ? `${missingFields.length} skipped · add ${missingFields.slice(0, 2).join(', ').toLowerCase()}${missingFields.length > 2 ? '…' : ''}`
+          : 'All set',
+      done: age !== null && missingFields.length === 0,
+      href: '/profile',
     },
     {
       key: 'us',

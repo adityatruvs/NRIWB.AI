@@ -18,6 +18,8 @@ import {
   GOAL_OPTIONS,
   HOLDING_OPTIONS,
   MARITAL_STATUSES,
+  validateName,
+  validatePhone,
   type Option,
 } from "@/lib/onboarding";
 
@@ -33,6 +35,7 @@ const MOVE_YEARS = Array.from({ length: NOW_YEAR - 1949 }, (_, i) => NOW_YEAR - 
 
 const inputCls =
   "w-full rounded-lg border border-input bg-card px-3.5 py-2.5 text-sm outline-none transition placeholder:text-muted-foreground/70 focus:border-brand focus:ring-2 focus:ring-brand/15";
+const invalidCls = "border-danger focus:border-danger focus:ring-danger/15";
 const labelCls = "mb-1.5 block text-[13px] font-medium";
 
 const STEPS = ["Identity & residency", "Tax & finances", "Goals & family"];
@@ -264,29 +267,65 @@ const initialForm = {
   employer: "",
 };
 
-type Form = typeof initialForm;
+export type OnboardingForm = typeof initialForm;
+type Form = OnboardingForm;
+
+type TextKey = "firstName" | "lastName" | "phone";
+type FieldErrors = Partial<Record<TextKey, string>>;
+
+const TEXT_VALIDATORS: Record<TextKey, (v: string) => string> = {
+  firstName: (v) => validateName(v, "First name"),
+  lastName: (v) => validateName(v, "Last name"),
+  phone: validatePhone,
+};
+
+const TEXT_STEP: Record<TextKey, number> = { firstName: 0, lastName: 0, phone: 2 };
+
+function FieldError({ id, message }: { id: string; message?: string }) {
+  if (!message) return null;
+  return (
+    <p id={id} role="alert" className="mt-1.5 text-xs text-danger">
+      {message}
+    </p>
+  );
+}
 
 export default function Onboarding({
   firstName,
   lastName,
   email,
+  initial,
+  mode = "onboarding",
 }: {
   firstName: string;
   lastName: string;
   email: string;
+  initial?: Partial<Form>;
+  mode?: "onboarding" | "edit";
 }) {
+  const editing = mode === "edit";
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<Form>({
     ...initialForm,
+    ...initial,
     firstName: firstName || "",
     lastName: lastName || "",
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
 
   const set = (k: keyof Form) => (v: string) => setForm((f) => ({ ...f, [k]: v }));
-  const setInput = (k: keyof Form) => (e: React.ChangeEvent<HTMLInputElement>) =>
-    setForm((f) => ({ ...f, [k]: e.target.value }));
+  const setInput = (k: keyof Form) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setForm((f) => ({ ...f, [k]: value }));
+
+    if (k in TEXT_VALIDATORS && fieldErrors[k as TextKey]) {
+      setFieldErrors((errs) => ({ ...errs, [k]: TEXT_VALIDATORS[k as TextKey](value) }));
+    }
+  };
+  const checkOnBlur = (k: TextKey) => () =>
+    setFieldErrors((errs) => ({ ...errs, [k]: TEXT_VALIDATORS[k](form[k]) }));
   const toggle = (k: "goals" | "holdings") => (v: string) =>
     setForm((f) => {
       const cur = f[k];
@@ -295,8 +334,19 @@ export default function Onboarding({
 
   const isUsResident = form.countryOfResidence === "US";
 
+  /** Validate the text fields; returns the step of the first invalid one (or -1). */
+  function checkTextFields(): number {
+    const errs: FieldErrors = {};
+    for (const k of Object.keys(TEXT_VALIDATORS) as TextKey[]) {
+      const msg = TEXT_VALIDATORS[k](form[k]);
+      if (msg) errs[k] = msg;
+    }
+    setFieldErrors(errs);
+    const steps = (Object.keys(errs) as TextKey[]).map((k) => TEXT_STEP[k]);
+    return steps.length ? Math.min(...steps) : -1;
+  }
+
   function validateStep1(): string {
-    if (!form.firstName.trim() || !form.lastName.trim()) return "Please enter your first and last name.";
     if (!form.dobMonth || !form.dobDay || !form.dobYear) return "Please enter your full date of birth.";
     if (!form.countryOfResidence) return "Select your country of residence.";
     if (!form.usImmigrationStatus) return "Select your U.S. immigration status.";
@@ -307,6 +357,7 @@ export default function Onboarding({
   function next() {
     setError("");
     if (step === 0) {
+      if (checkTextFields() === 0) return setError("Please fix the highlighted fields.");
       const err = validateStep1();
       if (err) return setError(err);
     }
@@ -321,6 +372,11 @@ export default function Onboarding({
 
   async function submit() {
     setError("");
+    const badStep = checkTextFields();
+    if (badStep >= 0) {
+      setStep(badStep);
+      return setError("Please fix the highlighted fields.");
+    }
     const err = validateStep1();
     if (err) {
       setStep(0);
@@ -367,30 +423,37 @@ export default function Onboarding({
     // inner min-h-full wrapper centers the card when it fits and simply grows —
     // scrolling the outer — when the card is taller than the viewport. (Putting
     // centering on the scroll container itself clips the overflow and won't scroll.)
-    <div className="relative h-screen overflow-y-auto">
-      <div aria-hidden className="hero-mesh" />
+    <div className={cn("relative", !editing && "h-screen overflow-y-auto")}>
+      {!editing && <div aria-hidden className="hero-mesh" />}
 
-      <div className="flex min-h-full flex-col items-center justify-center px-6 py-12">
+      <div className={cn("flex flex-col items-center", editing ? "py-2" : "min-h-full justify-center px-6 py-12")}>
         <div className="card-surface relative w-full max-w-2xl animate-scale-in overflow-hidden">
         <span aria-hidden className="gradient-hairline absolute inset-x-0 top-0" />
 
         <div className="px-7 pb-1 pt-9 sm:px-10">
-          <div className="flex items-center gap-2.5">
-            <span className="icon-chip h-8 w-8 text-sm font-bold">N</span>
-            <span className="text-sm font-semibold tracking-tight">NRIWB</span>
-          </div>
-          <h1 className="mt-6 font-serif text-[1.75rem] font-medium tracking-tight">
-            Set up your profile
+          {!editing && (
+            <div className="flex items-center gap-2.5">
+              <span className="icon-chip h-8 w-8 text-sm font-bold">N</span>
+              <span className="text-sm font-semibold tracking-tight">NRIWB</span>
+            </div>
+          )}
+          <h1 className={cn("font-serif text-[1.75rem] font-medium tracking-tight", !editing && "mt-6")}>
+            {editing ? "Your profile" : "Set up your profile"}
           </h1>
           <p className="mt-1.5 text-sm text-muted-foreground">
-            A few details so we can tailor your cross-border net worth and the right
-            US↔India compliance checks. This stays private to you.
+            {editing
+              ? "Fill in anything you skipped or update what has changed. The more complete this is, the sharper your cross-border insights."
+              : "A few details so we can tailor your cross-border net worth and the right US↔India compliance checks. This stays private to you."}
           </p>
 
           {/* Step progress */}
           <div className="mt-6 flex items-center gap-2">
             {STEPS.map((s, i) => (
-              <div key={s} className="flex flex-1 flex-col gap-1.5">
+              <div
+                key={s}
+                className={cn("flex flex-1 flex-col gap-1.5", editing && "cursor-pointer")}
+                onClick={editing ? () => setStep(i) : undefined}
+              >
                 <div
                   className={cn(
                     "h-1 rounded-full transition-colors",
@@ -417,12 +480,14 @@ export default function Onboarding({
               <p className="eyebrow mb-3">Your details</p>
               <div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-2">
                 <div>
-                  <label className={labelCls}>First name</label>
-                  <input className={inputCls} value={form.firstName} onChange={setInput("firstName")} required autoComplete="given-name" placeholder="e.g. Priya" />
+                  <label htmlFor="ob-first-name" className={labelCls}>First name</label>
+                  <input id="ob-first-name" className={cn(inputCls, fieldErrors.firstName && invalidCls)} value={form.firstName} onChange={setInput("firstName")} onBlur={checkOnBlur("firstName")} aria-invalid={!!fieldErrors.firstName} aria-describedby={fieldErrors.firstName ? "ob-first-name-err" : undefined} maxLength={60} required autoComplete="given-name" placeholder="e.g. Priya" />
+                  <FieldError id="ob-first-name-err" message={fieldErrors.firstName} />
                 </div>
                 <div>
-                  <label className={labelCls}>Last name</label>
-                  <input className={inputCls} value={form.lastName} onChange={setInput("lastName")} required autoComplete="family-name" placeholder="e.g. Sharma" />
+                  <label htmlFor="ob-last-name" className={labelCls}>Last name</label>
+                  <input id="ob-last-name" className={cn(inputCls, fieldErrors.lastName && invalidCls)} value={form.lastName} onChange={setInput("lastName")} onBlur={checkOnBlur("lastName")} aria-invalid={!!fieldErrors.lastName} aria-describedby={fieldErrors.lastName ? "ob-last-name-err" : undefined} maxLength={60} required autoComplete="family-name" placeholder="e.g. Sharma" />
+                  <FieldError id="ob-last-name-err" message={fieldErrors.lastName} />
                 </div>
                 <div className="sm:col-span-2">
                   <label className={labelCls}>Email</label>
@@ -549,8 +614,9 @@ export default function Onboarding({
               <p className="eyebrow mb-1">Contact <span className="font-normal lowercase tracking-normal">· optional</span></p>
               <div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-2">
                 <div className="sm:col-span-2">
-                  <label className={labelCls}>Phone</label>
-                  <input type="tel" className={inputCls} value={form.phone} onChange={setInput("phone")} autoComplete="tel" placeholder="+1 (555) 000-0000" />
+                  <label htmlFor="ob-phone" className={labelCls}>Phone</label>
+                  <input id="ob-phone" type="tel" className={cn(inputCls, fieldErrors.phone && invalidCls)} value={form.phone} onChange={setInput("phone")} onBlur={checkOnBlur("phone")} aria-invalid={!!fieldErrors.phone} aria-describedby={fieldErrors.phone ? "ob-phone-err" : undefined} autoComplete="tel" placeholder="+1 (555) 000-0000" />
+                  <FieldError id="ob-phone-err" message={fieldErrors.phone} />
                 </div>
                 <div>
                   <label className={labelCls}>Occupation</label>
@@ -579,11 +645,11 @@ export default function Onboarding({
               </button>
             ) : (
               <button type="button" onClick={submit} disabled={submitting} className="btn-primary ml-auto rounded-xl px-5 py-3 text-sm font-medium disabled:opacity-60">
-                {submitting ? "Saving…" : "Finish & go to dashboard"}
+                {submitting ? "Saving…" : editing ? "Save changes" : "Finish & go to dashboard"}
               </button>
             )}
           </div>
-          {step === STEPS.length - 1 && (
+          {step === STEPS.length - 1 && !editing && (
             <p className="mt-3 text-center text-xs text-muted-foreground">
               Next, you&apos;ll connect your first account.
             </p>

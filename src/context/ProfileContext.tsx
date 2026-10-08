@@ -22,7 +22,11 @@ interface ProfileContextValue {
   riskTolerance: string | null
   /** Whole years, derived live from `dateOfBirth`. Null if unknown. */
   age: number | null
+  /** Labels of skippable onboarding questions still unanswered — drives "Complete your profile". */
+  missingFields: string[]
 }
+
+const EMPTY: string[] = []
 
 const ProfileContext = createContext<ProfileContextValue | null>(null)
 
@@ -32,6 +36,7 @@ export function ProfileProvider({
   taxStatus = null,
   indiaDaysCurrentYear = null,
   riskTolerance = null,
+  missingFields = EMPTY,
   children,
 }: {
   dateOfBirth?: string | null
@@ -39,6 +44,7 @@ export function ProfileProvider({
   taxStatus?: string | null
   indiaDaysCurrentYear?: number | null
   riskTolerance?: string | null
+  missingFields?: string[]
   children: React.ReactNode
 }) {
   const value = useMemo<ProfileContextValue>(
@@ -49,8 +55,9 @@ export function ProfileProvider({
       indiaDaysCurrentYear,
       riskTolerance,
       age: ageFromDob(dateOfBirth),
+      missingFields,
     }),
-    [dateOfBirth, countryOfResidence, taxStatus, indiaDaysCurrentYear, riskTolerance],
+    [dateOfBirth, countryOfResidence, taxStatus, indiaDaysCurrentYear, riskTolerance, missingFields],
   )
 
   return <ProfileContext.Provider value={value}>{children}</ProfileContext.Provider>
@@ -69,6 +76,7 @@ export function useProfile(): ProfileContextValue {
       indiaDaysCurrentYear: null,
       riskTolerance: null,
       age: null,
+      missingFields: EMPTY,
     }
   )
 }
