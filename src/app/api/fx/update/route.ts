@@ -1,4 +1,4 @@
-import { getFxSnapshot, refreshFxRate, FX_PAIR } from '@/lib/fx'
+import { getFxSnapshot, refreshFxRate, FX_PAIR, FxUnavailableError } from '@/lib/fx'
 
 export const runtime = 'nodejs'
 
@@ -17,8 +17,12 @@ export async function GET(request: Request) {
     console.log(`[fx] refreshed ${FX_PAIR}: ${snapshot.rate}`)
     return Response.json(snapshot)
   } catch (e) {
-    console.error('[fx] refresh failed, keeping last-known rate:', (e as Error).message)
-    const fallback = await getFxSnapshot()
-    return Response.json(fallback)
+    console.error('[fx] refresh failed, keeping the last saved live rate:', (e as Error).message)
+    try {
+      return Response.json(await getFxSnapshot())
+    } catch (err) {
+      if (err instanceof FxUnavailableError) return Response.json({ error: err.message }, { status: 503 })
+      throw err
+    }
   }
 }

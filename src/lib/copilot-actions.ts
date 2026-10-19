@@ -14,7 +14,7 @@ import type { GoalCategory, GoalKind } from '@/lib/goals'
 /** Marker that separates the conversational reply from the proposals JSON. */
 export const PROPOSAL_SENTINEL = '[[PROPOSALS]]'
 
-/** Wire shape of an account proposal (balance is in the country's own currency). */
+/** Wire shape of an account proposal (balance in the entry currency: USD for US and FCNR, else INR). */
 export interface RawAccount {
   nickname?: string
   institution?: string
@@ -101,7 +101,7 @@ export const ACTIONS_PROMPT = `ACTIONS — you can PROPOSE changes to the user's
 2. Then, on a new line, output the marker ${PROPOSAL_SENTINEL} followed by a single valid JSON array of proposal objects, as the LAST thing in your message. Output the marker ONLY when proposing a change — never for plain questions.
 
 Proposal objects:
-- {"type":"add_account","summary":"Add Amex HYSA — $10,000","account":{"nickname":"","institution":"","accountType":"<type>","country":"US"|"IN","balance":<number in that country's currency: USD for US, INR for IN>,"kind":"asset"|"liability","isPfic":false, ...type-specific detail fields...}}
+- {"type":"add_account","summary":"Add Amex HYSA — $10,000","account":{"nickname":"","institution":"","accountType":"<type>","country":"US"|"IN","balance":<number: USD for US accounts and for India FCNR deposits (an FCNR in GBP/EUR/CAD/AUD: its USD value), INR for every other India account>,"kind":"asset"|"liability","isPfic":false, ...type-specific detail fields...}}
 - {"type":"update_account","summary":"...","id":"<ref from the accounts list>","account":{ ...only fields to change... }}
 
 Account detail fields — include the ones that fit the type (with a real value or a sensible estimate; otherwise omit and the user fills it in):

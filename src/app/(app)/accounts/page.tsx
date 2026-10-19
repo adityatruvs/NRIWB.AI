@@ -36,7 +36,7 @@ import { AccountsLogo } from '@/components/ui/logos'
 import { useCurrency } from '@/context/CurrencyContext'
 import { useAccounts } from '@/context/AccountsContext'
 import { useGoals } from '@/context/GoalsContext'
-import { formatUSD, formatINR } from '@/lib/currency'
+import { formatAmount, formatUSD, formatINR } from '@/lib/currency'
 import {
   netWorth,
   byAssetClass,
@@ -44,6 +44,7 @@ import {
   usdValue,
   isLiability,
   isSecurableAsset,
+  isGoalFundingAccount,
   SECURABLE_ASSET_TYPES,
   loansSecuredBy,
   assetEquity,
@@ -60,7 +61,10 @@ import {
 import { typeExpectedReturn } from '@/lib/allocation'
 import {
   IN_ASSET_CHOICES,
+  balancesFromEntry,
   detailSpec,
+  entryAmount,
+  entryCurrency,
   fromTypeChoice,
   mistypedFdScheme,
   typeChoice,
@@ -101,7 +105,7 @@ const COUNTRY_META = {
 } as const
 
 export default function AccountsPage() {
-  const { rate } = useCurrency()
+  const { rate, mode } = useCurrency()
   const { holdings, loading, demo, hasLinked, addLinked, addManual, updateAccount, removeAccount, refresh, loadDemoData, exitDemo } =
     useAccounts()
 
@@ -507,8 +511,8 @@ export default function AccountsPage() {
                   >
                     <span className="font-medium text-foreground">{formatINR(nroInr)}</span> in NRO earns interest
                     taxed at ~30% TDS. NRE interest is tax-free and repatriable — about{' '}
-                    <span className="font-semibold text-success">{formatINR(tdsSavingInr)}/yr</span>{' '}
-                    ({formatUSD(tdsSavingInr / rate)}) saved.
+                    <span className="font-semibold text-success">{formatINR(tdsSavingInr)}/yr</span>
+                    {mode === 'usd' ? ` (${formatUSD(tdsSavingInr / rate)})` : ''} saved.
                   </InsightItem>
                 )}
                 {pfics.length > 0 && (
@@ -911,10 +915,15 @@ const CATEGORY_ICONS: Record<AccountCategory, React.ReactNode> = {
  * old nested layout: an asset shows its equity-after-loans; a loan shows what it's
  * secured against.
  */
-function securedNote(a: Holding, accounts: Holding[], rate: number): string | undefined {
+function securedNote(
+  a: Holding,
+  accounts: Holding[],
+  rate: number,
+  money: (usd: number) => string,
+): string | undefined {
   if (!isLiability(a)) {
     if (a.id && loansSecuredBy(a.id, accounts).length > 0) {
-      return `${formatUSD(assetEquity(a, accounts, rate))} equity`
+      return `${money(assetEquity(a, accounts, rate))} equity`
     }
     return undefined
   }
@@ -962,6 +971,9 @@ function AccountGroup({
   /** Opens the prepay-vs-invest calculator for a loan. */
   onPrepay: (h: Holding) => void
 }) {
+  // Every figure in the card follows the currency view (USD / ₹ / lakhs-crore).
+  const { mode } = useCurrency()
+  const money = (usd: number) => formatAmount(usd, mode, rate)
   const { flag, name, color } = COUNTRY_META[country]
   const [activeSlice, setActiveSlice] = useState<number | null>(null)
   const total = accounts.reduce((s, h) => s + usdValue(h, rate), 0)
@@ -1066,7 +1078,7 @@ function AccountGroup({
                 <span className="ml-auto tabular-nums font-semibold tabular-nums">{s.pct.toFixed(0)}%</span>
               </div>
               <p className="mt-0.5 pl-3.5 tabular-nums text-[11px] tabular-nums text-muted-foreground">
-                {formatUSD(s.usd)}
+                {money(s.usd)}
               </p>
             </div>
           ))}
@@ -1079,24 +1091,24 @@ function AccountGroup({
               <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                 Liabilities
               </span>
-              <span className="tabular-nums text-[12px] font-semibold text-danger">−{formatUSD(debtUsd)}</span>
+              <span className="tabular-nums text-[12px] font-semibold text-danger">−{money(debtUsd)}</span>
             </div>
             <div className="grid grid-cols-2 gap-x-5 gap-y-1.5 sm:grid-cols-3">
               {debtSlices.map((l) => (
                 <div key={l.key} className="flex items-center gap-1.5 text-[13px]">
                   <span className="size-2 shrink-0 rounded-[4px]" style={{ background: l.colorVar }} />
                   <span className="truncate font-medium">{l.label}</span>
-                  <span className="ml-auto tabular-nums text-[11px] text-muted-foreground">−{formatUSD(l.usd)}</span>
+                  <span className="ml-auto tabular-nums text-[11px] text-muted-foreground">−{money(l.usd)}</span>
                 </div>
               ))}
             </div>
             {/* Reconciliation — assets − debt = this country's net worth */}
             <div className="mt-3 flex flex-wrap items-center justify-end gap-x-1.5 gap-y-1 border-t border-border/40 pt-2.5 text-[12px] text-muted-foreground">
-              <span className="tabular-nums">{formatUSD(assetsUsd)} assets</span>
+              <span className="tabular-nums">{money(assetsUsd)} assets</span>
               <span>−</span>
-              <span className="tabular-nums text-danger">{formatUSD(debtUsd)} debt</span>
+              <span className="tabular-nums text-danger">{money(debtUsd)} debt</span>
               <span>=</span>
-              <span className="tabular-nums font-semibold text-foreground">{formatUSD(total)} net worth</span>
+              <span className="tabular-nums font-semibold text-foreground">{money(total)} net worth</span>
             </div>
           </div>
         )}
@@ -1137,7 +1149,7 @@ function AccountGroup({
                       color={color}
                       rate={rate}
                       accountToGoal={accountToGoal}
-                      note={securedNote(a, accounts, rate)}
+                      note={securedNote(a, accounts, rate, money)}
                       focused={!!a.id && a.id === focusedId}
                       onEdit={onEdit}
                       onDelete={onDelete}
@@ -1233,7 +1245,7 @@ function AccountRow({
               {ownershipLabel(a)}
             </span>
           )}
-          {a.id && accountToGoal.has(a.id) && (
+          {a.id && accountToGoal.has(a.id) && isGoalFundingAccount(a) && (
             <span
               className="inline-flex shrink-0 items-center gap-1 rounded bg-brand/10 px-1.5 py-px text-[10.5px] font-medium text-brand"
               title={`Funds your “${accountToGoal.get(a.id)}” goal`}
@@ -1522,6 +1534,8 @@ function AccountDialog({
   onClose: () => void
   onSave: (h: Holding) => void
 }) {
+  const { mode } = useCurrency()
+  const money = (usd: number) => formatAmount(usd, mode, rate)
   const isEdit = !!initial
   const [country, setCountry] = useState<'US' | 'IN'>(initial?.country ?? 'US')
   const [kind, setKind] = useState<'asset' | 'liability'>(initial && isLiability(initial) ? 'liability' : 'asset')
@@ -1530,7 +1544,7 @@ function AccountDialog({
   const [accountType, setAccountType] = useState<AccountType>(initial?.accountType ?? 'checking')
   const [amount, setAmount] = useState(() =>
     initial
-      ? String(Math.round(initial.country === 'US' ? initial.balanceUsd : initial.balanceInr))
+      ? String(Math.round(entryAmount(initial, rate)))
       : '',
   )
   // ── Instrument-specific detail fields (only some surface per country × type) ──
@@ -1550,7 +1564,8 @@ function AccountDialog({
   useEscape(onClose)
 
   const liability = kind === 'liability'
-  const cur = country === 'US' ? 'USD' : 'INR'
+  // FCNR is held in foreign currency, so it's entered in dollars even in India.
+  const cur = entryCurrency(country, accountType)
   const assetTypes = country === 'US' ? US_TYPES : IN_TYPES
   const liabilityTypes = country === 'US' ? US_LIABILITY_TYPES : IN_LIABILITY_TYPES
   const types = liability ? liabilityTypes : assetTypes
@@ -1563,7 +1578,7 @@ function AccountDialog({
   const canSecure = SECURABLE_ASSET_TYPES.has(accountType)
   const editingAssetId = isEdit && !liability && canSecure ? initial?.id : undefined
   const loanOptions = editingAssetId ? holdings.filter((h) => isLiability(h) && h.id) : []
-  const assetUsdNow = country === 'US' ? Number(amount || 0) : Number(amount || 0) / rate
+  const assetUsdNow = balancesFromEntry(country, accountType, Number(amount || 0), rate).balanceUsd
   const linkedLoansUsd = loanOptions
     .filter((l) => l.securedAgainstId === editingAssetId)
     .reduce((s, l) => s + Math.abs(usdValue(l, rate)), 0)
@@ -1597,8 +1612,7 @@ function AccountDialog({
       institution: institution.trim(),
       accountType,
       country,
-      balanceUsd: country === 'US' ? amt : amt / rate,
-      balanceInr: country === 'US' ? amt * rate : amt,
+      ...balancesFromEntry(country, accountType, amt, rate),
       isPfic: !liability && country === 'IN' && accountType === 'mutual_fund',
       source: initial?.source ?? 'manual',
       kind,
@@ -1778,6 +1792,13 @@ function AccountDialog({
                 className={cn(inputCls, 'h-11 pl-8 text-base tabular-nums')}
               />
             </div>
+            {spec.depositCurrency && (
+              <p className="mt-1.5 text-[11.5px] text-muted-foreground">
+                {depositCurrency === 'USD'
+                  ? 'In US dollars, as the deposit is held.'
+                  : `In US dollars: enter your ${depositCurrency} deposit's dollar value (we convert USD ↔ INR only).`}
+              </p>
+            )}
           </Field>
           {accountType === 'mutual_fund' && (
             <p className="flex items-start gap-2 rounded-xl bg-warning-muted/60 px-3 py-2.5 text-[13px] leading-snug text-warning ring-1 ring-warning/20">
@@ -1902,7 +1923,7 @@ function AccountDialog({
                     ))}
                   </select>
                   <span className="text-[11px] text-muted-foreground">
-                    FCNR deposits are held in foreign currency, not INR.
+                    FCNR deposits are held in foreign currency, not INR, so the balance is in dollars.
                   </span>
                 </Field>
               )}
@@ -1946,7 +1967,7 @@ function AccountDialog({
                 {linkedLoansUsd > 0 && (
                   <span className="text-[12px] text-muted-foreground">
                     Equity{' '}
-                    <span className="font-semibold text-foreground tabular-nums">{formatUSD(equityPreview)}</span>
+                    <span className="font-semibold text-foreground tabular-nums">{money(equityPreview)}</span>
                   </span>
                 )}
               </div>
@@ -1977,7 +1998,7 @@ function AccountDialog({
                         {elsewhere && <span className="ml-1 text-[11px] text-muted-foreground">(linked elsewhere)</span>}
                       </span>
                       <span className="shrink-0 text-[12px] font-medium tabular-nums text-danger">
-                        −{formatUSD(Math.abs(usdValue(loan, rate)))}
+                        −{money(Math.abs(usdValue(loan, rate)))}
                       </span>
                     </label>
                   )

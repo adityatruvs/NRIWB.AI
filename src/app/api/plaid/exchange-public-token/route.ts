@@ -4,7 +4,7 @@ import { encrypt } from '@/lib/crypto'
 import { requireUserId, unauthorized, UnauthorizedError } from '@/lib/auth'
 import { plaidAccountFields, type PlaidAccountInput } from '@/lib/plaid-map'
 import { toHolding } from '@/lib/accounts-api'
-import { getFxSnapshot } from '@/lib/fx'
+import { resolveRate } from '@/lib/user-context'
 import { writeDailySnapshot } from '@/lib/snapshots'
 
 export const runtime = 'nodejs'
@@ -29,7 +29,7 @@ export async function POST(request: Request) {
     typeof body?.institutionName === 'string' && body.institutionName.trim()
       ? body.institutionName.trim()
       : 'Bank'
-  const rate = Number(body?.rate) > 0 ? Number(body.rate) : (await getFxSnapshot()).rate
+  const rate = await resolveRate(body?.rate)
 
   const { data: tokenData } = await plaidClient.itemPublicTokenExchange({ public_token })
   const { access_token, item_id } = tokenData

@@ -7,7 +7,7 @@ vi.mock('@/lib/prisma', () => ({
   prisma: { fxRate: { findUnique: (...args: unknown[]) => findUnique(...args), upsert: (...args: unknown[]) => upsert(...args) } },
 }))
 
-const { refreshFxRate, getFxSnapshot, FX_PAIR, FX_FALLBACK_RATE, FX_STALE_AFTER_MS } = await import('./fx')
+const { refreshFxRate, getFxSnapshot, FX_PAIR, FX_STALE_AFTER_MS, FxUnavailableError } = await import('./fx')
 
 const NOW = new Date('2026-09-25T12:00:00.000Z')
 
@@ -41,7 +41,9 @@ describe('fx', () => {
 
       const snapshot = await refreshFxRate()
 
-      expect(global.fetch).toHaveBeenCalledWith('https://v6.exchangerate-api.com/v6/test-key/pair/USD/INR')
+      expect(global.fetch).toHaveBeenCalledWith('https://v6.exchangerate-api.com/v6/test-key/pair/USD/INR', {
+        signal: expect.any(AbortSignal), // bounded, so a hung provider falls back to the saved rate
+      })
       expect(upsert).toHaveBeenCalledWith({
         where: { pair: FX_PAIR },
         update: { rate: 88.12 },
@@ -85,6 +87,15 @@ describe('fx', () => {
       expect(global.fetch).not.toHaveBeenCalled()
     })
 
+    it('reuses a rate saved earlier today (20h ago) without calling the provider — refresh is daily', async () => {
+      const earlier = new Date(NOW.getTime() - 20 * 60 * 60 * 1000)
+      findUnique.mockResolvedValue({ rate: 95.3, updatedAt: earlier })
+      global.fetch = vi.fn() as unknown as typeof fetch
+
+      expect(await getFxSnapshot()).toEqual({ rate: 95.3, updatedAt: earlier.toISOString(), source: 'cached' })
+      expect(global.fetch).not.toHaveBeenCalled()
+    })
+
     it('refreshes from the provider when the cached row is stale', async () => {
       const stale = new Date(NOW.getTime() - FX_STALE_AFTER_MS - 1000)
       findUnique.mockResolvedValue({ rate: 83.9, updatedAt: stale })
@@ -117,23 +128,29 @@ describe('fx', () => {
       expect(snapshot).toEqual({ rate: 90.1, updatedAt: NOW.toISOString(), source: 'live' })
     })
 
-    it('falls back to the hardcoded rate when there is no row AND the provider fails', async () => {
+    it('never invents a rate: no saved row AND the provider fails → FxUnavailableError', async () => {
       findUnique.mockResolvedValue(null)
       global.fetch = vi.fn().mockRejectedValue(new Error('network down')) as unknown as typeof fetch
 
-      const snapshot = await getFxSnapshot()
-
-      expect(snapshot).toEqual({ rate: FX_FALLBACK_RATE, updatedAt: null, source: 'fallback' })
+      await expect(getFxSnapshot()).rejects.toBeInstanceOf(FxUnavailableError)
       expect(upsert).not.toHaveBeenCalled()
     })
 
-    it('falls back to the hardcoded rate when the database itself is unreachable and the provider also fails', async () => {
+    it('never invents a rate when the database is unreachable and the provider also fails', async () => {
       findUnique.mockRejectedValue(new Error('connect ECONNREFUSED'))
       global.fetch = vi.fn().mockRejectedValue(new Error('network down')) as unknown as typeof fetch
 
+      await expect(getFxSnapshot()).rejects.toBeInstanceOf(FxUnavailableError)
+    })
+
+    it('still uses a fetched live rate when saving it fails', async () => {
+      findUnique.mockResolvedValue(null)
+      upsert.mockRejectedValue(new Error('connect ECONNREFUSED'))
+      global.fetch = vi.fn().mockResolvedValue(okProviderResponse(95.1)) as unknown as typeof fetch
+
       const snapshot = await getFxSnapshot()
 
-      expect(snapshot).toEqual({ rate: FX_FALLBACK_RATE, updatedAt: null, source: 'fallback' })
+      expect(snapshot).toEqual({ rate: 95.1, updatedAt: NOW.toISOString(), source: 'live' })
     })
 
     it('recovers with a live rate when the cached read fails but the provider succeeds', async () => {

@@ -33,12 +33,25 @@ describe('CurrencyProvider', () => {
     vi.useRealTimers()
   })
 
-  it('starts from the hardcoded fallback before the first /api/fx response resolves', () => {
+  it('never shows a made-up rate: with no server rate it waits for /api/fx', () => {
     global.fetch = vi.fn(() => new Promise(() => {})) as unknown as typeof fetch // never resolves
 
     renderProbe()
 
-    expect(screen.getByTestId('rate').textContent).toBe('83.5')
+    expect(screen.queryByTestId('rate')).toBeNull()
+    expect(screen.getByRole('status').textContent).toMatch(/live USD \/ INR rate/)
+  })
+
+  it('uses the live rate the server passed in from the first render', () => {
+    global.fetch = vi.fn(() => new Promise(() => {})) as unknown as typeof fetch
+
+    render(
+      <CurrencyProvider initialRate={95.1} initialUpdatedAt="2026-10-06T09:00:00.000Z">
+        <Probe />
+      </CurrencyProvider>,
+    )
+
+    expect(screen.getByTestId('rate').textContent).toBe('95.1')
   })
 
   it('adopts the server snapshot once /api/fx resolves', async () => {
@@ -61,12 +74,16 @@ describe('CurrencyProvider', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
 
     await act(async () => {
-      renderProbe()
+      render(
+        <CurrencyProvider initialRate={94.8}>
+          <Probe />
+        </CurrencyProvider>,
+      )
       await Promise.resolve()
     })
 
     expect(global.fetch).toHaveBeenCalledTimes(1)
-    expect(screen.getByTestId('rate').textContent).toBe('83.5')
+    expect(screen.getByTestId('rate').textContent).toBe('94.8')
     expect(console.error).toHaveBeenCalled()
   })
 

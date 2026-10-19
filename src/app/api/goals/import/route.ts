@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma'
+import { isGoalFundingAccount, type Holding } from '@/lib/portfolio'
 import { requireUserId, unauthorized, UnauthorizedError } from '@/lib/auth'
 import { importGoalsSchema, prepareImport, toCreateData, toGoal, formatZodError } from '@/lib/goals-api'
 
@@ -32,9 +33,11 @@ export async function POST(request: Request) {
 
   const [existing, accounts] = await Promise.all([
     prisma.goal.findMany({ where: { userId } }),
-    prisma.account.findMany({ where: { userId }, select: { id: true } }),
+    prisma.account.findMany({ where: { userId }, select: { id: true, kind: true, accountType: true } }),
   ])
-  const inputs = prepareImport(parsed.data.goals, existing, new Set(accounts.map((a) => a.id)))
+  // Only accounts that can fund a goal may be linked (no loans, property or vehicles).
+  const fundable = accounts.filter((a) => isGoalFundingAccount(a as Pick<Holding, 'kind' | 'accountType'>))
+  const inputs = prepareImport(parsed.data.goals, existing, new Set(fundable.map((a) => a.id)))
 
   const created = inputs.length
     ? await prisma.$transaction(inputs.map((g) => prisma.goal.create({ data: toCreateData(g, userId) })))

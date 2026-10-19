@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/prisma'
 import { requireUserId, unauthorized, UnauthorizedError } from '@/lib/auth'
 import { toHolding } from '@/lib/accounts-api'
-import { getFxSnapshot } from '@/lib/fx'
+import { resolveRate } from '@/lib/user-context'
 import { syncPlaidItem } from '@/lib/plaid-sync'
 
 export const runtime = 'nodejs'
@@ -21,7 +21,7 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json().catch(() => null)
-  const rate = Number(body?.rate) > 0 ? Number(body.rate) : (await getFxSnapshot()).rate
+  const rate = await resolveRate(body?.rate)
   const onlyItemId: string | null = typeof body?.item_id === 'string' ? body.item_id : null
 
   // Every non-disconnected linked institution for this user (scoped — never trust a client id).

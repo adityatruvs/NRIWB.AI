@@ -598,10 +598,23 @@ export default function AnalyzerPage() {
             title="Your allocation"
             subtitle={
               donutView === 'current'
-                ? 'Showing current vs target — ± from your target per asset'
-                : 'Drag, or use ± — toggle Current (left) to compare to your holdings'
+                ? 'What you hold now vs your target — +/− is the shift to reach it'
+                : 'Drag a slider or use − / + to set your target mix'
             }
             icon={<PieChart size={15} />}
+            action={
+              // The compare switch lives on the donut card, which isn't always to
+              // the left (it stacks on narrow screens) — so offer it right here.
+              hasHoldings ? (
+                <button
+                  type="button"
+                  onClick={() => setDonutView(donutView === 'current' ? 'target' : 'current')}
+                  className="btn-ghost shrink-0 rounded-lg px-2.5 py-1.5 text-[12px] font-medium"
+                >
+                  {donutView === 'current' ? 'Back to target' : 'Compare with my holdings'}
+                </button>
+              ) : null
+            }
           />
           <div className="flex flex-col gap-4">
             {buckets.map((b) => (

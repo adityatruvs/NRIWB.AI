@@ -4,6 +4,7 @@
  * client data. One parallel batch keeps the added latency to a single round-trip.
  */
 
+import { getFxSnapshot } from '@/lib/fx'
 import { clerkClient } from '@clerk/nextjs/server'
 import { prisma } from '@/lib/prisma'
 import { toHolding } from '@/lib/accounts-api'
@@ -30,17 +31,15 @@ export interface UserContext {
   demo: boolean
 }
 
-/** Fallback USD/INR until the live FX service (F-02) provides a server rate. */
-export const DEFAULT_USD_INR = 83
-
 /**
- * The client-sent rate, kept only until the FX service lands. Anything outside a
- * sane band (or missing) falls back to the default, so a crafted rate can't skew
- * the numbers the model sees.
+ * The USD/INR rate for a request: the client's rate (the live one it got from
+ * /api/fx, so server numbers match the screen) when it's in a sane band, else the
+ * live rate itself. A crafted or missing rate never falls back to a fixed number.
  */
-export function parseRate(value: unknown): number {
+export async function resolveRate(value: unknown): Promise<number> {
   const n = Number(value)
-  return Number.isFinite(n) && n >= 50 && n <= 150 ? n : DEFAULT_USD_INR
+  if (value != null && value !== '' && Number.isFinite(n) && n >= 50 && n <= 150) return n
+  return (await getFxSnapshot()).rate
 }
 
 async function loadProfile(userId: string) {
@@ -79,7 +78,7 @@ export async function loadUserContext(userId: string, opts: { demo?: boolean } =
     loadProfile(userId),
     prisma.balanceSnapshot.findMany({
       where: { account: { userId, country: 'IN' }, recordedAt: { gte: yearStart } },
-      select: { accountId: true, day: true, recordedAt: true, balanceInr: true },
+      select: { accountId: true, day: true, recordedAt: true, balanceInr: true, balanceUsd: true },
     }),
   ])
   const budget = toBudget(budgetRow)
@@ -94,6 +93,7 @@ export async function loadUserContext(userId: string, opts: { demo?: boolean } =
       accountId: s.accountId,
       day: (s.day ?? s.recordedAt).toISOString().slice(0, 10),
       balanceInr: s.balanceInr,
+      balanceUsd: s.balanceUsd,
     })),
     demo: false,
   }

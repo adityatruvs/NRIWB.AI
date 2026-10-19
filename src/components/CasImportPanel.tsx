@@ -3,6 +3,7 @@
 import { useRef, useState } from 'react'
 import { UploadCloud, AlertTriangle, Loader2, X } from 'lucide-react'
 import { useAccounts } from '@/context/AccountsContext'
+import { useCurrency } from '@/context/CurrencyContext'
 import {
   ProposalCard,
   resolveProposal,
@@ -29,6 +30,7 @@ type Stage =
 
 export function CasImportPanel({ onClose, onManual }: { onClose: () => void; onManual: () => void }) {
   const { holdings, addManual } = useAccounts()
+  const { rate } = useCurrency()
   const [stage, setStage] = useState<Stage>({ kind: 'upload' })
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -48,7 +50,7 @@ export function CasImportPanel({ onClose, onManual }: { onClose: () => void; onM
       const items = (data.proposals ?? [])
         .map((p): ReviewItem | null => {
           const raw: RawProposal = { type: 'add_account', summary: p.summary, account: p.account }
-          const ep = resolveProposal(raw, { holdings, goals: [], categories: [], currentYear: new Date().getFullYear() })
+          const ep = resolveProposal(raw, { holdings, goals: [], categories: [], currentYear: new Date().getFullYear(), rate })
           return ep ? { pid: crypto.randomUUID(), ep, status: 'pending' } : null
         })
         .filter((x): x is ReviewItem => x !== null)
@@ -69,7 +71,7 @@ export function CasImportPanel({ onClose, onManual }: { onClose: () => void; onM
   }
 
   function toImportedHolding(account: AccountFields) {
-    return { ...accountToHolding(account), source: 'pdf_upload' as const }
+    return { ...accountToHolding(account, rate), source: 'pdf_upload' as const }
   }
 
   function accept(item: ReviewItem) {

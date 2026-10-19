@@ -1,6 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { requireUserId, unauthorized, UnauthorizedError } from '@/lib/auth'
-import { getFxSnapshot } from '@/lib/fx'
 import { AI_MODEL, AI_QUICK } from '@/lib/ai'
 import {
   netWorth,
@@ -15,14 +14,16 @@ import {
   TYPE_LABELS,
   FBAR_THRESHOLD_USD,
   fbarBasisPhrase,
-  FATCA_THRESHOLD_USD,
+  fatcaAssetsUsd,
+  fatcaLine,
   type Holding,
   type ComplianceLevel,
 } from '@/lib/portfolio'
 
-import { loadUserContext, parseRate } from '@/lib/user-context'
+import { loadUserContext, resolveRate } from '@/lib/user-context'
 import { ATTENTION_KEYS, isAttentionKey, withHrefs } from '@/lib/attention-links'
 import { recordedFbarPeak, type FbarSnapshot } from '@/lib/fbar'
+import { datePromptBlock, resolveToday } from '@/lib/deadlines'
 
 export const runtime = 'nodejs'
 
@@ -33,6 +34,8 @@ const MODEL = AI_MODEL
 interface InsightsRequest {
   rate?: number
   demo?: boolean
+  /** The browser's local date, YYYY-MM-DD. */
+  today?: string
 }
 
 interface Insight {
@@ -48,15 +51,13 @@ const usd = (n: number) =>
   new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n)
 
 /** Compact, factual snapshot of the user's portfolio for the model to reason over. */
-function buildContext(holdings: Holding[], rate: number, fbarSnapshots: FbarSnapshot[]): string {
+function buildContext(holdings: Holding[], rate: number, fbarSnapshots: FbarSnapshot[], today: Date): string {
   const nw = netWorth(holdings, rate)
-  const fbar = fbarStatus(holdings, rate, recordedFbarPeak(holdings, fbarSnapshots, rate, new Date().getUTCFullYear()))
+  const fbar = fbarStatus(holdings, rate, recordedFbarPeak(holdings, fbarSnapshots, rate, today.getUTCFullYear()))
   const pfics = pficHoldings(holdings)
   const assets = byAssetClass(holdings, rate)
-  // FATCA reports gross foreign assets, not net of India debt.
-  const indiaAssetsUsd = holdings
-    .filter((h) => h.country === 'IN' && !isLiability(h))
-    .reduce((s, h) => s + h.balanceInr / rate, 0)
+  // FATCA counts foreign *financial* assets, gross: no property, vehicles or debts.
+  const fatcaUsd = fatcaAssetsUsd(holdings, rate)
 
   const accountLines = holdings
     .map((h) => {
@@ -74,10 +75,12 @@ function buildContext(holdings: Holding[], rate: number, fbarSnapshots: FbarSnap
 
   const assetLines = assets.map((a) => `- ${a.label}: ${usd(a.usd)} (${a.pct.toFixed(0)}%)`).join('\n')
 
-  return `Net worth: ${usd(nw.totalUsd)} — US ${usd(nw.usUsd)} (${nw.usPct}%), India ${usd(nw.inUsd)} (${nw.inPct}%)${nw.liabilitiesUsd > 0 ? `\nGross: ${usd(nw.assetsUsd)} assets less ${usd(nw.liabilitiesUsd)} liabilities` : ''}
+  return `${datePromptBlock(today)}
+
+Net worth: ${usd(nw.totalUsd)} — US ${usd(nw.usUsd)} (${nw.usPct}%), India ${usd(nw.inUsd)} (${nw.inPct}%)${nw.liabilitiesUsd > 0 ? `\nGross: ${usd(nw.assetsUsd)} assets less ${usd(nw.liabilitiesUsd)} liabilities` : ''}
 FX: 1 USD = ₹${rate.toFixed(2)}
 FBAR: ${fbarBasisPhrase(fbar)}${fbar.basis === 'current' ? ' (no balance history recorded this year, so the true yearly maximum is unknown and may be higher)' : ''} vs the ${usd(FBAR_THRESHOLD_USD)} threshold — ${fbar.crossed ? 'CROSSED, filing required' : `${Math.round(fbar.pctOfThreshold)}% of the limit`}
-FATCA: Form 8938 threshold is ${usd(FATCA_THRESHOLD_USD)} in foreign (India) assets; user holds ${usd(indiaAssetsUsd)} there
+FATCA: ${fatcaLine(fatcaUsd)}
 PFIC holdings: ${pfics.length > 0 ? pfics.map((p) => p.nickname).join(', ') : 'none'}
 
 Asset allocation:
@@ -100,7 +103,9 @@ Rules:
 - "title": short label, e.g. "FBAR — FinCEN 114" or "India allocation drift". Max ~40 chars.
 - "detail": one or two sentences grounded in the user's REAL numbers and account names. Max ~160 chars.
 - "meta": the concrete next step or deadline, e.g. "Due Apr 15 (auto-ext. Oct 15)" or "Rebalance suggested". Max ~40 chars.
-- "level": "overdue" for missed or required-now filings; "attention" for things to act on soon. If something is fine, simply omit it (do not return "ok" items).
+- Dates: use today's date and the dated deadline list above; never guess the date. A deadline counts as passed only if its final date, including automatic extensions, is before today.
+- "level": "overdue" ONLY for a filing whose deadline has already passed; "attention" for anything to act on, including filings that are required but not yet due. If something is fine, simply omit it (do not return "ok" items).
+- FATCA figures: use ONLY the FATCA line above; never add property, vehicles or other India assets to it.
 - FBAR figures: use ONLY the FBAR line above. Never state, estimate or round up a "peak" or "maximum" balance that isn't given there. When it says current balances, call it the current balance and note that FBAR counts each account's highest balance during the year, which the app hasn't recorded.
 - Be specific and useful. Never invent facts not supported by the data. You inform; you do not give personalized tax, legal, or investment advice.`
 
@@ -171,7 +176,7 @@ export async function POST(req: Request) {
     return Response.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const rate = body.rate ? parseRate(body.rate) : (await getFxSnapshot()).rate
+  const rate = await resolveRate(body.rate)
   let holdings: Holding[]
   let fbarSnapshots: FbarSnapshot[]
   try {
@@ -182,7 +187,8 @@ export async function POST(req: Request) {
   }
 
   // Rule-based items are the always-available fallback if AI is unavailable.
-  const recorded = recordedFbarPeak(holdings, fbarSnapshots, rate, new Date().getUTCFullYear())
+  const today = resolveToday(body.today)
+  const recorded = recordedFbarPeak(holdings, fbarSnapshots, rate, today.getUTCFullYear())
   const fallback = (): Insight[] => withHrefs(complianceItems(holdings, rate, recorded), holdings)
 
   if (holdings.length === 0) {
@@ -195,7 +201,7 @@ export async function POST(req: Request) {
       max_tokens: 4000,
       ...AI_QUICK,
       system: SYSTEM,
-      messages: [{ role: 'user', content: buildContext(holdings, rate, fbarSnapshots) }],
+      messages: [{ role: 'user', content: buildContext(holdings, rate, fbarSnapshots, today) }],
     })
     const text = resp.content
       .map((b) => (b.type === 'text' ? b.text : ''))

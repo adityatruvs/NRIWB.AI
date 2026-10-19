@@ -115,6 +115,22 @@ describe('/api/copilot grounding', () => {
     expect(sdk.system[0]).not.toContain('Swiss Vault')
   })
 
+  it('formats figures in the chosen currency (₹ lakhs) but keeps FBAR/FATCA in dollars', async () => {
+    await copilot(post({ ...fabricated, mode: 'inr_lakhs', today: '2026-10-06' }))
+    const system = sdk.system[0]
+    expect(system).toContain('Display currency: Indian rupees, lakh/crore style')
+    expect(system).toContain('₹10.49L') // Chase Checking $12,345 × 85
+    expect(system).not.toContain('$12,345')
+    expect(system).toContain('vs the $10,000 threshold') // FBAR stays in $
+    expect(system).toMatch(/Form 8938 total \$0 /) // FATCA stays in $
+  })
+
+  it('defaults to dollars for a missing or unknown currency view', async () => {
+    await copilot(post({ ...fabricated, mode: 'yen' }))
+    expect(sdk.system[0]).toContain('Display currency: US dollars')
+    expect(sdk.system[0]).toContain('$12,345')
+  })
+
   it('passes the demo flag through to the loader', async () => {
     await copilot(post({ ...fabricated, demo: true }))
     expect(stored.calls[0]).toEqual(['user_real', { demo: true }])
@@ -214,13 +230,14 @@ describe('/api/insights grounding', () => {
   })
 })
 
-describe('parseRate', async () => {
-  const { parseRate, DEFAULT_USD_INR } = await import('@/lib/user-context')
-  it('keeps a sane client rate and rejects the rest', () => {
-    expect(parseRate(84.2)).toBe(84.2)
-    expect(parseRate(10)).toBe(DEFAULT_USD_INR)
-    expect(parseRate(500)).toBe(DEFAULT_USD_INR)
-    expect(parseRate('abc')).toBe(DEFAULT_USD_INR)
-    expect(parseRate(undefined)).toBe(DEFAULT_USD_INR)
+describe('resolveRate', async () => {
+  const fx = await import('@/lib/fx')
+  const { resolveRate } = await import('@/lib/user-context')
+  it('keeps a sane client rate; anything else gets the live rate, never a fixed one', async () => {
+    const live = vi.spyOn(fx, 'getFxSnapshot').mockResolvedValue({ rate: 95.2, updatedAt: null, source: 'cached' })
+    expect(await resolveRate(84.2)).toBe(84.2)
+    expect(live).not.toHaveBeenCalled()
+    for (const bad of [10, 500, 'abc', undefined, null, '']) expect(await resolveRate(bad)).toBe(95.2)
+    live.mockRestore()
   })
 })

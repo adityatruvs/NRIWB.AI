@@ -4,7 +4,7 @@
  * same fields (interest rate, maturity date, TDS, …) for the same account.
  */
 
-import { LIABILITY_TYPES, TYPE_LABELS } from '@/lib/portfolio'
+import { LIABILITY_TYPES, TYPE_LABELS, grossUsd, isUsdNative } from '@/lib/portfolio'
 import type { AccountType } from '@/types/accounts'
 
 /* ── Type choices ─────────────────────────────────────────────────────────────
@@ -19,7 +19,7 @@ export type TypeChoice = AccountType | 'fd_nre' | 'fd_nro'
 
 /** India asset choices for the pickers, in display order. */
 export const IN_ASSET_CHOICES: TypeChoice[] = [
-  'nre', 'nro', 'fd_nre', 'fd_nro', 'fcnr', 'mutual_fund', 'property', 'gold', 'vehicle', 'notes_receivable', 'other',
+  'nre', 'nro', 'fd_nre', 'fd_nro', 'fcnr', 'mutual_fund', 'brokerage', 'property', 'gold', 'vehicle', 'notes_receivable', 'other',
 ]
 
 /** The picker choice for a stored type + scheme. A legacy India fd without a scheme reads as NRE. */
@@ -153,4 +153,39 @@ export function detailSpec(
     goldToggle,
     any,
   }
+}
+
+/* ── Entry currency ───────────────────────────────────────────────────────────
+ * An FCNR deposit is held in a foreign currency, not rupees. The app only has
+ * USD↔INR rates, so its balance is entered in US dollars (for a GBP/EUR/… deposit,
+ * its dollar value). Everything else is entered in the country's own currency.
+ */
+
+/** The currency a balance is typed in for this country × type. */
+export function entryCurrency(country: 'US' | 'IN', accountType: AccountType): 'USD' | 'INR' {
+  return isUsdNative({ country, accountType }) ? 'USD' : 'INR'
+}
+
+/** Both stored balances from an amount typed in the entry currency. */
+export function balancesFromEntry(
+  country: 'US' | 'IN',
+  accountType: AccountType,
+  amount: number,
+  rate: number,
+): { balanceUsd: number; balanceInr: number } {
+  return entryCurrency(country, accountType) === 'USD'
+    ? { balanceUsd: amount, balanceInr: amount * rate }
+    : { balanceUsd: amount / rate, balanceInr: amount }
+}
+
+/**
+ * A saved balance shown back in its entry currency (for editing). With `rate`, an
+ * older FCNR row that has only rupees is shown as its dollar value.
+ */
+export function entryAmount(
+  h: { country: 'US' | 'IN'; accountType: AccountType; balanceUsd: number; balanceInr: number },
+  rate?: number,
+): number {
+  if (entryCurrency(h.country, h.accountType) === 'INR') return h.balanceInr
+  return rate ? grossUsd(h, rate) : h.balanceUsd
 }

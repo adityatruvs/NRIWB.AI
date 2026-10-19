@@ -1,9 +1,11 @@
 import { prisma } from '@/lib/prisma'
 import { releaseClaims, linkRuleError } from '@/lib/goals-api'
+import { NON_FUNDING_TYPES } from '@/lib/portfolio'
 
 /**
  * Why a goal's links are invalid, or null. Funding accounts must all be the
- * user's own *assets* (a loan never reduces a savings goal); a debt-payoff goal
+ * user's own cash, deposit or investment *assets* (a loan never reduces a savings
+ * goal, and a flat or car isn't spent toward one); a debt-payoff goal
  * must link one of the user's own *liabilities*. `isNew`: a debt goal being
  * created must have a loan (an existing one may have lost it to a deletion).
  * `alreadyLinked`: ids the goal linked before this write — kept even if one is a
@@ -21,8 +23,12 @@ export async function goalLinksError(
   const kept = new Set(alreadyLinked)
   const ids = Array.from(new Set(g.linkedAccountIds)).filter((i) => !kept.has(i))
   if (ids.length > 0) {
-    const assets = await prisma.account.count({ where: { userId, id: { in: ids }, kind: 'asset' } })
-    if (assets !== ids.length) return 'linkedAccountIds must all reference your own asset accounts'
+    const assets = await prisma.account.count({
+      where: { userId, id: { in: ids }, kind: 'asset', accountType: { notIn: [...NON_FUNDING_TYPES] } },
+    })
+    if (assets !== ids.length) {
+      return 'linkedAccountIds must all reference your own cash, deposit or investment accounts (not loans, property or vehicles)'
+    }
   }
   if (g.category === 'debt') {
     if (!g.linkedLiabilityId) return isNew ? 'linkedLiabilityId: a debt payoff goal needs a loan' : null

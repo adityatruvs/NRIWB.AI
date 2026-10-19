@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import {
   IN_ASSET_CHOICES,
+  balancesFromEntry,
+  entryAmount,
+  entryCurrency,
   fdRetypePatch,
   fromTypeChoice,
   mistypedFdScheme,
@@ -8,6 +11,7 @@ import {
   typeChoiceLabel,
 } from '@/lib/account-details'
 import { byAssetClass, type Holding } from '@/lib/portfolio'
+import { accountToHolding } from '@/components/copilot/ProposalCard'
 
 // Regression: an "HDFC NRE FD" typed `nre` was filed under Cash & Banking while
 // other FDs sat under Fixed Deposits. The pickers now offer each FD per scheme.
@@ -80,5 +84,34 @@ describe('fdRetypePatch (one-off migration)', () => {
   it('returns null for rows that look right', () => {
     expect(fdRetypePatch({ ...row, nickname: 'HDFC NRE Savings' })).toBeNull()
     expect(fdRetypePatch({ ...row, accountType: 'fd' })).toBeNull()
+  })
+})
+
+// Bug: an FCNR deposit "held in USD" was saved as rupees — $50,000 became ₹50,000.
+describe('FCNR balances are entered in US dollars', () => {
+  const RATE = 95
+
+  it('uses dollars for US accounts and India FCNR, rupees for other India accounts', () => {
+    expect(entryCurrency('IN', 'fcnr')).toBe('USD')
+    expect(entryCurrency('US', 'savings')).toBe('USD')
+    expect(entryCurrency('IN', 'fd')).toBe('INR')
+    expect(entryCurrency('IN', 'nre')).toBe('INR')
+  })
+
+  it('$50,000 in an FCNR is stored as $50,000 (₹47.5 lakh at ₹95), and edits back as 50,000', () => {
+    const b = balancesFromEntry('IN', 'fcnr', 50_000, RATE)
+    expect(b).toEqual({ balanceUsd: 50_000, balanceInr: 4_750_000 })
+    expect(entryAmount({ country: 'IN', accountType: 'fcnr', ...b })).toBe(50_000)
+    expect(balancesFromEntry('IN', 'fd', 500_000, RATE)).toEqual({ balanceUsd: 500_000 / RATE, balanceInr: 500_000 })
+  })
+
+  it('a Copilot-proposed FCNR is saved the same way as one added in the dialog', () => {
+    const h = accountToHolding(
+      { nickname: 'ICICI FCNR', institution: 'ICICI Bank', accountType: 'fcnr', country: 'IN', balance: 50_000, kind: 'asset', isPfic: false, depositCurrency: 'USD' },
+      RATE,
+    )
+    expect(h.balanceUsd).toBe(50_000)
+    expect(h.balanceInr).toBe(4_750_000)
+    expect(h.details?.depositCurrency).toBe('USD')
   })
 })

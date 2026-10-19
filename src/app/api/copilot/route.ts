@@ -1,6 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { requireUserId, unauthorized, UnauthorizedError } from '@/lib/auth'
-import { getFxSnapshot } from '@/lib/fx'
 import { AI_MODEL } from '@/lib/ai'
 import {
   netWorth,
@@ -15,14 +14,17 @@ import {
   ownershipLabel,
   FBAR_THRESHOLD_USD,
   fbarBasisPhrase,
-  FATCA_THRESHOLD_USD,
+  fatcaAssetsUsd,
+  fatcaLine,
   type Holding,
 } from '@/lib/portfolio'
 import { portfolioExpectedReturn, expectedReturn } from '@/lib/allocation'
-import { resolveGoal, goalKind, type Goal } from '@/lib/goals'
+import { resolveGoal, goalKind, goalPlan, type Goal, type GoalPlan } from '@/lib/goals'
 import { ACTIONS_PROMPT } from '@/lib/copilot-actions'
-import { loadUserContext, parseRate } from '@/lib/user-context'
+import { loadUserContext, resolveRate } from '@/lib/user-context'
 import { recordedFbarPeak, type FbarSnapshot } from '@/lib/fbar'
+import { datePromptBlock, resolveToday } from '@/lib/deadlines'
+import { formatAmount, type CurrencyMode } from '@/lib/currency'
 
 export const runtime = 'nodejs'
 
@@ -45,10 +47,51 @@ interface CopilotRequest {
   messages: WireMessage[]
   rate?: number
   demo?: boolean
+  /** The browser's local date, YYYY-MM-DD. */
+  today?: string
+  /** The currency view the user picked; the prompt's figures are formatted in it. */
+  mode?: CurrencyMode
 }
 
 const usd = (n: number) =>
   new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n)
+
+/** Formats a USD amount in the user's chosen display currency (see `formatAmount`). */
+type Money = (usdAmount: number) => string
+
+const MODES: CurrencyMode[] = ['usd', 'inr', 'inr_lakhs']
+
+/** One line telling the model which currency the figures are in, so it never converts. */
+function currencyNote(mode: CurrencyMode, rate: number): string {
+  if (mode === 'usd') return 'Display currency: US dollars. Every amount below is already in $.'
+  const style = mode === 'inr_lakhs' ? 'lakh/crore style (e.g. ₹1.31L, ₹1.20Cr)' : 'Indian digit grouping (e.g. ₹1,31,000)'
+  return `Display currency: Indian rupees, ${style}. Every amount below is already in ₹ at 1 USD = ₹${rate.toFixed(2)}, EXCEPT the FBAR and FATCA lines, which stay in US dollars because those forms are filed in dollars.`
+}
+
+/** A goal's plan as the goal card states it, e.g. "; needs ~$1,380/mo for 1 yr at ~4.5%/yr". */
+function planText(p: GoalPlan | undefined, money: Money): string {
+  if (!p) return ''
+  if (p.reached) return '; reached'
+  if (p.yearsLeft <= 0) return '; target year has passed'
+  if (p.onTrack) return `; on track on savings alone at ~${(p.growth * 100).toFixed(1)}%/yr (no monthly saving needed)`
+  return `; needs ~${money(p.monthly)}/mo for ${p.yearsLeft} yr${p.yearsLeft === 1 ? '' : 's'} at ~${(p.growth * 100).toFixed(1)}%/yr`
+}
+
+/** "Can I afford all my goals?" — the sum of the cards' monthly figures vs what the user invests. */
+function affordText(plans: GoalPlan[], monthlyContribution: number, income: number, money: Money): string {
+  const need = plans.reduce((s, p) => s + (p.reached || p.onTrack || p.yearsLeft <= 0 ? 0 : p.monthly), 0)
+  const invests = `the user invests ${money(monthlyContribution)}/mo${income > 0 ? ` of ${money(income)}/mo income` : ''}`
+  const verdict = need <= monthlyContribution ? 'enough to cover them' : `a shortfall of ~${money(need - monthlyContribution)}/mo`
+  return `All goals together need ~${money(need)}/mo; ${invests} — ${verdict}.`
+}
+
+/** "this year", "1 yr away", "3 yrs away", "2 yrs ago" — so the model never does the date math. */
+function yearsAway(targetYear: number, today: Date): string {
+  const n = targetYear - today.getUTCFullYear()
+  if (n === 0) return 'this year'
+  if (n < 0) return `${-n} yr${n === -1 ? '' : 's'} ago`
+  return `${n} yr${n === 1 ? '' : 's'} away`
+}
 
 /**
  * Grounds the copilot in the user's stored portfolio, goals and budget (see
@@ -62,11 +105,16 @@ function buildSystemPrompt(
   age: number | null,
   goals: Goal[],
   fbarSnapshots: FbarSnapshot[],
+  today: Date,
+  mode: CurrencyMode,
 ): string {
+  const money: Money = (n) => formatAmount(n, mode, rate)
   const nw = netWorth(holdings, rate)
-  const fbar = fbarStatus(holdings, rate, recordedFbarPeak(holdings, fbarSnapshots, rate, new Date().getUTCFullYear()))
+  const recorded = recordedFbarPeak(holdings, fbarSnapshots, rate, today.getUTCFullYear())
+  const fbar = fbarStatus(holdings, rate, recorded)
   const pfics = pficHoldings(holdings)
-  const compliance = complianceItems(holdings, rate)
+  // Same recorded peak as the FBAR line, so the two never disagree.
+  const compliance = complianceItems(holdings, rate, recorded)
 
   // Balance-weighted expected return from the user's own accounts (each grows at
   // its contractual or estimated rate). Lets the copilot answer "what will my net
@@ -81,12 +129,12 @@ function buildSystemPrompt(
         const asset = holdings.find((a) => a.id === h.securedAgainstId)
         if (asset) extra = ` — secured by ${asset.nickname}`
       } else if (!isLiability(h) && loansSecuredBy(h.id, holdings).length > 0) {
-        extra = ` — ${usd(assetEquity(h, holdings, rate))} equity after loans`
+        extra = ` — ${money(assetEquity(h, holdings, rate))} equity after loans`
       }
       const owner = ownershipLabel(h)
       if (owner) extra += h.ownership === 'family' ? ` — held in name of ${owner}` : ` — joint: ${owner}`
       const rtn = isLiability(h) ? '' : `, ~${(expectedReturn(h) * 100).toFixed(1)}%/yr`
-      return `- [${h.country}] ${h.nickname} — ${h.institution}, ${TYPE_LABELS[h.accountType] ?? h.accountType}, ${usd(usdValue(h, rate))}${rtn}${flags.length ? ` (${flags.join(', ')})` : ''}${extra}${h.id ? ` [ref: ${h.id}]` : ''}`
+      return `- [${h.country}] ${h.nickname} — ${h.institution}, ${TYPE_LABELS[h.accountType] ?? h.accountType}, ${money(usdValue(h, rate))}${rtn}${flags.length ? ` (${flags.join(', ')})` : ''}${extra}${h.id ? ` [ref: ${h.id}]` : ''}`
     })
     .join('\n')
 
@@ -103,7 +151,7 @@ function buildSystemPrompt(
               (blendedR > 0
                 ? contribAnnual * ((Math.pow(1 + blendedR, y) - 1) / blendedR)
                 : contribAnnual * y)
-            return `- ${y}yr: ${usd(fvAssets - nw.liabilitiesUsd)}`
+            return `- ${y}yr: ${money(fvAssets - nw.liabilitiesUsd)}`
           })
           .join('\n')
       : null
@@ -115,23 +163,30 @@ function buildSystemPrompt(
   // Cash-flow context (from the budget) — savings rate + investing capacity.
   const savingsLine =
     income > 0
-      ? `Monthly income: ${usd(income)} (~${usd(income * 12)}/yr). Investing ${usd(monthlyContribution)}/mo${monthlyContribution > 0 ? ` (${Math.round((monthlyContribution / income) * 100)}% of income)` : ''}.`
+      ? `Monthly income: ${money(income)} (~${money(income * 12)}/yr). Investing ${money(monthlyContribution)}/mo${monthlyContribution > 0 ? ` (${Math.round((monthlyContribution / income) * 100)}% of income)` : ''}.`
       : monthlyContribution > 0
-        ? `Investing ${usd(monthlyContribution)}/mo (income not set).`
+        ? `Investing ${money(monthlyContribution)}/mo (income not set).`
         : 'Monthly income and contributions: not set yet.'
 
   // Goals (resolved to live funded amounts) + the retirement target, so the
   // copilot can answer "am I on track?" and "how much more per month?".
   const resolved = goals.map((g) => resolveGoal(g, holdings, rate))
+  // The exact plan each goal card shows (goalPlan in lib/goals), so Copilot quotes
+  // the Goals page's monthly figures instead of working out its own.
+  const plans = goals
+    .filter((g) => g.category !== 'debt')
+    .map((g) => goalPlan(g, holdings, rate, today.getUTCFullYear()))
+  const planById = new Map(plans.map((p) => [p.goal.id, p]))
   const goalLines =
     resolved.length > 0
       ? resolved
           .map(
             (g) =>
-              `- ${g.name} (${g.category}, ${goalKind(g)}): target ${usd(g.targetUsd)} by ${g.targetYear}, funded ${usd(g.currentUsd)} (${g.targetUsd > 0 ? Math.round((g.currentUsd / g.targetUsd) * 100) : 0}%)${g.id ? ` [ref: ${g.id}]` : ''}`,
+              `- ${g.name} (${g.category}, ${goalKind(g)}): target ${money(g.targetUsd)} by ${g.targetYear} (${yearsAway(g.targetYear, today)}), funded ${money(g.currentUsd)} (${g.targetUsd > 0 ? Math.round((g.currentUsd / g.targetUsd) * 100) : 0}%)${planText(planById.get(g.id), money)}${g.id ? ` [ref: ${g.id}]` : ''}`,
           )
           .join('\n')
       : 'No goals set yet.'
+  const affordLine = plans.length > 0 ? `\n${affordText(plans, monthlyContribution, income, money)}` : ''
   const retireGoal = resolved.find((g) => g.category === 'retirement') ?? null
 
   return `You are the NRIWB Wealth Copilot — a cross-border personal-finance and wealth-PLANNING assistant for NRIs (non-resident Indians) managing money in both the United States and India. Two jobs, equally core:
@@ -139,23 +194,27 @@ function buildSystemPrompt(
 2. Compliance: explain US↔India tax topics (FBAR/FinCEN 114, FATCA/Form 8938, PFIC/Form 8621, NRE/NRO/FCNR, DTAA, the 182-day residency rule, repatriation) in plain English.
 You present as NRIWB AI. If asked which AI model or company powers you, say you're NRIWB's AI assistant and that you can't share details about the underlying technology.
 
+${datePromptBlock(today)}
+
+${currencyNote(mode, rate)}
+
 <portfolio>
-Net worth: ${usd(nw.totalUsd)} total — US ${usd(nw.usUsd)} (${nw.usPct}%), India ${usd(nw.inUsd)} (${nw.inPct}%)${nw.liabilitiesUsd > 0 ? `\n(${usd(nw.assetsUsd)} in assets less ${usd(nw.liabilitiesUsd)} in liabilities)` : ''}
+Net worth: ${money(nw.totalUsd)} total — US ${money(nw.usUsd)} (${nw.usPct}%), India ${money(nw.inUsd)} (${nw.inPct}%)${nw.liabilitiesUsd > 0 ? `\n(${money(nw.assetsUsd)} in assets less ${money(nw.liabilitiesUsd)} in liabilities)` : ''}
 ${age != null ? `Age: ${age}.` : ''}
 Blended expected return: ${blendedR != null ? `${(blendedR * 100).toFixed(1)}%/yr — balance-weighted from each account's own contractual or estimated rate` : 'n/a (no assets yet)'}${
     projLines
-      ? `\nIllustrative net-worth path (assets compound at the blended rate, debts held flat${contribAnnual > 0 ? `, plus ${usd(monthlyContribution)}/mo invested` : ', no new contributions'}):\n${projLines}`
+      ? `\nIllustrative net-worth path (assets compound at the blended rate, debts held flat${contribAnnual > 0 ? `, plus ${money(monthlyContribution)}/mo invested` : ', no new contributions'}):\n${projLines}`
       : ''
   }
 FX rate: 1 USD = ₹${rate.toFixed(2)}
 FBAR: ${fbarBasisPhrase(fbar)}${fbar.basis === 'current' ? ' (no balance history recorded this year, so the true yearly maximum is unknown and may be higher)' : ''} vs the ${usd(FBAR_THRESHOLD_USD)} threshold — ${fbar.crossed ? 'CROSSED, filing required' : `${Math.round(fbar.pctOfThreshold)}% of the limit`}
-FATCA: Form 8938 reporting threshold is ${usd(FATCA_THRESHOLD_USD)} in foreign assets
+FATCA: ${fatcaLine(fatcaAssetsUsd(holdings, rate))}
 PFIC holdings: ${pfics.length > 0 ? pfics.map((p) => p.nickname).join(', ') : 'none'}
 
 Cash flow: ${savingsLine}
 
 Goals:
-${goalLines}${retireGoal ? `\nRetirement target: ${usd(retireGoal.targetUsd)} by ${retireGoal.targetYear}.` : ''}
+${goalLines}${affordLine}${retireGoal ? `\nRetirement target: ${money(retireGoal.targetUsd)} by ${retireGoal.targetYear}.` : ''}
 
 Accounts (${holdings.length}):
 ${holdings.length > 0 ? accountLines : 'No accounts yet. The user has not added any accounts, so there are no balances to discuss. Say so plainly, and point them to "Add account" on the Accounts page (it supports Plaid for US banks and manual entry for India holdings). Never invent example balances.'}
@@ -166,10 +225,15 @@ ${complianceLines}
 
 Guidelines:
 - Reference the user's real numbers, account names, and goals when relevant — that's your main value over a generic chatbot.
+- Currency: answer in the display currency above, quoting the amounts exactly as given. Never convert between $ and ₹ yourself; FBAR and FATCA figures stay in $. (Proposal JSON keeps its own currency rules below.)
 - Be concise: a few short paragraphs or a tight bullet list. This renders in a small chat panel.
 - Formatting is limited: plain text, **bold** for emphasis, and lines starting with "•" for bullets. No headers, tables, links, LaTeX, or nested lists.
 - You explain and inform; you do not give personalized tax, legal, or investment advice. For filings or elections (e.g. QEF vs mark-to-market), explain the options and recommend confirming with a cross-border CPA.
+- Dates: use today's date above for every deadline, "next N days" question and timeline (years to a goal, age at retirement). Never say you don't know the date. For deadlines, use ONLY the dated list above.
+- Something is overdue ONLY if its final deadline, including any automatic extension, is before today. The FBAR for last year is automatically extended to Oct 15, so it is not overdue before then; FBAR for this year's balances is due next year. Never call a filing overdue just because the user is above a threshold. Whether last year's FBAR was required depends on last year's balances, which the app may not have: say so rather than assume.
+- FATCA figures: use ONLY the FATCA line above. Never total India assets yourself for Form 8938: property and vehicles held directly in the user's name are not reported there. Rental income from India property is income, not a Form 8938 asset (it goes on Schedule E and the India ITR); once deposited, it's part of an account balance that is already counted.
 - FBAR figures: use ONLY the FBAR line above. Never state, estimate or round up a "peak" or "maximum" balance that isn't given there. When it says current balances, call it the current balance and note that FBAR counts each account's highest balance during the year, which the app hasn't recorded.
+- Goal figures: for each goal's monthly saving, years left and "on track", quote ONLY the figures in the Goals list above (they are what the Goals page shows). Never recompute them with your own rate or timeline. For "can I afford all my goals", use the "All goals together" line.
 - PROJECTIONS ARE IN SCOPE — never refuse them. When asked to predict or project net worth (e.g. "in 2 years"), ANSWER using the blended expected return, the user's contributions, and the illustrative path above — these come from the user's own data, so you are NOT lacking assumptions. State the projected figure, label it illustrative, name the assumptions (the blended rate, contributions, debts held flat), and note real returns vary year to year. If the user supplies a different rate or savings amount, recompute from it. The same applies to retirement and goal questions ("am I on track?", "how much more per month?") — answer them from the goals + cash-flow data above.
 - If asked something genuinely outside cross-border personal finance and planning, answer briefly and steer back.
 
@@ -204,7 +268,7 @@ export async function POST(req: Request) {
   }
 
   const ctx = await loadUserContext(userId, { demo: body.demo === true })
-  const rate = body.rate ? parseRate(body.rate) : (await getFxSnapshot()).rate
+  const rate = await resolveRate(body.rate)
 
   const stream = client.messages.stream({
     model: MODEL,
@@ -218,6 +282,8 @@ export async function POST(req: Request) {
       ctx.age,
       ctx.goals,
       ctx.fbarSnapshots,
+      resolveToday(body.today),
+      MODES.includes(body.mode as CurrencyMode) ? (body.mode as CurrencyMode) : 'usd',
     ),
     messages: history.map((m): Anthropic.MessageParam => ({ role: m.role, content: m.text })),
   })

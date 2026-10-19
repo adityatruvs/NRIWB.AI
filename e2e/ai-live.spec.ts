@@ -73,3 +73,55 @@ test('copilot: answers from the user’s data and never names its vendor', async
   expect(who).toMatch(/NRIWB/)
   expect(who).not.toMatch(VENDOR)
 })
+
+// The bug tickets from this round, against the real model.
+
+test('goal fill: "₹1.2 crore" is converted by the app at its rate, not the model', async ({ request }) => {
+  const res = await request.post('/api/goals/suggest', {
+    data: {
+      description: "Fund my daughter's wedding in India in 12 years, need about ₹1.2 crore",
+      currentYear: 2026, age: 38, country: 'US', rate: 95,
+    },
+    timeout: 170_000,
+  })
+  expect(res.status(), await res.text()).toBe(200)
+  const { suggestion } = (await res.json()) as { suggestion: { targetUsd: number; targetYear: number; conversion: string | null } }
+  expect(suggestion.targetUsd).toBe(126_316)
+  expect(suggestion.targetYear).toBe(2038)
+  expect(suggestion.conversion).toBe('₹1.20Cr at ₹95.00/USD ≈ $126,316')
+})
+
+test('goal edit: "push my retirement out 5 years" changes only the year', async ({ request }) => {
+  const res = await request.post('/api/goals/suggest', {
+    data: {
+      description: 'push my retirement out 5 years',
+      currentYear: 2026, age: 25, country: 'US', rate: 95,
+      current: { name: 'Retirement', category: 'retirement', kind: 'investment', targetUsd: 2_000_000, targetYear: 2046 },
+    },
+    timeout: 170_000,
+  })
+  expect(res.status(), await res.text()).toBe(200)
+  const { edit } = (await res.json()) as { edit: { patch: Record<string, unknown>; summary: string } }
+  expect(edit.patch).toEqual({ targetYear: 2051 })
+  expect(edit.summary).toBe('Target year 2046 → 2051')
+})
+
+// Run before Oct 15 (the extended FBAR date) for the Oct 15 check to apply.
+test('copilot: knows today\'s date and lists real deadlines, never calling FBAR overdue', async ({ request }) => {
+  const text = await streamText(request, '/api/copilot', {
+    messages: [{ role: 'user', text: 'What compliance deadlines do I have in the next 90 days?' }],
+    rate: 95,
+  })
+  expect(text).not.toMatch(/don.t (have|know) today.s (exact )?date/i)
+  if (new Date() < new Date('2026-10-15')) expect(text).toMatch(/Oct(ober)?\.? 15/)
+  expect(text).not.toMatch(/FBAR[^.\n]*overdue/i)
+})
+
+test('copilot: answers in rupees when the view is INR', async ({ request }) => {
+  const text = await streamText(request, '/api/copilot', {
+    messages: [{ role: 'user', text: 'What is my total net worth? One sentence.' }],
+    rate: 95,
+    mode: 'inr_lakhs',
+  })
+  expect(text).toMatch(/₹\s?[\d.,]+\s?(L|Cr|lakh|crore)/i)
+})
