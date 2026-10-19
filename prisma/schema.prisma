@@ -82,6 +82,8 @@ model Goal {
   targetUsd         Float
   currentUsd        Float    @default(0)
   targetYear        Int
+  // Optional 1-12 deadline month; only read when targetYear is the current year.
+  targetMonth       Int?
   // Account ids earmarked to this goal. App-managed (not FKs): an account funds at
   // most one goal, and the account DELETE handler removes its id from here.
   linkedAccountIds  String[] @default([])

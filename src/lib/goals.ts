@@ -82,6 +82,12 @@ export interface Goal {
   targetUsd: number
   currentUsd: number
   targetYear: number
+  /**
+   * Optional 1–12 deadline month. Only read when `targetYear` is the current
+   * year, so a goal due this year can say how many months are left; otherwise
+   * the deadline is the end of the target year.
+   */
+  targetMonth?: number
   /** Cost (spent → dips the projection) vs investment (stays your wealth). */
   kind?: GoalKind
   /**
@@ -224,12 +230,21 @@ export function goalMonthlyNeeded(
   currentYear: number,
   annualReturn = DEFAULT_GOAL_RETURN,
 ): number {
-  const months = (g.targetYear - currentYear) * 12
+  return monthlyNeededOver(g.currentUsd, g.targetUsd, (g.targetYear - currentYear) * 12, annualReturn)
+}
+
+/** The annuity payment that takes `saved` to `target` over `months` (0 when none are left or it's already covered). */
+export function monthlyNeededOver(
+  saved: number,
+  target: number,
+  months: number,
+  annualReturn = DEFAULT_GOAL_RETURN,
+): number {
   if (months <= 0) return 0
   const r = annualReturn / 12
-  // What the money already invested grows to on its own by the target year.
-  const grown = g.currentUsd * Math.pow(1 + r, months)
-  const gap = g.targetUsd - grown
+  // What the money already invested grows to on its own by the target date.
+  const grown = saved * Math.pow(1 + r, months)
+  const gap = target - grown
   if (gap <= 0) return 0 // current savings + growth already clear the target
   if (r <= 0) return gap / months
   const annuityFactor = (Math.pow(1 + r, months) - 1) / r
