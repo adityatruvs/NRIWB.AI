@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { debtProgress, payoffMonths, paymentFor, resolveDebtGoal, monthsUntilYearEnd } from '@/lib/debt-goal'
+import { debtProgress, payoffMonths, paymentFor, resolveDebtGoal, monthsUntilYearEnd, pickLoan } from '@/lib/debt-goal'
+import { resolveGoal } from '@/lib/goals'
 import { debtGoalStatus } from '@/lib/goal-status'
 import type { Goal } from '@/lib/goals'
 import type { Holding } from '@/lib/portfolio'
@@ -106,5 +107,53 @@ describe('debtGoalStatus', () => {
 
   it('is Overdue once the target year has passed', () => {
     expect(debtGoalStatus(goal({ targetYear: 2025 }), [inrLoan()], 83, now).status).toBe('overdue')
+  })
+})
+
+describe('pickLoan (dialog defaults when choosing a loan)', () => {
+  const home = inrLoan()
+  const car = inrLoan({ id: 'loan2', nickname: 'Car loan', balanceInr: 5 * LAKH })
+  const blank = { loanId: null, original: '', originalEdited: false, name: '', autoName: '' }
+
+  it('defaults the starting balance and name from the first pick', () => {
+    const s = pickLoan(blank, home)
+    expect(s).toMatchObject({ loanId: 'loan1', original: String(32 * LAKH), name: 'Pay off Bangalore home loan' })
+  })
+
+  it('updates the balance and name when a different loan is picked', () => {
+    const s = pickLoan(pickLoan(blank, home), car)
+    expect(s).toMatchObject({ loanId: 'loan2', original: String(5 * LAKH), name: 'Pay off Car loan' })
+  })
+
+  it('does not carry a typed starting balance over to a different loan', () => {
+    const typed = { ...pickLoan(blank, home), original: String(60 * LAKH), originalEdited: true }
+    expect(pickLoan(typed, car).original).toBe(String(5 * LAKH))
+  })
+
+  it('keeps a typed starting balance when the same loan is re-picked', () => {
+    const typed = { ...pickLoan(blank, home), original: String(60 * LAKH), originalEdited: true }
+    expect(pickLoan(typed, home).original).toBe(String(60 * LAKH))
+  })
+
+  it('never overwrites a name the user wrote', () => {
+    const s = pickLoan({ ...pickLoan(blank, home), name: 'Clear it by 2028' }, car)
+    expect(s.name).toBe('Clear it by 2028')
+  })
+})
+
+describe('linking a loan never changes another goal', () => {
+  it('leaves an asset-funded goal exactly as its own accounts fund it', () => {
+    const savings = inrLoan({ id: 's1', nickname: 'Savings', kind: 'asset', accountType: 'savings', country: 'US', balanceInr: 0, balanceUsd: 40_000 })
+    const retirement = { id: 'r1', name: 'Retirement', category: 'retirement', targetUsd: 100_000, currentUsd: 0, targetYear: 2040, linkedAccountIds: ['s1'] } as Goal
+    const before = resolveGoal(retirement, [savings], 85).currentUsd
+    const withLoan = resolveGoal(retirement, [savings, inrLoan()], 85).currentUsd
+    expect(withLoan).toBe(before)
+    expect(before).toBe(40_000)
+  })
+
+  it('a loan id wrongly placed in an asset goal is not subtracted from its funding', () => {
+    const savings = inrLoan({ id: 's1', kind: 'asset', accountType: 'savings', country: 'US', balanceInr: 0, balanceUsd: 40_000 })
+    const odd = { id: 'r1', name: 'X', category: 'other', targetUsd: 100_000, currentUsd: 0, targetYear: 2040, linkedAccountIds: ['s1', 'loan1'] } as Goal
+    expect(resolveGoal(odd, [savings, inrLoan()], 85).currentUsd).toBe(40_000)
   })
 })

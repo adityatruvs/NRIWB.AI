@@ -8,7 +8,7 @@
  * GoalsContext holds them client-side, and demo mode uses SEED_GOALS only.
  */
 
-import { usdValue, type Holding } from '@/lib/portfolio'
+import { usdValue, isLiability, type Holding } from '@/lib/portfolio'
 import { portfolioExpectedReturn } from '@/lib/allocation'
 import { resolveDebtGoal } from '@/lib/debt-goal'
 
@@ -108,7 +108,8 @@ export function goalLinkedUsd(g: Goal, holdings: Holding[], rate: number): numbe
   if (!g.linkedAccountIds?.length) return 0
   const ids = new Set(g.linkedAccountIds)
   return holdings
-    .filter((h) => h.id && ids.has(h.id))
+    // A loan never funds (or reduces) an asset goal, even if its id ended up in the list.
+    .filter((h) => h.id && ids.has(h.id) && !isLiability(h))
     .reduce((s, h) => s + usdValue(h, rate), 0)
 }
 
