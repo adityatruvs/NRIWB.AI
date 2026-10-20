@@ -35,6 +35,7 @@ import {
   loanBalanceNative,
   loanCurrency,
   nativeToUsd,
+  pickLoan,
   type LoanCurrency,
 } from '@/lib/debt-goal'
 import {
@@ -671,6 +672,9 @@ function GoalDialog({
   const [original, setOriginal] = useState(
     initial?.originalAmount != null ? String(Math.round(initial.originalAmount)) : '',
   )
+  // Editing an existing goal keeps its saved starting balance; otherwise it tracks the picked loan.
+  const [originalEdited, setOriginalEdited] = useState(initial?.originalAmount != null)
+  const [autoName, setAutoName] = useState('')
   const isDebt = category === 'debt'
   // The user's age at the target year — not for education (that's the child's timeline).
   const ownAge = age != null && showsOwnAge(category)
@@ -930,13 +934,18 @@ function GoalDialog({
               holdings={holdings}
               loanId={loanId}
               onLoan={(h) => {
-                setLoanId(h.id ?? null)
-                // Default the starting balance to what's owed today.
-                if (!original) setOriginal(String(Math.round(loanBalanceNative(h))))
-                if (!name.trim()) setName(`Pay off ${h.nickname}`)
+                const next = pickLoan({ loanId, original, originalEdited, name, autoName }, h)
+                setLoanId(next.loanId)
+                setOriginal(next.original)
+                setOriginalEdited(next.originalEdited)
+                setName(next.name)
+                setAutoName(next.autoName)
               }}
               original={original}
-              setOriginal={setOriginal}
+              setOriginal={(v) => {
+                setOriginalEdited(true)
+                setOriginal(v)
+              }}
             />
           ) : (
             <>

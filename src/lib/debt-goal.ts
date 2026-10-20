@@ -17,7 +17,7 @@ export const loanCurrency = (loan: Holding): LoanCurrency => (loan.country === '
 
 /** Outstanding balance in the loan's own currency. */
 export const loanBalanceNative = (loan: Holding): number =>
-  Math.max(0, loan.country === 'IN' ? loan.balanceInr : loan.balanceUsd)
+  Math.max(0, (loan.country === 'IN' ? loan.balanceInr : loan.balanceUsd) || 0)
 
 /** Native amount → USD at the current rate. */
 export const nativeToUsd = (amount: number, currency: LoanCurrency, rate: number) =>
@@ -89,4 +89,34 @@ export function paymentFor(balance: number, aprPct: number, months: number): num
 /** Months from `now` to the end of `targetYear` (at least 0). */
 export function monthsUntilYearEnd(targetYear: number, now: Date): number {
   return Math.max(0, (targetYear - now.getFullYear()) * 12 + (12 - now.getMonth()))
+}
+
+/** The loan-dependent fields of the Debt payoff dialog. */
+export interface LoanPickState {
+  loanId: string | null
+  /** Starting balance as typed, in the loan's own currency. */
+  original: string
+  /** True once the user has typed their own starting balance for the current loan. */
+  originalEdited: boolean
+  name: string
+  /** The last name we generated, so a hand-written name is never overwritten. */
+  autoName: string
+}
+
+/**
+ * Picking a loan defaults the starting balance to what's owed today and the name to
+ * "Pay off <loan>". A figure typed for one loan doesn't carry over to a different one,
+ * and a name the user wrote themselves is left alone.
+ */
+export function pickLoan(state: LoanPickState, loan: Holding): LoanPickState {
+  const next = { ...state, loanId: loan.id ?? null }
+  if (loan.id !== state.loanId || !state.originalEdited) {
+    next.original = String(Math.round(loanBalanceNative(loan)))
+    next.originalEdited = false
+  }
+  if (!state.name.trim() || state.name === state.autoName) {
+    next.name = `Pay off ${loan.nickname}`
+    next.autoName = next.name
+  }
+  return next
 }
