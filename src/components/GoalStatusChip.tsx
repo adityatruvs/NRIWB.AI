@@ -2,7 +2,7 @@
 
 import { useCurrency } from '@/context/CurrencyContext'
 import { formatAmount } from '@/lib/currency'
-import { GOAL_STATUS_LABELS, type GoalStatus, type GoalStatusKind } from '@/lib/goal-status'
+import { GOAL_STATUS_LABELS, withinYearLabel, type GoalStatus, type GoalStatusKind } from '@/lib/goal-status'
 import { cn } from '@/lib/utils'
 
 const TONE: Record<GoalStatusKind, string> = {
@@ -57,9 +57,9 @@ export function GoalStatusChip({
       ? 'Funded at or above target.'
       : status.status === 'overdue'
         ? `Target year ${targetYear} has passed.`
-        : `At this pace you'd reach ~${money(status.projectedUsd)} by ${targetYear}${
-            status.hasPlan ? '' : ' (from savings alone; no monthly amount set)'
-          }.`
+        : `${status.monthsLeftThisYear != null ? `${withinYearLabel(status.monthsLeftThisYear)}. ` : ''}At this pace you'd reach ~${money(status.projectedUsd)} by ${
+            status.monthsLeftThisYear != null ? 'then' : targetYear
+          }${status.hasPlan ? '' : ' (from savings alone; no monthly amount set)'}.`
   const gap =
     status.monthlyGapUsd != null && status.monthlyGapUsd >= 1 ? `needs ~${money(status.monthlyGapUsd)}/mo more` : null
 
@@ -68,6 +68,9 @@ export function GoalStatusChip({
       <span className={cn('inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1', TONE[status.status])}>
         {GOAL_STATUS_LABELS[status.status]}
       </span>
+      {!compact && status.monthsLeftThisYear != null && status.status !== 'reached' && (
+        <span className="text-[11.5px] text-muted-foreground">{withinYearLabel(status.monthsLeftThisYear)}</span>
+      )}
       {!compact && gap && <span className="text-[11.5px] text-muted-foreground">{gap}</span>}
       {!compact && !gap && !status.hasPlan && (status.status === 'behind' || status.status === 'on_track') && (
         <span className="text-[11.5px] text-muted-foreground">add a monthly amount for a truer read</span>

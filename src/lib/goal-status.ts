@@ -7,9 +7,12 @@
  *
  *   projected ≥ 105% of target → Ahead      95–105% → On track     < 95% → Behind
  *   funded ≥ target → Reached (any date)    year passed, not reached → Overdue
+ *
+ * A goal due this year counts months to its deadline month (default: December),
+ * and says so (`monthsLeftThisYear`) instead of reading as a passed year.
  */
 
-import { goalExpectedReturn, goalMonthlyNeeded, type Goal } from '@/lib/goals'
+import { goalExpectedReturn, monthlyNeededOver, type Goal } from '@/lib/goals'
 import type { Holding } from '@/lib/portfolio'
 import {
   debtProgress,
@@ -41,6 +44,11 @@ export interface GoalStatus {
    * months left. Null otherwise.
    */
   monthlyGapUsd: number | null
+  /**
+   * Set when the target year is the current year and the deadline hasn't passed:
+   * whole months left until it. Null otherwise.
+   */
+  monthsLeftThisYear: number | null
   /** Whether the goal has a planned monthly contribution. */
   hasPlan: boolean
   annualReturn: number
@@ -61,6 +69,16 @@ export function projectFunded(saved: number, monthly: number, months: number, an
 }
 
 /**
+ * Months from now to the goal's deadline. A future year runs to the year's end
+ * counted in whole years; the current year runs to `targetMonth` (default
+ * December). Negative once the deadline month has passed.
+ */
+export function goalMonthsLeft(goal: Goal, currentYear: number, currentMonth: number): number {
+  if (goal.targetYear === currentYear) return (goal.targetMonth ?? 12) - currentMonth
+  return (goal.targetYear - currentYear) * 12
+}
+
+/**
  * Status for a goal whose `currentUsd` is already resolved (see `resolveGoal`).
  * `annualReturn` defaults to the goal's expected return from its accounts.
  */
@@ -70,19 +88,30 @@ export function goalStatus(
   rate: number,
   currentYear: number,
   annualReturn = goalExpectedReturn(goal, holdings, rate),
+  /** 1–12. Defaults to December, i.e. no months left in the current year. */
+  currentMonth = 12,
 ): GoalStatus {
   if (goal.category === 'debt') return debtGoalStatus(goal, holdings, rate)
   const planned = goal.plannedMonthlyUsd && goal.plannedMonthlyUsd > 0 ? goal.plannedMonthlyUsd : 0
-  const months = (goal.targetYear - currentYear) * 12
+  const monthsToGo = goalMonthsLeft(goal, currentYear, currentMonth)
+  const months = Math.max(0, monthsToGo)
+  const thisYear = goal.targetYear === currentYear && monthsToGo >= 0
   const projectedUsd = projectFunded(goal.currentUsd, planned, months, annualReturn)
   const ratio = goal.targetUsd > 0 ? projectedUsd / goal.targetUsd : 1
-  const base = { projectedUsd, ratio, monthlyGapUsd: null, hasPlan: planned > 0, annualReturn }
+  const base = {
+    projectedUsd,
+    ratio,
+    monthlyGapUsd: null,
+    monthsLeftThisYear: thisYear ? months : null,
+    hasPlan: planned > 0,
+    annualReturn,
+  }
 
   if (goal.currentUsd >= goal.targetUsd) return { ...base, status: 'reached' }
-  if (goal.targetYear < currentYear) return { ...base, status: 'overdue' }
+  if (goal.targetYear < currentYear || monthsToGo < 0) return { ...base, status: 'overdue' }
   if (ratio >= AHEAD_AT) return { ...base, status: 'ahead' }
   if (ratio >= ON_TRACK_AT) return { ...base, status: 'on_track' }
-  const needed = goalMonthlyNeeded(goal, currentYear, annualReturn)
+  const needed = monthlyNeededOver(goal.currentUsd, goal.targetUsd, months, annualReturn)
   return {
     ...base,
     status: 'behind',
@@ -97,7 +126,7 @@ export function goalStatus(
  * would clear it by the end of the target year).
  */
 export function debtGoalStatus(goal: Goal, holdings: Holding[], rate: number, now: Date = new Date()): GoalStatus {
-  const base = { projectedUsd: 0, ratio: 0, monthlyGapUsd: null, hasPlan: true, annualReturn: 0 }
+  const base = { projectedUsd: 0, ratio: 0, monthlyGapUsd: null, monthsLeftThisYear: null, hasPlan: true, annualReturn: 0 }
   const loan = linkedLoan(goal, holdings)
   if (!loan) return { ...base, status: 'loan_removed' }
   const p = debtProgress(goal, loan)
@@ -121,6 +150,13 @@ export function debtGoalStatus(goal: Goal, holdings: Holding[], rate: number, no
     status: 'behind',
     monthlyGapUsd: nativeToUsd(Math.max(0, needed - payment), p.currency, rate),
   }
+}
+
+/** "Within current year – 3 months left" (or "due this month"). */
+export function withinYearLabel(monthsLeft: number): string {
+  return monthsLeft <= 0
+    ? 'Within current year – due this month'
+    : `Within current year – ${monthsLeft} month${monthsLeft === 1 ? '' : 's'} left`
 }
 
 export const GOAL_STATUS_LABELS: Record<GoalStatusKind, string> = {

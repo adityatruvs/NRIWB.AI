@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { goalStatus, projectFunded } from '@/lib/goal-status'
+import { goalStatus, goalMonthsLeft, projectFunded, withinYearLabel } from '@/lib/goal-status'
 import type { Goal } from '@/lib/goals'
 
 const YEAR = 2026
@@ -84,5 +84,54 @@ describe('goalStatus — zero return and this year', () => {
     expect(s.projectedUsd).toBe(50_000)
     expect(s.status).toBe('behind')
     expect(s.monthlyGapUsd).toBeNull()
+  })
+})
+
+describe('goalStatus — due this year, with an optional target month', () => {
+  const OCT = 10
+  const thisYear = (over: Partial<Goal> = {}) => goal({ targetYear: YEAR, currentUsd: 50_000, ...over })
+  const at = (g: Goal, month = OCT) => goalStatus(g, [], 83, YEAR, 0.06, month)
+
+  it('counts months to the deadline month, defaulting to December', () => {
+    expect(goalMonthsLeft(thisYear(), YEAR, OCT)).toBe(2)
+    expect(goalMonthsLeft(thisYear({ targetMonth: 3 }), YEAR, 1)).toBe(2)
+    expect(goalMonthsLeft(goal(), YEAR, OCT)).toBe(120) // a future year is unchanged
+  })
+
+  it('is Behind but not Overdue, and reports the months left', () => {
+    const s = at(thisYear())
+    expect(s.status).toBe('behind')
+    expect(s.monthsLeftThisYear).toBe(2)
+  })
+
+  it('shows a monthly gap now that months remain', () => {
+    const s = at(thisYear({ plannedMonthlyUsd: 1_000 }))
+    expect(s.monthlyGapUsd).toBeGreaterThan(0)
+    // 2 months: need about (100k − 50k·growth)/2 minus the $1k planned.
+    expect(s.monthlyGapUsd).toBeGreaterThan(23_000)
+  })
+
+  it('the due month itself is still within the year (0 months left)', () => {
+    const s = at(thisYear({ targetMonth: OCT }))
+    expect(s.status).toBe('behind')
+    expect(s.monthsLeftThisYear).toBe(0)
+    expect(s.monthlyGapUsd).toBeNull()
+  })
+
+  it('is Overdue once the deadline month has passed', () => {
+    const s = at(thisYear({ targetMonth: 6 }))
+    expect(s.status).toBe('overdue')
+    expect(s.monthsLeftThisYear).toBeNull()
+  })
+
+  it('is Reached whatever the month, and a future year has no this-year note', () => {
+    expect(at(thisYear({ currentUsd: 100_000, targetMonth: 2 })).status).toBe('reached')
+    expect(at(goal()).monthsLeftThisYear).toBeNull()
+  })
+
+  it('words the label', () => {
+    expect(withinYearLabel(3)).toBe('Within current year – 3 months left')
+    expect(withinYearLabel(1)).toBe('Within current year – 1 month left')
+    expect(withinYearLabel(0)).toBe('Within current year – due this month')
   })
 })

@@ -39,6 +39,7 @@ function goalBody(g: Omit<Goal, 'id'>) {
     targetUsd: g.targetUsd,
     currentUsd: g.currentUsd,
     targetYear: g.targetYear,
+    targetMonth: g.targetMonth ?? null,
     linkedAccountIds: g.linkedAccountIds ?? [],
     plannedMonthlyUsd: g.plannedMonthlyUsd ?? null,
     linkedLiabilityId: g.linkedLiabilityId ?? null,
