@@ -125,3 +125,23 @@ test('copilot: answers in rupees when the view is INR', async ({ request }) => {
   })
   expect(text).toMatch(/₹\s?[\d.,]+\s?(L|Cr|lakh|crore)/i)
 })
+
+test('account quick entry: one line per account, no guessed types, amounts as said', async ({ request }) => {
+  const res = await request.post('/api/accounts/parse', {
+    data: {
+      text: 'Two accounts at HDFC, one NRE fixed deposit at Axis for 5 lakh, and a flat in Hyderabad. In the US, a Chase checking account, Schwab brokerage about $95k and my 401k at Fidelity.',
+    },
+    timeout: 170_000,
+  })
+  expect(res.status(), await res.text()).toBe(200)
+  const { lines } = (await res.json()) as {
+    lines: { country: string | null; type: string | null; institution: string; amount: number | null; currency: string }[]
+  }
+  expect(lines).toHaveLength(7)
+  const hdfc = lines.filter((l) => /HDFC/i.test(l.institution))
+  expect(hdfc).toHaveLength(2)
+  expect(hdfc.every((l) => l.type === null && l.country === 'IN')).toBe(true)
+  expect(lines.find((l) => /Axis/i.test(l.institution))).toMatchObject({ type: 'fd_nre', amount: 500000, currency: 'INR' })
+  expect(lines.find((l) => /Schwab/i.test(l.institution))).toMatchObject({ country: 'US', type: 'brokerage', amount: 95000, currency: 'USD' })
+  expect(lines.find((l) => /Fidelity/i.test(l.institution))).toMatchObject({ type: '401k', amount: null })
+})
