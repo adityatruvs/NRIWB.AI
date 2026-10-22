@@ -1,10 +1,11 @@
 'use client'
 
 /**
- * Add accounts in one go. The user says or types what they have; NRIWB AI turns
- * it into one line per account; they check every line on one screen (nothing is
- * guessed — a missing type or amount is tinted for them to fill); and nothing is
- * saved until every line has a type and an amount.
+ * Add several accounts in one go. It opens on a checklist: each tap adds a line,
+ * the user types the amounts. Optionally they describe their accounts instead and
+ * NRIWB AI turns that into one line per account. Either way every line is checked
+ * on one screen (a missing type or amount is tinted), and nothing is saved until
+ * every line has a type and an amount.
  */
 
 import { useEffect, useMemo, useState } from 'react'
@@ -65,7 +66,8 @@ export function QuickEntry({
   onDirtyChange: (count: number) => void
 }) {
   const { mode } = useCurrency()
-  const [step, setStep] = useState<'tell' | 'review'>('tell')
+  // Picking from the checklist comes first; describing to the AI is optional.
+  const [step, setStep] = useState<'tell' | 'review'>('review')
   const [said, setSaid] = useState('')
   const [heard, setHeard] = useState<string[]>([])
   const [lines, setLines] = useState<DraftLine[]>([])
@@ -212,32 +214,31 @@ export function QuickEntry({
 
   return (
     <div className="flex flex-col gap-5 animate-fade-in">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="font-serif text-[1.45rem] font-medium tracking-tight">
-            {heard.length ? 'Here’s what we heard' : 'Pick what you have'}
-          </h2>
-          <p className="mt-1 max-w-[70ch] text-[13.5px] leading-relaxed text-muted-foreground">
-            {heardText ? (
-              <>
-                From <q className="italic text-foreground">{heardText.length > 220 ? `${heardText.slice(0, 220)}…` : heardText}</q>.
-                Check each line, then add anything we missed.
-              </>
-            ) : (
-              'Tap what you have below. Each tap adds a line; then type the amounts.'
-            )}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        {heardText ? (
+          <div className="min-w-0">
+            <h2 className="font-serif text-[1.45rem] font-medium tracking-tight">Here’s what we heard</h2>
+            <p className="mt-1 max-w-[70ch] text-[13.5px] leading-relaxed text-muted-foreground">
+              From <q className="italic text-foreground">{heardText.length > 220 ? `${heardText.slice(0, 220)}…` : heardText}</q>.
+              Check each line, then add anything we missed.
+            </p>
+          </div>
+        ) : (
+          <p className="max-w-[70ch] text-[13.5px] leading-relaxed text-muted-foreground">
+            Each tap below adds a line. Type its amount, then save them all together. Rather say or type it?
           </p>
-        </div>
+        )}
         <button
           type="button"
           onClick={() => setStep('tell')}
           className="btn-ghost inline-flex items-center gap-1.5 rounded-xl border border-border/70 px-3.5 py-2 text-[13px] font-medium"
         >
-          <ArrowLeft size={14} />
-          Tell us more
+          {heard.length ? <ArrowLeft size={14} /> : <Sparkles size={14} className="text-brand" />}
+          {heard.length ? 'Tell us more' : 'Describe them with AI'}
         </button>
       </div>
 
+      {lines.length > 0 && (
       <section aria-label="Your accounts" className="card-surface @container overflow-hidden p-0">
         {unknown.length > 0 && (
           <div>
@@ -292,12 +293,8 @@ export function QuickEntry({
             </div>
           )
         })}
-        {lines.length === 0 && (
-          <p className="px-4 py-5 text-[13px] text-muted-foreground">
-            No accounts on the list yet. Tap what you have below, or tell us.
-          </p>
-        )}
       </section>
+      )}
 
       <AnythingElse lines={lines} onAdd={addTile} />
 
@@ -307,8 +304,9 @@ export function QuickEntry({
         </p>
       )}
 
-      {/* Save bar — stays in view while the list scrolls */}
-      {/* Right margin keeps the button clear of the floating Copilot button. */}
+      {/* Save bar — stays in view while the list scrolls. Right margin keeps the
+          button clear of the floating Copilot button. */}
+      {lines.length > 0 && (
       <div className="sticky bottom-3 z-20 mr-16 flex items-center justify-between gap-3 rounded-2xl border border-border/80 bg-card/95 px-4 py-3 shadow-[0_12px_28px_-10px_hsl(var(--shadow-color)/0.25)] backdrop-blur-md">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2 text-[13.5px]">
@@ -349,6 +347,7 @@ export function QuickEntry({
               : 'Save accounts'}
         </button>
       </div>
+      )}
 
       {removed && (
         <div
@@ -492,7 +491,7 @@ function TellStep({
           </>
         ) : (
           <button type="button" onClick={onChecklist} className="font-semibold text-brand underline underline-offset-2">
-            Skip and pick from a checklist instead
+            Pick from a checklist instead
           </button>
         )}
         <button

@@ -36,7 +36,7 @@ for (const mode of MODES) {
     })
 
     test('India type list offers FDs per scheme; an FD-named savings account gets a suggestion', async ({ page }) => {
-      await page.getByRole('button', { name: 'Link or import' }).first().click()
+      await page.getByRole('button', { name: 'Add account', exact: true }).first().click()
       // A chooser comes first (Plaid / Indian bank / manual).
       await page.getByRole('button', { name: /Add manually/ }).click()
       const dialog = page // the dialog has no role — its fields are unique on the page

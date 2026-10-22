@@ -66,7 +66,7 @@ test('an FCNR deposit is entered and saved in dollars — real data', async ({ p
   await setMode(page, 'real')
   await setCurrency(page, 'usd')
   await page.goto('/accounts')
-  await page.getByRole('button', { name: 'Link or import' }).first().click()
+  await page.getByRole('button', { name: 'Add account', exact: true }).first().click()
   await page.getByRole('button', { name: /Add manually/ }).click()
   await page.getByRole('button', { name: /India$/ }).click()
   await page.getByLabel('Nickname').fill('E2E FCNR USD')

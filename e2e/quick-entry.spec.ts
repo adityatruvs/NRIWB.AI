@@ -23,6 +23,13 @@ async function stubParse(page: Page) {
   await page.route('**/api/accounts/parse', (r) => r.fulfill({ json: { lines: HEARD } }))
 }
 
+/** Add account → Add several at once (the checklist). */
+async function openAddSeveral(page: Page) {
+  await page.getByRole('button', { name: 'Add account', exact: true }).first().click()
+  await page.getByRole('button', { name: /Add several at once/ }).click()
+  await expect(page.getByRole('heading', { name: 'What do you have?' })).toBeVisible()
+}
+
 /** A line on the review list, by its name. */
 const line = (page: Page, name: string) =>
   page.getByRole('button', { name: `Remove ${name}` }).locator('xpath=ancestor::*[@data-line][1]')
@@ -50,7 +57,8 @@ for (const mode of MODES) {
     })
 
     test('said → one line per account → checked on one screen → saved only when complete', async ({ page }) => {
-      await page.getByRole('button', { name: 'Add accounts' }).first().click()
+      await openAddSeveral(page)
+      await page.getByRole('button', { name: 'Describe them with AI' }).click()
       await page.getByLabel('Describe your accounts').fill('Two accounts at HDFC, an NRE FD at Axis for 5 lakh, a flat in Hyderabad…')
       await page.getByRole('button', { name: 'List my accounts' }).click()
 
@@ -136,8 +144,9 @@ for (const mode of MODES) {
     })
 
     test('leaving with unsaved lines asks first', async ({ page }) => {
-      await page.getByRole('button', { name: 'Add accounts' }).first().click()
-      await page.getByRole('button', { name: 'Skip and pick from a checklist instead' }).click()
+      // The checklist is the first screen.
+      await openAddSeveral(page)
+      await shot(page, `add-several-start-${mode}`)
       await page.getByRole('button', { name: 'Add Property to India assets' }).click()
       await expect(page.locator('[data-line]')).toHaveCount(1)
       await expect(page.getByRole('button', { name: /^Save/ })).toBeDisabled()
@@ -155,7 +164,8 @@ for (const mode of MODES) {
     test('an AI failure says so and keeps what was typed', async ({ page }) => {
       await page.unroute('**/api/accounts/parse')
       await page.route('**/api/accounts/parse', (r) => r.fulfill({ status: 502, json: { error: 'NRIWB AI couldn’t read that just now. Try again in a moment.' } }))
-      await page.getByRole('button', { name: 'Add accounts' }).first().click()
+      await openAddSeveral(page)
+      await page.getByRole('button', { name: 'Describe them with AI' }).click()
       await page.getByLabel('Describe your accounts').fill('HDFC NRE 40 lakh')
       await page.getByRole('button', { name: 'List my accounts' }).click()
       await expect(page.getByText('NRIWB AI couldn’t read that just now.')).toBeVisible()

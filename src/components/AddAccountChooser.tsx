@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { usePlaidLink, type PlaidLinkOnSuccessMetadata } from 'react-plaid-link'
-import { Landmark, Building2, PencilLine, FileUp, X, ChevronRight } from 'lucide-react'
+import { Landmark, Building2, PencilLine, FileUp, ListChecks, X, ChevronRight } from 'lucide-react'
 import type { Holding } from '@/lib/portfolio'
 
 interface Props {
@@ -10,10 +10,12 @@ interface Props {
   onLinked: (accounts: Holding[]) => void
   onManual: () => void
   onImportCas: () => void
+  /** Pick several from a checklist and fill in the amounts on one screen. */
+  onAddSeveral: () => void
   onClose: () => void
 }
 
-export function AddAccountChooser({ fxRate, onLinked, onManual, onImportCas, onClose }: Props) {
+export function AddAccountChooser({ fxRate, onLinked, onManual, onImportCas, onAddSeveral, onClose }: Props) {
   const [linkToken, setLinkToken] = useState<string | null>(null)
 
   useEffect(() => {
@@ -113,6 +115,17 @@ export function AddAccountChooser({ fxRate, onLinked, onManual, onImportCas, onC
             subtitle="Enter any account — US or India — by hand"
             onClick={() => {
               onManual()
+              onClose()
+            }}
+          />
+
+          <Option
+            icon={<ListChecks size={18} strokeWidth={1.75} />}
+            accent="brand"
+            title="Add several at once"
+            subtitle="Tick what you have from a checklist, then fill in the amounts"
+            onClick={() => {
+              onAddSeveral()
               onClose()
             }}
           />

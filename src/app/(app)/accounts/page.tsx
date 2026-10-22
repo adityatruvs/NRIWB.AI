@@ -318,7 +318,7 @@ export default function AccountsPage() {
             </h1>
             <p className="mt-1 text-[15px] text-muted-foreground">
               {entering
-                ? 'Tell us what you have in India and the US. We set it up; you check it.'
+                ? 'Pick what you have in India and the US, fill in the amounts, and save them together.'
                 : 'Everything you own and owe, across both countries'}
             </p>
           </div>
@@ -352,22 +352,13 @@ export default function AccountsPage() {
             </button>
           )
         ) : (
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={() => setChoosing(true)}
-              className="btn-ghost inline-flex items-center gap-1.5 rounded-xl border border-border/70 px-3.5 py-2 text-[13px] font-medium"
-            >
-              <Link2 size={14} />
-              Link or import
-            </button>
-            <button
-              onClick={openEntry}
-              className="btn-primary inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-[13px] font-medium"
-            >
-              <Plus size={14} />
-              Add accounts
-            </button>
-          </div>
+          <button
+            onClick={() => setChoosing(true)}
+            className="btn-primary inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-[13px] font-medium"
+          >
+            <Plus size={14} />
+            Add account
+          </button>
         )}
       </div>
 
@@ -391,7 +382,7 @@ export default function AccountsPage() {
       ) : loading ? (
         <LedgerSkeleton />
       ) : holdings.length === 0 ? (
-        <EmptyLedger onAdd={openEntry} onMoreWays={() => setChoosing(true)} onLoadDemo={loadDemoData} />
+        <EmptyLedger onAdd={() => setChoosing(true)} onLoadDemo={loadDemoData} />
       ) : (
         <>
       {reauthNeeded && <ReauthBanner />}
@@ -647,6 +638,7 @@ export default function AccountsPage() {
           onLinked={addLinked}
           onManual={() => setAdding(true)}
           onImportCas={() => setImportingCas(true)}
+          onAddSeveral={openEntry}
           onClose={() => setChoosing(false)}
         />
       )}
@@ -713,16 +705,8 @@ function LedgerSkeleton() {
   )
 }
 
-/** Shown when the user has no accounts yet — add them, or opt into demo data. */
-function EmptyLedger({
-  onAdd,
-  onMoreWays,
-  onLoadDemo,
-}: {
-  onAdd: () => void
-  onMoreWays: () => void
-  onLoadDemo: () => void
-}) {
+/** Shown when the user has no accounts yet — add the first, or opt into demo data. */
+function EmptyLedger({ onAdd, onLoadDemo }: { onAdd: () => void; onLoadDemo: () => void }) {
   return (
     <Reveal delay={0.04}>
       <Card className="flex flex-col items-center gap-3 py-16 text-center">
@@ -732,8 +716,8 @@ function EmptyLedger({
         <div>
           <h2 className="font-serif text-lg font-medium tracking-tight">Start your ledger</h2>
           <p className="mx-auto mt-1 max-w-sm text-[13px] leading-relaxed text-muted-foreground">
-            Tell us what you have in India and the US — say it or type it — and check the list we make.
-            Net worth, allocation and compliance all build from it.
+            Add your first account — US or India, asset or liability — and everything else
+            (net worth, allocation, compliance) builds from it.
           </p>
         </div>
         <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
@@ -742,14 +726,7 @@ function EmptyLedger({
             className="btn-primary inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-[13px] font-medium"
           >
             <Plus size={14} />
-            Add accounts
-          </button>
-          <button
-            onClick={onMoreWays}
-            className="btn-ghost inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-[13px] font-medium"
-          >
-            <Link2 size={14} />
-            Link or import
+            Add account
           </button>
           <button
             onClick={onLoadDemo}
