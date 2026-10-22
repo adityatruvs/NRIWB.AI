@@ -784,6 +784,9 @@ function GoalDialog({
     [holdings, linkedIds, rate],
   )
   function toggleAccount(id: string) {
+    // Unticking the last account hands the goal back to manual entry: start that
+    // number at what the accounts held, not the stale figure saved at link time.
+    if (linkedIds.length === 1 && linkedIds[0] === id) setCurrent(String(Math.round(linkedUsd)))
     setLinkedIds((prev) => (prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]))
   }
 
