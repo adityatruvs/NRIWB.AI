@@ -31,6 +31,8 @@ import {
   Home,
   Users,
   Calculator,
+  PencilLine,
+  ListChecks,
 } from 'lucide-react'
 import { AccountsLogo } from '@/components/ui/logos'
 import { useCurrency } from '@/context/CurrencyContext'
@@ -89,7 +91,7 @@ import { Money } from '@/components/ui/Money'
 import { Reveal } from '@/components/ui/Reveal'
 import { AddAccountChooser } from '@/components/AddAccountChooser'
 import { CasImportPanel } from '@/components/CasImportPanel'
-import { AiAdd } from '@/components/copilot/AiAddPanel'
+import { AiAddDialog } from '@/components/copilot/AiAddPanel'
 import { QuickEntry } from '@/components/accounts/QuickEntry'
 import { AmountCell, TypeCell, cellCls, sheetCellCls } from '@/components/accounts/cells'
 import { SearchParamsReader } from '@/components/SearchParamsReader'
@@ -188,6 +190,7 @@ export default function AccountsPage() {
   const [choosing, setChoosing] = useState(false)
   // Quick entry ("tell us what you have") replaces the sheet while it's open.
   const [entering, setEntering] = useState(false)
+  const [aiOpen, setAiOpen] = useState(false)
   const [draftCount, setDraftCount] = useState(0)
   const [confirmLeave, setConfirmLeave] = useState(false)
   const [justSaved, setJustSaved] = useState<{ ids: ReadonlySet<string>; count: number } | null>(null)
@@ -382,7 +385,13 @@ export default function AccountsPage() {
       ) : loading ? (
         <LedgerSkeleton />
       ) : holdings.length === 0 ? (
-        <EmptyLedger onAdd={() => setChoosing(true)} onLoadDemo={loadDemoData} />
+        <EmptyLedger
+          onAi={() => setAiOpen(true)}
+          onManual={() => setAdding(true)}
+          onSeveral={openEntry}
+          onLinkOrImport={() => setChoosing(true)}
+          onLoadDemo={loadDemoData}
+        />
       ) : (
         <>
       {reauthNeeded && <ReauthBanner />}
@@ -625,8 +634,6 @@ export default function AccountsPage() {
               </div>
             </Card>
           )}
-
-          <AiAdd />
         </div>
       </Reveal>
         </>
@@ -639,9 +646,12 @@ export default function AccountsPage() {
           onManual={() => setAdding(true)}
           onImportCas={() => setImportingCas(true)}
           onAddSeveral={openEntry}
+          onAddWithAi={() => setAiOpen(true)}
           onClose={() => setChoosing(false)}
         />
       )}
+      {/* Always mounted, so a conversation survives closing and reopening the panel. */}
+      <AiAddDialog open={aiOpen} onClose={() => setAiOpen(false)} />
       {importingCas && (
         <CasImportPanel onClose={() => setImportingCas(false)} onManual={() => setAdding(true)} />
       )}
@@ -705,28 +715,89 @@ function LedgerSkeleton() {
   )
 }
 
-/** Shown when the user has no accounts yet — add the first, or opt into demo data. */
-function EmptyLedger({ onAdd, onLoadDemo }: { onAdd: () => void; onLoadDemo: () => void }) {
+/** Shown when the user has no accounts yet — the ways to add them, up front, or demo data. */
+function EmptyLedger({
+  onAi,
+  onManual,
+  onSeveral,
+  onLinkOrImport,
+  onLoadDemo,
+}: {
+  onAi: () => void
+  onManual: () => void
+  onSeveral: () => void
+  onLinkOrImport: () => void
+  onLoadDemo: () => void
+}) {
+  const ways = [
+    {
+      key: 'ai',
+      icon: <Sparkles size={18} className="text-white" />,
+      chip: 'ai-chip',
+      title: 'Add with AI',
+      text: 'Describe it — “my ICICI NRE FD, ₹40L at 7%” — and check what it fills in.',
+      onClick: onAi,
+    },
+    {
+      key: 'manual',
+      icon: <PencilLine size={18} />,
+      chip: 'bg-brand/10 text-brand ring-1 ring-brand/20',
+      title: 'Add manually',
+      text: 'Fill in one account with every detail: rate, maturity, ownership.',
+      onClick: onManual,
+    },
+    {
+      key: 'several',
+      icon: <ListChecks size={18} />,
+      chip: 'bg-brand/10 text-brand ring-1 ring-brand/20',
+      title: 'Add several at once',
+      text: 'Tick what you have from a checklist, type the amounts, save them together.',
+      onClick: onSeveral,
+    },
+  ]
   return (
     <Reveal delay={0.04}>
-      <Card className="flex flex-col items-center gap-3 py-16 text-center">
+      <Card className="flex flex-col items-center gap-5 py-12 text-center">
         <span className="flex size-12 items-center justify-center rounded-2xl bg-brand/10 text-brand ring-1 ring-brand/20">
           <Wallet size={22} />
         </span>
         <div>
           <h2 className="font-serif text-lg font-medium tracking-tight">Start your ledger</h2>
-          <p className="mx-auto mt-1 max-w-sm text-[13px] leading-relaxed text-muted-foreground">
-            Add your first account — US or India, asset or liability — and everything else
-            (net worth, allocation, compliance) builds from it.
+          <p className="mx-auto mt-1 max-w-md text-[13px] leading-relaxed text-muted-foreground">
+            Add what you own and owe — US or India — and everything else (net worth, allocation,
+            compliance) builds from it.
           </p>
         </div>
-        <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
+        <div className="grid w-full max-w-3xl gap-3 text-left sm:grid-cols-3">
+          {ways.map((w) => (
+            <button
+              key={w.key}
+              type="button"
+              onClick={w.onClick}
+              className={cn(
+                'group flex flex-col gap-2.5 rounded-2xl border border-border bg-card p-4 text-left transition-all hover:-translate-y-0.5 hover:border-brand/45 hover:shadow-[0_8px_24px_-12px_hsl(var(--shadow-color)/0.35)]',
+                w.key === 'ai' && 'ai-ring',
+              )}
+            >
+              <span className={cn('flex size-9 items-center justify-center rounded-xl', w.chip)}>{w.icon}</span>
+              <span className="flex items-center gap-1 text-[14px] font-semibold">
+                {w.title}
+                <ChevronRight
+                  size={15}
+                  className="text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground"
+                />
+              </span>
+              <span className="text-[12.5px] leading-snug text-muted-foreground">{w.text}</span>
+            </button>
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center justify-center gap-2">
           <button
-            onClick={onAdd}
-            className="btn-primary inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-[13px] font-medium"
+            onClick={onLinkOrImport}
+            className="btn-ghost inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-[13px] font-medium"
           >
-            <Plus size={14} />
-            Add account
+            <Link2 size={14} />
+            Link a US bank or import a CAS statement
           </button>
           <button
             onClick={onLoadDemo}
@@ -736,7 +807,7 @@ function EmptyLedger({ onAdd, onLoadDemo }: { onAdd: () => void; onLoadDemo: () 
             Load demo data
           </button>
         </div>
-        <p className="text-[11px] text-muted-foreground/70">
+        <p className="-mt-2 text-[11px] text-muted-foreground/70">
           Demo data is a sample portfolio — it’s never saved to your account.
         </p>
       </Card>

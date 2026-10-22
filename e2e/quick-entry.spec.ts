@@ -173,3 +173,36 @@ for (const mode of MODES) {
     })
   })
 }
+
+test('Add with AI lives in the Add account chooser and the empty ledger, not on the page', async ({ page }) => {
+  await setMode(page, 'real')
+  await page.goto('/accounts')
+  await expect(page.getByRole('heading', { level: 2, name: 'India' })).toBeVisible()
+  // No stray AI card on the page itself.
+  await expect(page.getByText('Describe it — Copilot fills in the details')).toHaveCount(0)
+
+  await page.getByRole('button', { name: 'Add account', exact: true }).click()
+  const aiOption = page.getByRole('button', { name: /^Add with AI/ })
+  await expect(aiOption).toBeVisible()
+  await page.waitForTimeout(400) // let the chooser finish animating in for the screenshot
+  await shot(page, 'add-account-chooser')
+  await aiOption.click()
+  const dialog = page.getByRole('dialog', { name: 'Add with AI' })
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByText('What are we adding?')).toBeVisible()
+  await dialog.getByRole('button', { name: 'Minimize' }).click()
+  await expect(dialog).toHaveCount(0)
+
+  // An empty ledger offers the ways to add up front (the ledger is stubbed empty here).
+  await page.route('**/api/accounts', (r) =>
+    r.request().method() === 'GET' ? r.fulfill({ json: { accounts: [] } }) : r.continue(),
+  )
+  await page.reload()
+  await expect(page.getByRole('heading', { name: 'Start your ledger' })).toBeVisible()
+  await shot(page, 'empty-ledger')
+  for (const name of [/^Add with AI/, /^Add manually/, /^Add several at once/]) {
+    await expect(page.getByRole('button', { name })).toBeVisible()
+  }
+  await page.getByRole('button', { name: /^Add with AI/ }).click()
+  await expect(page.getByRole('dialog', { name: 'Add with AI' })).toBeVisible()
+})
