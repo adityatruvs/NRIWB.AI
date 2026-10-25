@@ -16,7 +16,11 @@ interface AccountsContextValue {
   addLinked: (accounts: Holding[]) => void
   clearLinked: () => void
   /** Add one account. Resolves to the saved row, or null when the save failed (it's rolled back). */
-  addManual: (account: Holding) => Promise<Holding | null>
+  /**
+   * Save one account. `key` makes the save safe to repeat: the server creates the account
+   * once however many times the same key arrives (a retry after a lost reply).
+   */
+  addManual: (account: Holding, opts?: { key?: string }) => Promise<Holding | null>
   /**
    * Replace the holding with this id (keeps its id and position in the list).
    * `confirmBalance` = "mark updated": records today's balance in history.
@@ -144,8 +148,8 @@ export function AccountsProvider({ children }: { children: React.ReactNode }) {
   }, [isLoaded, userId, loadFromServer])
 
   const addManual = useCallback(
-    async (account: Holding): Promise<Holding | null> => {
-      const tempId = account.id ?? crypto.randomUUID()
+    async (account: Holding, opts?: { key?: string }): Promise<Holding | null> => {
+      const tempId = opts?.key ?? account.id ?? crypto.randomUUID()
       const optimistic: Holding = { ...account, id: tempId }
       setHoldings((prev) => [...prev, optimistic])
       if (demo) return optimistic
@@ -154,7 +158,7 @@ export function AccountsProvider({ children }: { children: React.ReactNode }) {
         const res = await fetch('/api/accounts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(createBody(account)),
+          body: JSON.stringify(opts?.key ? { ...createBody(account), clientId: opts.key } : createBody(account)),
         })
         if (!res.ok) throw new Error(`POST /api/accounts ${res.status}`)
         const { account: saved } = (await res.json()) as { account: Holding }

@@ -98,4 +98,13 @@ describe('the model reply', () => {
       for (const k of ['asset', 'liability'] as const) for (const t of typeChoicesFor(c, k)) expect(p).toContain(t)
     expect(p).toContain('Do NOT guess the type')
   })
+
+  it('the prompt teaches every amount unit the story names, and to leave unstated amounts empty', () => {
+    const p = buildParseSystem('2026-10-22')
+    expect(p).toContain('1 lakh = 100000')
+    expect(p).toContain('1 crore = 10000000')
+    expect(p).toContain('k or thousand = 1000')
+    expect(p).toContain('M or million = 1000000')
+    expect(p).toContain('Only amounts they said; otherwise null')
+  })
 })

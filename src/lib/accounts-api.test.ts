@@ -39,6 +39,21 @@ describe('ACCOUNT_TYPES', () => {
   })
 })
 
+describe('createAccountSchema clientId', () => {
+  const base = { nickname: 'x', institution: 'y', accountType: 'savings', country: 'US' }
+  it('is optional, accepts a UUID, and becomes the row id', () => {
+    expect(createAccountSchema.safeParse(base).success).toBe(true)
+    const key = '3f2b8c1e-9d4a-4e7b-8a61-0c5d2e9f7a10'
+    const input = createAccountSchema.parse({ ...base, clientId: key })
+    expect(toCreateData(input, 'u1').id).toBe(key)
+    expect(toCreateData(createAccountSchema.parse(base), 'u1')).not.toHaveProperty('id')
+  })
+  it('rejects keys that are too short, too long or have odd characters', () => {
+    for (const clientId of ['abc', 'a'.repeat(65), 'has space in it 1234', 'a/b/c/d/e/f/g/h/i/j'])
+      expect(createAccountSchema.safeParse({ ...base, clientId }).success).toBe(false)
+  })
+})
+
 describe('createAccountSchema', () => {
   it('accepts a minimal valid body and applies defaults', () => {
     const parsed = createAccountSchema.parse({

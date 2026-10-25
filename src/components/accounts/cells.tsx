@@ -10,7 +10,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ChevronDown, Mic, Square } from 'lucide-react'
 import { typeChoiceLabel, type TypeChoice } from '@/lib/account-details'
-import { formatAmountInput, parseAmountInput } from '@/lib/quick-entry'
+import { formatAmountInput, readAmount } from '@/lib/quick-entry'
 import { cn } from '@/lib/utils'
 
 export const cellCls =
@@ -103,20 +103,29 @@ export function AmountCell({
     return inlineSymbol && t ? sign + t : t
   }
   const [text, setText] = useState(() => show(value))
-  const [error, setError] = useState<string | null>(null)
+  const [error, setErrorState] = useState<string | null>(null)
+  const errorRef = useRef<string | null>(null)
+  const setError = (e: string | null) => {
+    errorRef.current = e
+    setErrorState(e)
+  }
   const focused = useRef(false)
-  // Follow outside changes (an undo, a re-parse) unless the user is mid-edit.
+  // Follow outside changes (an undo, a re-parse) unless the user is mid-edit or fixing an error.
   useEffect(() => {
-    if (!focused.current) setText(show(value))
+    if (!focused.current && !errorRef.current) setText(show(value))
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `show` only depends on these
   }, [value, currency, inlineSymbol])
 
   function commit() {
-    const n = parseAmountInput(text)
-    if (n != null && (Number.isNaN(n) || n < 0)) {
-      setError('Use numbers, or 40L / 1.2Cr / 95k')
+    const r = readAmount(text)
+    if (!r.ok) {
+      setError(r.error)
+      // On the review list an unreadable amount counts as no amount, so Save can't
+      // send an older number than the one on screen. A saved balance keeps its value.
+      if (allowBlank && value != null) onCommit(null)
       return
     }
+    const n = r.value
     if (n == null && !allowBlank) {
       setError('Enter an amount')
       return
@@ -130,7 +139,7 @@ export function AmountCell({
     setText(show(n))
   }
 
-  const missing = allowBlank && (value == null || !(value > 0)) && !text.trim()
+  const missing = allowBlank && value == null
   return (
     <div className="min-w-0">
       <div className="relative">

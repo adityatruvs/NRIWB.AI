@@ -39,7 +39,7 @@ Rules:
 - One element per account. "Two accounts at HDFC" is two elements with the same institution, named "HDFC Bank account 1" and "HDFC Bank account 2".
 - Do NOT guess the type. Set "type" only when they clearly named it (NRE, NRO, FCNR, an NRE or NRO fixed deposit, checking, 401k, IRA, Roth, brokerage, mutual fund, PPF is "other", gold, flat/house/property, home loan, mortgage, credit card…). A plain "account", an India "savings account" (NRE or NRO?) or an India "FD" without NRE/NRO has type null.
 - "group" from the institution's country or from what was said; "unknown" when it isn't clear. Loans and cards go in a *_liability group with amount = what is owed. A flat with a loan is two elements.
-- Amounts in full units with no commas: 1 lakh = 100000, 1 crore = 10000000, k = 1000. Only amounts they said; otherwise null. "5 lakh each" gives each element 500000.
+- Amounts in full units with no commas: 1 lakh = 100000, 1 crore = 10000000, k or thousand = 1000, M or million = 1000000. Only amounts they said; otherwise null. "5 lakh each" gives each element 500000.
 - "currency" is the currency the amount was said in (₹, lakh, crore → INR; $ → USD). NEVER convert between currencies. With no amount, use the group's own currency (FCNR deposits are USD).
 - "name": at most 40 characters, the institution plus what it is, e.g. "Axis Bank NRE Fixed Deposit", "Flat in Hyderabad", "Fidelity 401(k)".
 - Today is ${today}. Never add accounts they didn't mention, and give no advice.`
