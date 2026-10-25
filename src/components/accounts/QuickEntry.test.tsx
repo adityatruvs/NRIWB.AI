@@ -5,6 +5,9 @@ import type { DraftLine } from '@/lib/quick-entry'
 
 vi.mock('@/context/CurrencyContext', () => ({ useCurrency: () => ({ mode: 'usd', rate: 90 }) }))
 
+// Whole-screen renders; under the full parallel suite they can be slow on a busy machine.
+vi.setConfig({ testTimeout: 30_000 })
+
 const { QuickEntry } = await import('./QuickEntry')
 
 const parsed: DraftLine[] = [
@@ -80,6 +83,7 @@ describe('Quick entry: moving between steps (159)', () => {
     const amount = screen.getByLabelText('Balance')
     fireEvent.change(amount, { target: { value: '40L' } })
     fireEvent.blur(amount)
+    expect((amount as HTMLInputElement).value, 'after blur').toBe('40,00,000')
     fireEvent.click(tellStep())
     fireEvent.change(screen.getByLabelText('Describe your accounts'), { target: { value: 'half typed' } })
     fireEvent.click(listStep())
@@ -90,6 +94,47 @@ describe('Quick entry: moving between steps (159)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add to my list' }))
     await waitFor(() => expect(screen.getAllByDisplayValue('HDFC savings')).toHaveLength(2))
     expect((screen.getAllByLabelText('Balance')[0] as HTMLInputElement).value).toBe('40,00,000')
+  })
+
+  it('lets you step to the list while the AI is still answering, and the lines land when it does', async () => {
+    let finish: (r: Response) => void = () => {}
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((res) => (finish = res))))
+    mount()
+    fireEvent.click(tellStep())
+    fireEvent.change(screen.getByLabelText('Describe your accounts'), { target: { value: 'HDFC' } })
+    fireEvent.click(screen.getByRole('button', { name: /List my accounts|Listing/ }))
+    fireEvent.click(listStep())
+    await act(async () => finish(new Response(JSON.stringify({ lines: parsed }), { status: 200 })))
+    expect(await screen.findByDisplayValue('HDFC savings')).toBeTruthy()
+  })
+
+  it('a failed AI call keeps what was typed when moving between steps', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'nope' }), { status: 502 })))
+    mount()
+    fireEvent.click(tellStep())
+    fireEvent.change(screen.getByLabelText('Describe your accounts'), { target: { value: 'HDFC' } })
+    fireEvent.click(screen.getByRole('button', { name: 'List my accounts' }))
+    expect(await screen.findByText('nope')).toBeTruthy()
+    fireEvent.click(listStep())
+    fireEvent.click(tellStep())
+    expect((screen.getByLabelText('Describe your accounts') as HTMLTextAreaElement).value).toBe('HDFC')
+  })
+
+  it('an empty submit shows a message and does not call the AI', () => {
+    mount()
+    fireEvent.click(tellStep())
+    fireEvent.click(screen.getByRole('button', { name: 'List my accounts' }))
+    expect(screen.getByText(/Tell us at least one account/)).toBeTruthy()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('removing a tile-added line and undoing puts it back with its count', () => {
+    mount()
+    fireEvent.click(screen.getByRole('button', { name: 'Add Property to India assets' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Remove/ }))
+    expect(screen.queryByLabelText('Your accounts')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    expect(screen.getByRole('button', { name: /Add Property to India assets \(1 already\)/ })).toBeTruthy()
   })
 
   it('marks the current step and shows the line count on the list step', () => {
@@ -147,6 +192,51 @@ describe('Quick entry: voice (160)', () => {
     expect(inst?.abort).toHaveBeenCalled()
     act(() => inst?.onresult?.(said('late words')))
     expect(box.value).toBe('NRE savings at ICICI 10L')
+  })
+
+  it('typing before anything is heard also ends the dictation, and Speak works again right away', () => {
+    installSpeech()
+    mount()
+    fireEvent.click(tellStep())
+    fireEvent.click(screen.getByRole('button', { name: /Speak/ }))
+    const first = inst
+    const box = screen.getByLabelText('Describe your accounts') as HTMLTextAreaElement
+    fireEvent.change(box, { target: { value: 'typed first' } })
+    expect(first?.abort).toHaveBeenCalled()
+    act(() => first?.onresult?.(said('ignored')))
+    expect(box.value).toBe('typed first')
+
+    fireEvent.click(screen.getByRole('button', { name: /Speak/ }))
+    expect(inst).not.toBe(first)
+    act(() => inst?.onresult?.(said('and spoken')))
+    expect(box.value).toBe('typed first and spoken')
+  })
+
+  it('leaving the Tell us step while listening stops the microphone and keeps the text', () => {
+    installSpeech()
+    mount()
+    fireEvent.click(tellStep())
+    fireEvent.click(screen.getByRole('button', { name: /Speak/ }))
+    act(() => inst?.onresult?.(said('HDFC savings')))
+    const rec = inst
+    fireEvent.click(listStep())
+    expect(rec?.abort).toHaveBeenCalled()
+    act(() => rec?.onresult?.(said('late')))
+    fireEvent.click(tellStep())
+    expect((screen.getByLabelText('Describe your accounts') as HTMLTextAreaElement).value).toBe('HDFC savings')
+  })
+
+  it('other problems get their own plain message, and a deliberate stop shows none', () => {
+    installSpeech()
+    mount()
+    fireEvent.click(tellStep())
+    fireEvent.click(screen.getByRole('button', { name: /Speak/ }))
+    act(() => inst?.onerror?.({ error: 'audio-capture' }))
+    expect(screen.getByText(/couldn.t find a microphone/)).toBeTruthy()
+    act(() => inst?.onerror?.({ error: 'network' }))
+    expect(screen.getByText(/needs an internet connection/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /Listening/ }))
+    expect(screen.queryByRole('button', { name: /Listening/ })).toBeNull()
   })
 
   it('explains how to type instead when the microphone is blocked', () => {

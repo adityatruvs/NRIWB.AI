@@ -403,7 +403,7 @@ function StepBar({
     { key: 'review' as const, n: 2, label: count ? `Your list (${count})` : 'Your list' },
   ]
   return (
-    <nav aria-label="Steps" className="flex items-center gap-2">
+    <nav aria-label="Steps" className="flex flex-wrap items-center gap-2">
       {items.map((it, i) => {
         const current = step === it.key
         return (

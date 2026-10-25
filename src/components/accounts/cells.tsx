@@ -106,7 +106,13 @@ export function AmountCell({
   const [error, setError] = useState<string | null>(null)
   const focused = useRef(false)
   // Follow outside changes (an undo, a re-parse) unless the user is mid-edit.
+  // Only when something actually changed: on mount the text already is `show(value)`,
+  // and re-running then could overwrite what was typed a moment ago.
+  const shown = useRef({ value, currency, inlineSymbol })
   useEffect(() => {
+    const p = shown.current
+    if (p.value === value && p.currency === currency && p.inlineSymbol === inlineSymbol) return
+    shown.current = { value, currency, inlineSymbol }
     if (!focused.current) setText(show(value))
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `show` only depends on these
   }, [value, currency, inlineSymbol])
@@ -256,14 +262,20 @@ export function MicButton({
 
   useEffect(() => {
     if (rec.current && emitted.current !== null && value !== emitted.current) {
+      // Let go of the session straight away so Speak works again at once.
+      const r = rec.current
+      rec.current = null
       ignoreResults.current = true
-      rec.current.abort()
+      setListening(false)
+      r.abort()
     }
   }, [value])
   useEffect(
     () => () => {
       ignoreResults.current = true
-      rec.current?.abort()
+      const r = rec.current
+      rec.current = null
+      r?.abort()
     },
     [],
   )
@@ -284,7 +296,9 @@ export function MicButton({
     r.continuous = true
     const base = value ? value.replace(/\s*$/, ' ') : ''
     ignoreResults.current = false
-    emitted.current = null
+    // Until something is heard the box should still hold what it held when we
+    // started, so typing before the first words also ends the dictation.
+    emitted.current = value
     r.onresult = (e) => {
       if (ignoreResults.current) return
       let t = ''
@@ -297,7 +311,9 @@ export function MicButton({
       onProblem(voiceProblem(e.error))
     }
     r.onend = () => {
-      if (rec.current === r) rec.current = null
+      // A late end from an earlier session must not switch off a newer one.
+      if (rec.current !== r) return
+      rec.current = null
       emitted.current = null
       setListening(false)
     }
