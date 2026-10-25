@@ -78,6 +78,7 @@ export function QuickEntry({
   const [removed, setRemoved] = useState<{ line: DraftLine; index: number } | null>(null)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [focusId, setFocusId] = useState<string | null>(null)
 
   useEffect(() => onDirtyChange(lines.length), [lines.length, onDirtyChange])
   useEffect(() => {
@@ -90,6 +91,17 @@ export function QuickEntry({
     const t = setTimeout(() => setRemoved(null), 6000)
     return () => clearTimeout(t)
   }, [removed])
+
+  // Focus a freshly added line's amount once it is on screen.
+  useEffect(() => {
+    if (!focusId) return
+    const el = document.getElementById(`qa-${focusId}`)
+    if (el) {
+      el.focus({ preventScroll: true })
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    }
+    setFocusId(null)
+  }, [focusId, lines])
 
   const toTop = () => window.scrollTo({ top: 0, behavior: 'smooth' })
 
@@ -155,7 +167,7 @@ export function QuickEntry({
     const l = blankLine(g.country, g.kind, t, typeChoiceLabel(t))
     setLines((prev) => [...prev, l])
     setFresh(new Set([l.id]))
-    setTimeout(() => document.getElementById(`qa-${l.id}`)?.focus(), 40)
+    setFocusId(l.id)
   }
 
   async function save() {
@@ -178,8 +190,15 @@ export function QuickEntry({
     )
   }
 
+  const goTo = (next: 'tell' | 'review') => {
+    setStep(next)
+    toTop()
+  }
+
   if (step === 'tell') {
     return (
+      <div className="flex flex-col gap-5">
+      <StepBar step={step} count={lines.length} onGo={goTo} />
       <TellStep
         said={said}
         setSaid={setSaid}
@@ -199,6 +218,7 @@ export function QuickEntry({
         }}
         onMoreWays={onMoreWays}
       />
+      </div>
     )
   }
 
@@ -214,6 +234,7 @@ export function QuickEntry({
 
   return (
     <div className="flex flex-col gap-5 animate-fade-in">
+      <StepBar step={step} count={lines.length} onGo={goTo} />
       <div className="flex flex-wrap items-center justify-between gap-3">
         {heardText ? (
           <div className="min-w-0">
@@ -367,6 +388,55 @@ export function QuickEntry({
   )
 }
 
+/** Tell us ⇄ Your list. Both are always reachable; nothing typed or fixed is lost by moving. */
+function StepBar({
+  step,
+  count,
+  onGo,
+}: {
+  step: 'tell' | 'review'
+  count: number
+  onGo: (s: 'tell' | 'review') => void
+}) {
+  const items = [
+    { key: 'tell' as const, n: 1, label: 'Tell us' },
+    { key: 'review' as const, n: 2, label: count ? `Your list (${count})` : 'Your list' },
+  ]
+  return (
+    <nav aria-label="Steps" className="flex flex-wrap items-center gap-2">
+      {items.map((it, i) => {
+        const current = step === it.key
+        return (
+          <div key={it.key} className="flex items-center gap-2">
+            {i > 0 && <span aria-hidden className="h-px w-6 bg-border" />}
+            <button
+              type="button"
+              onClick={() => !current && onGo(it.key)}
+              aria-current={current ? 'step' : undefined}
+              className={cn(
+                'inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[13px] font-medium transition-colors',
+                current
+                  ? 'border-brand/60 bg-brand/10 text-foreground'
+                  : 'border-border text-muted-foreground hover:border-brand/50 hover:text-foreground',
+              )}
+            >
+              <span
+                className={cn(
+                  'flex size-5 items-center justify-center rounded-full text-[11px] font-bold',
+                  current ? 'bg-brand text-white' : 'bg-muted text-muted-foreground',
+                )}
+              >
+                {it.n}
+              </span>
+              {it.label}
+            </button>
+          </div>
+        )
+      })}
+    </nav>
+  )
+}
+
 function NeedPill({ children }: { children: React.ReactNode }) {
   return (
     <span className="rounded-full bg-warning-muted px-2 py-0.5 text-[11.5px] font-semibold text-warning">{children}</span>
@@ -491,7 +561,7 @@ function TellStep({
           </>
         ) : (
           <button type="button" onClick={onChecklist} className="font-semibold text-brand underline underline-offset-2">
-            Pick from a checklist instead
+            Skip and pick from a checklist
           </button>
         )}
         <button
@@ -646,7 +716,7 @@ function AnythingElse({ lines, onAdd }: { lines: DraftLine[]; onAdd: (g: LineGro
         <span className="text-[12.5px] text-muted-foreground">
           {lines.length
             ? 'People often forget property, retirement accounts and loans. Tap to add a line.'
-            : 'Tap each account you hold. Dashed tiles are the ones people most often forget.'}
+            : 'Tap each account you hold. Highlighted tiles are the ones people most often forget.'}
         </span>
       </div>
       <div className="grid gap-4 @lg:grid-cols-2 @4xl:grid-cols-4">
@@ -668,10 +738,15 @@ function AnythingElse({ lines, onAdd }: { lines: DraftLine[]; onAdd: (g: LineGro
                     aria-label={`Add ${typeChoiceLabel(t)} to ${g.label}${c ? ` (${c} already)` : ''}`}
                     className={cn(
                       'flex items-center justify-between gap-2 rounded-xl border border-border bg-card px-3 py-2 text-left text-[13px] transition-colors hover:border-brand/60',
-                      forgotten && 'border-dashed',
+                      forgotten && 'border-dashed border-brand/60 bg-brand/[0.06]',
                     )}
                   >
-                    <span className="truncate">{typeChoiceLabel(t)}</span>
+                    <span className="flex min-w-0 flex-col">
+                      <span className="truncate">{typeChoiceLabel(t)}</span>
+                      {forgotten && (
+                        <span className="text-[10.5px] font-medium text-brand">Often forgotten</span>
+                      )}
+                    </span>
                     {c ? (
                       <span className="rounded-full bg-success-muted px-1.5 text-[11px] font-bold text-success">{c}</span>
                     ) : (
