@@ -8,7 +8,7 @@
  * every line has a type and an amount.
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, Check, Link2, Plus, Sparkles, X } from 'lucide-react'
 import { useCurrency } from '@/context/CurrencyContext'
 import { formatAmount, formatLakhs, formatUSD } from '@/lib/currency'
@@ -19,6 +19,7 @@ import {
   lineMissing,
   lineToHolding,
   missingCounts,
+  nameError,
   newLineId,
   placeLine,
   readyToSave,
@@ -56,7 +57,11 @@ export function QuickEntry({
   onDirtyChange,
 }: {
   rate: number
-  /** Saves each holding; resolves per holding to the saved row or null on failure. */
+  /**
+   * Saves each holding; resolves per holding to the saved row or null on failure.
+   * Each holding's `id` is a key that stays the same for that line across retries,
+   * so a line that was saved but whose reply was lost is not created twice.
+   */
   onSave: (holdings: Holding[]) => Promise<(Holding | null)[]>
   /** Everything on the list was saved. */
   onDone: (saved: Holding[]) => void
@@ -75,9 +80,12 @@ export function QuickEntry({
   const [status, setStatus] = useState<{ text: string; error?: boolean } | null>(null)
   const [voiceNote, setVoiceNote] = useState<string | null>(null)
   const [fresh, setFresh] = useState<ReadonlySet<string>>(new Set())
-  const [removed, setRemoved] = useState<{ line: DraftLine; index: number } | null>(null)
+  // Every removal in the last few seconds, newest last, so Undo brings back each one in turn.
+  const [removedStack, setRemovedStack] = useState<{ line: DraftLine; index: number }[]>([])
+  const removed = removedStack[removedStack.length - 1] ?? null
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+  const saveKeys = useRef(new Map<string, string>()) // line id → the key its saves are sent with
 
   useEffect(() => onDirtyChange(lines.length), [lines.length, onDirtyChange])
   useEffect(() => {
@@ -87,7 +95,7 @@ export function QuickEntry({
   }, [fresh])
   useEffect(() => {
     if (!removed) return
-    const t = setTimeout(() => setRemoved(null), 6000)
+    const t = setTimeout(() => setRemovedStack([]), 6000)
     return () => clearTimeout(t)
   }, [removed])
 
@@ -141,14 +149,14 @@ export function QuickEntry({
   function remove(l: DraftLine) {
     const index = lines.findIndex((x) => x.id === l.id)
     setLines((prev) => prev.filter((x) => x.id !== l.id))
-    setRemoved({ line: l, index })
+    setRemovedStack((prev) => [...prev, { line: l, index }])
   }
 
   function undoRemove() {
     if (!removed) return
     const { line, index } = removed
     setLines((prev) => [...prev.slice(0, index), line, ...prev.slice(index)])
-    setRemoved(null)
+    setRemovedStack((prev) => prev.slice(0, -1))
   }
 
   function addTile(g: LineGroup, t: TypeChoice) {
@@ -162,7 +170,12 @@ export function QuickEntry({
     if (!readyToSave(lines) || saving) return
     setSaving(true)
     setSaveError(null)
-    const results = await onSave(lines.map((l) => lineToHolding(l, rate)))
+    const keyFor = (id: string) => {
+      let k = saveKeys.current.get(id)
+      if (!k) saveKeys.current.set(id, (k = crypto.randomUUID()))
+      return k
+    }
+    const results = await onSave(lines.map((l) => ({ ...lineToHolding(l, rate), id: keyFor(l.id) })))
     setSaving(false)
     const failed = lines.filter((_, i) => !results[i])
     const saved = results.filter((h): h is Holding => !!h)
@@ -205,6 +218,13 @@ export function QuickEntry({
   const unknown = lines.filter((l) => !l.country)
   const counts = missingCounts(lines)
   const ready = readyToSave(lines)
+  const missingText = [
+    counts.type > 0 && `${counts.type} need${counts.type === 1 ? 's' : ''} a type`,
+    counts.amount > 0 && `${counts.amount} need${counts.amount === 1 ? 's' : ''} an amount`,
+    counts.name > 0 && `${counts.name} name${counts.name === 1 ? ' is' : 's are'} too long`,
+  ]
+    .filter(Boolean)
+    .join(' · ')
   const netUsd = lines.reduce((s, l) => {
     if (l.amount == null || !l.country) return s
     const usd = l.currency === 'USD' ? l.amount : l.amount / rate
@@ -239,49 +259,16 @@ export function QuickEntry({
       </div>
 
       {lines.length > 0 && (
-      <section aria-label="Your accounts" className="card-surface @container overflow-hidden p-0">
-        {unknown.length > 0 && (
-          <div>
-            <div className="flex items-center gap-2.5 bg-muted/50 px-4 py-3 text-[13.5px] font-semibold">
-              Not sure where these go
-              <span className="rounded-full bg-warning-muted px-2 py-0.5 text-[11px] font-semibold text-warning">
-                Choose India or US
-              </span>
-            </div>
-            {unknown.map((l) => (
-              <LineRow
-                key={l.id}
-                line={l}
-                fresh={fresh.has(l.id)}
-                onPatch={(f) => patch(l.id, f)}
-                onRemove={() => remove(l)}
-              />
-            ))}
-          </div>
-        )}
-        {LINE_GROUPS.map((g) => {
-          const rows = lines.filter((l) => l.country === g.country && l.kind === g.kind)
-          if (rows.length === 0) return null
-          const cur = g.country === 'IN' ? 'INR' : 'USD'
-          const total = rows.reduce((s, l) => {
-            if (l.amount == null) return s
-            if (l.currency === cur) return s + l.amount
-            return s + (cur === 'INR' ? l.amount * rate : l.amount / rate)
-          }, 0)
-          return (
-            <div key={g.key} className="border-t border-border/50 first:border-t-0">
+        <section aria-label="Your accounts" className="card-surface @container overflow-hidden p-0">
+          {unknown.length > 0 && (
+            <div>
               <div className="flex items-center gap-2.5 bg-muted/50 px-4 py-3 text-[13.5px] font-semibold">
-                <CountryChip country={g.country} />
-                {g.label}
-                <span className="text-[12px] font-medium text-muted-foreground">
-                  {rows.length} account{rows.length === 1 ? '' : 's'}
-                </span>
-                <span className="ml-auto font-medium tabular-nums text-muted-foreground">
-                  {g.kind === 'liability' && total > 0 ? '−' : ''}
-                  {cur === 'INR' ? formatLakhs(total) : formatUSD(total)}
+                Not sure where these go
+                <span className="rounded-full bg-warning-muted px-2 py-0.5 text-[11px] font-semibold text-warning">
+                  Choose India or US
                 </span>
               </div>
-              {rows.map((l) => (
+              {unknown.map((l) => (
                 <LineRow
                   key={l.id}
                   line={l}
@@ -291,9 +278,42 @@ export function QuickEntry({
                 />
               ))}
             </div>
-          )
-        })}
-      </section>
+          )}
+          {LINE_GROUPS.map((g) => {
+            const rows = lines.filter((l) => l.country === g.country && l.kind === g.kind)
+            if (rows.length === 0) return null
+            const cur = g.country === 'IN' ? 'INR' : 'USD'
+            const total = rows.reduce((s, l) => {
+              if (l.amount == null) return s
+              if (l.currency === cur) return s + l.amount
+              return s + (cur === 'INR' ? l.amount * rate : l.amount / rate)
+            }, 0)
+            return (
+              <div key={g.key} className="border-t border-border/50 first:border-t-0">
+                <div className="flex items-center gap-2.5 bg-muted/50 px-4 py-3 text-[13.5px] font-semibold">
+                  <CountryChip country={g.country} />
+                  {g.label}
+                  <span className="text-[12px] font-medium text-muted-foreground">
+                    {rows.length} account{rows.length === 1 ? '' : 's'}
+                  </span>
+                  <span className="ml-auto font-medium tabular-nums text-muted-foreground">
+                    {g.kind === 'liability' && total > 0 ? '−' : ''}
+                    {cur === 'INR' ? formatLakhs(total) : formatUSD(total)}
+                  </span>
+                </div>
+                {rows.map((l) => (
+                  <LineRow
+                    key={l.id}
+                    line={l}
+                    fresh={fresh.has(l.id)}
+                    onPatch={(f) => patch(l.id, f)}
+                    onRemove={() => remove(l)}
+                  />
+                ))}
+              </div>
+            )
+          })}
+        </section>
       )}
 
       <AnythingElse lines={lines} onAdd={addTile} />
@@ -307,46 +327,51 @@ export function QuickEntry({
       {/* Save bar — stays in view while the list scrolls. Right margin keeps the
           button clear of the floating Copilot button. */}
       {lines.length > 0 && (
-      <div className="sticky bottom-3 z-20 mr-16 flex items-center justify-between gap-3 rounded-2xl border border-border/80 bg-card/95 px-4 py-3 shadow-[0_12px_28px_-10px_hsl(var(--shadow-color)/0.25)] backdrop-blur-md">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2 text-[13.5px]">
-            <span>
-              <b className="tabular-nums">{lines.length}</b> account{lines.length === 1 ? '' : 's'}
-            </span>
-            {counts.type > 0 && <NeedPill>{counts.type} need{counts.type === 1 ? 's' : ''} a type</NeedPill>}
-            {counts.amount > 0 && <NeedPill>{counts.amount} need{counts.amount === 1 ? 's' : ''} an amount</NeedPill>}
-            {ready && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-success-muted px-2 py-0.5 text-[11.5px] font-semibold text-success">
-                <Check size={11} />
-                Ready to save
+        <div className="sticky bottom-3 z-20 mr-16 flex items-center justify-between gap-3 rounded-2xl border border-border/80 bg-card/95 px-4 py-3 shadow-[0_12px_28px_-10px_hsl(var(--shadow-color)/0.25)] backdrop-blur-md">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2 text-[13.5px]">
+              <span>
+                <b className="tabular-nums">{lines.length}</b> account{lines.length === 1 ? '' : 's'}
               </span>
-            )}
-            {lines.length > 0 && (
-              <span className="text-[12.5px] text-muted-foreground">
-                Net worth of this list{' '}
-                <span className="font-semibold tabular-nums text-foreground">{formatAmount(netUsd, mode, rate)}</span>
+              <span id="qe-missing" className="contents">
+                {counts.type > 0 && <NeedPill>{counts.type} need{counts.type === 1 ? 's' : ''} a type</NeedPill>}
+                {counts.amount > 0 && <NeedPill>{counts.amount} need{counts.amount === 1 ? 's' : ''} an amount</NeedPill>}
+                {counts.name > 0 && <NeedPill>{counts.name} name{counts.name === 1 ? ' is' : 's are'} too long</NeedPill>}
               </span>
+              {ready && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-success-muted px-2 py-0.5 text-[11.5px] font-semibold text-success">
+                  <Check size={11} />
+                  Ready to save
+                </span>
+              )}
+              {lines.length > 0 && (
+                <span className="text-[12.5px] text-muted-foreground">
+                  Net worth of this list{' '}
+                  <span className="font-semibold tabular-nums text-foreground">{formatAmount(netUsd, mode, rate)}</span>
+                </span>
+              )}
+            </div>
+            {!ready && lines.length > 0 && (
+              <p className="mt-1 hidden text-[12px] text-muted-foreground sm:block">
+                Nothing is saved until every line has a type and an amount.
+              </p>
             )}
           </div>
-          {!ready && lines.length > 0 && (
-            <p className="mt-1 hidden text-[12px] text-muted-foreground sm:block">
-              Nothing is saved until every line has a type and an amount.
-            </p>
-          )}
+          <button
+            type="button"
+            onClick={save}
+            disabled={!ready || saving}
+            title={!ready && missingText ? `Not yet: ${missingText}` : undefined}
+            aria-describedby={!ready && missingText ? 'qe-missing' : undefined}
+            className="btn-primary inline-flex shrink-0 items-center gap-1.5 rounded-xl px-4 py-2.5 text-[13.5px] font-semibold disabled:pointer-events-none disabled:opacity-45"
+          >
+            {saving
+              ? 'Saving…'
+              : ready
+                ? `Save ${lines.length} account${lines.length === 1 ? '' : 's'}`
+                : 'Save accounts'}
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={save}
-          disabled={!ready || saving}
-          className="btn-primary inline-flex shrink-0 items-center gap-1.5 rounded-xl px-4 py-2.5 text-[13.5px] font-semibold disabled:pointer-events-none disabled:opacity-45"
-        >
-          {saving
-            ? 'Saving…'
-            : ready
-              ? `Save ${lines.length} account${lines.length === 1 ? '' : 's'}`
-              : 'Save accounts'}
-        </button>
-      </div>
       )}
 
       {removed && (
@@ -358,7 +383,7 @@ export function QuickEntry({
           <button type="button" onClick={undoRemove} className="font-semibold underline underline-offset-2">
             Undo
           </button>
-          <button type="button" aria-label="Dismiss" onClick={() => setRemoved(null)} className="opacity-70 hover:opacity-100">
+          <button type="button" aria-label="Dismiss" onClick={() => setRemovedStack([])} className="opacity-70 hover:opacity-100">
             <X size={14} />
           </button>
         </div>
@@ -541,10 +566,15 @@ function LineRow({
         <input
           id={`qn-${l.id}`}
           value={l.name}
-          maxLength={60}
           onChange={(e) => onPatch((x) => ({ ...x, name: e.target.value }))}
-          className={cellCls}
+          aria-invalid={nameError(l.name) ? true : undefined}
+          className={cn(cellCls, nameError(l.name) && 'border-danger focus:border-danger focus:ring-danger/12')}
         />
+        {nameError(l.name) && (
+          <p role="alert" className="text-[11.5px] text-danger">
+            {nameError(l.name)}
+          </p>
+        )}
       </Field>
       <button
         type="button"

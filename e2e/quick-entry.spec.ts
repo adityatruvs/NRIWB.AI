@@ -98,6 +98,10 @@ for (const mode of MODES) {
       await save.click()
 
       await expect(page.getByText('Saved 7 accounts.')).toBeVisible()
+      // The confirmation gives net worth in both currencies and a way back to the list.
+      const confirmation = page.getByRole('status').filter({ hasText: 'Saved 7 accounts.' })
+      await expect(confirmation).toContainText(/net worth is now\s+[-−]?\$[\d,]+\s*\/\s*[-−]?₹[\d,]+/)
+      await expect(confirmation.getByRole('link', { name: 'View in Accounts' })).toBeVisible()
       await expect(page.getByRole('textbox', { name: `Name of ${P} Schwab` })).toBeVisible()
       await shot(page, `accounts-sheet-${mode}`)
 

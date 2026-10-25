@@ -83,6 +83,15 @@ export async function POST(request: Request) {
     }
   }
 
+  // A repeat of a save we already did (a retry after a lost reply): hand back what exists.
+  if (input.clientId) {
+    const existing = await prisma.account.findUnique({ where: { id: input.clientId } })
+    if (existing) {
+      if (existing.userId !== userId) return Response.json({ error: 'That id is already taken' }, { status: 409 })
+      return Response.json({ account: toHolding(existing) }, { status: 200 })
+    }
+  }
+
   try {
     const created = await prisma.account.create({
       data: toCreateData(input, userId) as Prisma.AccountUncheckedCreateInput,
@@ -91,8 +100,13 @@ export async function POST(request: Request) {
     await writeDailySnapshot(created.id, created.balanceUsd, created.balanceInr)
     return Response.json({ account: toHolding(created) }, { status: 201 })
   } catch (e) {
-    // Duplicate Plaid account id (the only unique constraint on Account).
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      // Two copies of the same save arrived together and the other one won: return its row.
+      if (input.clientId) {
+        const winner = await prisma.account.findUnique({ where: { id: input.clientId } })
+        if (winner && winner.userId === userId) return Response.json({ account: toHolding(winner) }, { status: 200 })
+      }
+      // Duplicate Plaid account id.
       return Response.json({ error: 'This account is already linked' }, { status: 409 })
     }
     throw e

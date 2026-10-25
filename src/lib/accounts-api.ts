@@ -85,6 +85,9 @@ export const createAccountSchema = z.object({
   ownership: baseFields.ownership.default('self'),
   coOwners: baseFields.coOwners.optional(),
   plaidAccountId: baseFields.plaidAccountId.optional(),
+  // A one-time key the client makes up for this account (a UUID). If the same user
+  // sends it again, the account that already exists comes back instead of a second one.
+  clientId: z.string().regex(/^[A-Za-z0-9_-]{16,64}$/, 'clientId must be 16-64 letters, digits, - or _').optional(),
 })
 
 /**
@@ -177,6 +180,7 @@ export function toCreateData(input: CreateAccountInput, userId: string) {
   const kind = resolveKind(input.accountType, input.kind)
   const details = cleanDetails(input.details)
   return {
+    ...(input.clientId ? { id: input.clientId } : {}),
     userId,
     nickname: input.nickname,
     institution: input.institution,

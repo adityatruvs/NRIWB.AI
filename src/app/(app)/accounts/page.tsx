@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import { motion } from 'motion/react'
 import { Select } from '@base-ui/react/select'
 import {
@@ -72,6 +73,7 @@ import {
   type TypeChoice,
 } from '@/lib/account-details'
 import { holdingChoice, retypeHolding } from '@/lib/quick-entry'
+import { nameError, readAmount } from '@/lib/quick-entry'
 import { ageInDays, freshnessOf, relativeAge, type Freshness } from '@/lib/freshness'
 import { provenanceOf, CONFIDENCE_LABELS } from '@/lib/provenance'
 import { rankStaleAccounts, rankPhrase, type RefreshSuggestion } from '@/lib/refresh-guidance'
@@ -213,7 +215,7 @@ export default function AccountsPage() {
   )
   useEffect(() => {
     if (!justSaved) return
-    const t = setTimeout(() => setJustSaved(null), 6000)
+    const t = setTimeout(() => setJustSaved(null), 12000)
     return () => clearTimeout(t)
   }, [justSaved])
   const [importingCas, setImportingCas] = useState(false)
@@ -370,7 +372,7 @@ export default function AccountsPage() {
       {entering ? (
         <QuickEntry
           rate={rate}
-          onSave={(list) => Promise.all(list.map((h) => addManual(h)))}
+          onSave={(list) => Promise.all(list.map((h) => addManual(h, { key: h.id })))}
           onDone={(saved) => {
             setEntering(false)
             setDraftCount(0)
@@ -406,9 +408,20 @@ export default function AccountsPage() {
               Saved {justSaved.count} account{justSaved.count === 1 ? '' : 's'}.
             </span>{' '}
             <span className="text-muted-foreground">
-              They’re highlighted below. Edit any cell to change a name, type or balance.
+              Your net worth is now{' '}
+              <span className="font-semibold tabular-nums text-foreground">{formatUSD(nw.totalUsd)}</span>
+              {' / '}
+              <span className="font-semibold tabular-nums text-foreground">{formatINR(nw.totalUsd * rate)}</span>.
+              They’re highlighted below; edit any cell to change a name, type or balance.
             </span>
           </span>
+          <Link
+            href="/accounts"
+            onClick={() => document.getElementById('accounts-ledger')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+            className="ml-auto font-semibold text-brand underline underline-offset-2"
+          >
+            View in Accounts
+          </Link>
         </div>
       )}
       {/* ── Summary strip — three quiet figures + the split, one card ──── */}
@@ -559,7 +572,7 @@ export default function AccountsPage() {
       {/* ── Ledger + side rail ────────────────────────────────────────── */}
       <Reveal delay={0.12} className="grid items-start gap-6 2xl:grid-cols-[1fr_320px]">
         {/* Ledger */}
-        <div className="flex min-w-0 flex-col gap-6">
+        <div id="accounts-ledger" className="flex min-w-0 scroll-mt-24 flex-col gap-6">
           {groups.length === 0 ? (
             <Card className="flex flex-col items-center gap-2 py-14 text-center">
               <span className="flex size-11 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
@@ -1712,7 +1725,7 @@ function AccountDialog({
   const [accountType, setAccountType] = useState<AccountType>(initial?.accountType ?? 'checking')
   const [amount, setAmount] = useState(() =>
     initial
-      ? String(Math.round(entryAmount(initial, rate)))
+      ? String(Number(entryAmount(initial, rate).toFixed(2)))
       : '',
   )
   // ── Instrument-specific detail fields (only some surface per country × type) ──
@@ -1739,13 +1752,17 @@ function AccountDialog({
   const spec = detailSpec(country, accountType, isSgb, fdScheme)
   // Named like an FD but typed as NRE/NRO Savings — suggest the FD choice (never auto-switched).
   const suggestedScheme = liability ? null : mistypedFdScheme({ country, accountType, nickname })
-  const valid =nickname.trim() && institution.trim() && Number(amount) > 0
+  // The same rules as quick entry: 40L / 1.2Cr / 95k / 1.5M, zero allowed, no negatives, 2 decimals, names to 60.
+  const amountRead = readAmount(amount)
+  const amountValue = amountRead.ok ? amountRead.value : null
+  const nameProblem = nameError(nickname)
+  const valid = nickname.trim() && !nameProblem && institution.trim() && amountValue != null
 
   // Asset-side loan linking — for any securable asset being edited (it has an id).
   const canSecure = SECURABLE_ASSET_TYPES.has(accountType)
   const editingAssetId = isEdit && !liability && canSecure ? initial?.id : undefined
   const loanOptions = editingAssetId ? holdings.filter((h) => isLiability(h) && h.id) : []
-  const assetUsdNow = balancesFromEntry(country, accountType, Number(amount || 0), rate).balanceUsd
+  const assetUsdNow = balancesFromEntry(country, accountType, amountValue ?? 0, rate).balanceUsd
   const linkedLoansUsd = loanOptions
     .filter((l) => l.securedAgainstId === editingAssetId)
     .reduce((s, l) => s + Math.abs(usdValue(l, rate)), 0)
@@ -1772,7 +1789,7 @@ function AccountDialog({
 
   function submit() {
     if (!valid) return
-    const amt = Number(amount)
+    const amt = amountValue ?? 0
     const h: Holding = {
       id: initial?.id,
       nickname: nickname.trim(),
@@ -1905,7 +1922,8 @@ function AccountDialog({
           <div className="flex flex-col gap-3.5">
           <div className="grid grid-cols-2 gap-3">
             <Field label="Nickname">
-              <input value={nickname} onChange={(e) => setNickname(e.target.value)} placeholder={liability ? 'e.g. Chase Mortgage' : 'e.g. Chase Checking'} className={inputCls} />
+              <input value={nickname} onChange={(e) => setNickname(e.target.value)} placeholder={liability ? 'e.g. Chase Mortgage' : 'e.g. Chase Checking'} aria-invalid={nameProblem ? true : undefined} className={cn(inputCls, nameProblem && 'border-danger')} />
+              {nameProblem && <p role="alert" className="mt-1.5 text-[11.5px] text-danger">{nameProblem}</p>}
             </Field>
             <Field label={liability ? 'Lender' : 'Institution'}>
               <input value={institution} onChange={(e) => setInstitution(e.target.value)} placeholder="e.g. Chase" className={inputCls} />
@@ -1953,12 +1971,18 @@ function AccountDialog({
               </span>
               <input
                 value={amount}
-                onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ''))}
+                onChange={(e) => setAmount(e.target.value)}
                 inputMode="decimal"
-                placeholder="0"
-                className={cn(inputCls, 'h-11 pl-8 text-base tabular-nums')}
+                placeholder={cur === 'USD' ? 'e.g. 95k' : 'e.g. 40L'}
+                aria-invalid={!amountRead.ok ? true : undefined}
+                className={cn(inputCls, 'h-11 pl-8 text-base tabular-nums', !amountRead.ok && 'border-danger')}
               />
             </div>
+            {!amountRead.ok && (
+              <p role="alert" className="mt-1.5 text-[11.5px] text-danger">
+                {amountRead.error}
+              </p>
+            )}
             {spec.depositCurrency && (
               <p className="mt-1.5 text-[11.5px] text-muted-foreground">
                 {depositCurrency === 'USD'
