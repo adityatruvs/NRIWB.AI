@@ -200,6 +200,7 @@ interface Recognition {
   onend: (() => void) | null
   start(): void
   stop(): void
+  abort(): void
 }
 
 function recognitionCtor(): (new () => Recognition) | null {
@@ -211,9 +212,32 @@ function recognitionCtor(): (new () => Recognition) | null {
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null
 }
 
+const VOICE_UNSUPPORTED =
+  'Voice typing isn’t available in this browser. Type instead, or use the microphone on your phone’s keyboard.'
+
+function voiceProblem(error: string): string | null {
+  switch (error) {
+    case 'not-allowed':
+    case 'service-not-allowed':
+      return 'Microphone access is blocked. Allow it in your browser’s site settings, or type instead.'
+    case 'audio-capture':
+      return 'We couldn’t find a microphone. Plug one in, or type instead.'
+    case 'no-speech':
+      return 'We didn’t hear anything. Try again, a little closer to the mic.'
+    case 'network':
+      return 'Voice typing needs an internet connection. Check yours, or type instead.'
+    case 'aborted':
+      return null
+    default:
+      return 'Voice stopped working. Type instead, or try again.'
+  }
+}
+
 /**
- * Dictation into a text box, where the browser supports it (Chrome, Edge,
- * Safari). Hidden elsewhere — the phone keyboard's own mic still works.
+ * Dictation into a text box (Indian English). What is heard is written into the
+ * box, so it can be edited before listing. Typing in the box while listening
+ * ends the dictation so the two never fight. In a browser without speech
+ * recognition the button stays and says to type instead.
  */
 export function MicButton({
   value,
@@ -224,14 +248,25 @@ export function MicButton({
   onChange: (text: string) => void
   onProblem: (message: string | null) => void
 }) {
-  const [supported, setSupported] = useState(false)
   const [listening, setListening] = useState(false)
   const rec = useRef<Recognition | null>(null)
+  // The last text we wrote; anything else in the box means the user edited it.
+  const emitted = useRef<string | null>(null)
+  const ignoreResults = useRef(false)
+
   useEffect(() => {
-    setSupported(!!recognitionCtor())
-    return () => rec.current?.stop()
-  }, [])
-  if (!supported) return null
+    if (rec.current && emitted.current !== null && value !== emitted.current) {
+      ignoreResults.current = true
+      rec.current.abort()
+    }
+  }, [value])
+  useEffect(
+    () => () => {
+      ignoreResults.current = true
+      rec.current?.abort()
+    },
+    [],
+  )
 
   function toggle() {
     if (rec.current) {
@@ -239,28 +274,31 @@ export function MicButton({
       return
     }
     const Ctor = recognitionCtor()
-    if (!Ctor) return
+    if (!Ctor) {
+      onProblem(VOICE_UNSUPPORTED)
+      return
+    }
     const r = new Ctor()
     r.lang = 'en-IN'
     r.interimResults = true
     r.continuous = true
-    const start = value ? value.replace(/\s*$/, ' ') : ''
+    const base = value ? value.replace(/\s*$/, ' ') : ''
+    ignoreResults.current = false
+    emitted.current = null
     r.onresult = (e) => {
+      if (ignoreResults.current) return
       let t = ''
       for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript
-      onChange(start + t)
+      emitted.current = base + t
+      onChange(base + t)
     }
     r.onerror = (e) => {
-      onProblem(
-        e.error === 'not-allowed' || e.error === 'service-not-allowed'
-          ? 'Microphone access is blocked. Allow it in your browser’s site settings, or type instead.'
-          : e.error === 'no-speech'
-            ? 'We didn’t hear anything. Try again, a little closer to the mic.'
-            : 'Voice stopped working. Type instead, or try again.',
-      )
+      if (ignoreResults.current) return
+      onProblem(voiceProblem(e.error))
     }
     r.onend = () => {
-      rec.current = null
+      if (rec.current === r) rec.current = null
+      emitted.current = null
       setListening(false)
     }
     try {
