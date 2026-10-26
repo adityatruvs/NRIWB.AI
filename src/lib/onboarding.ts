@@ -55,10 +55,10 @@ export const PLANNING_HORIZONS: Option[] = [
 
 // U.S. states + DC (state tax context). Value = USPS code.
 export const US_STATES: Option[] = [
-  'AL','AK','AZ','AR','CA','CO','CT','DE','DC','FL','GA','HI','ID','IL','IN','IA',
-  'KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM',
-  'NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA',
-  'WV','WI','WY',
+  'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'DC', 'FL', 'GA', 'HI', 'ID', 'IL', 'IN', 'IA',
+  'KS', 'KY', 'LA', 'ME', 'MD', 'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ', 'NM',
+  'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA',
+  'WV', 'WI', 'WY',
 ].map((s) => ({ value: s, label: s }))
 
 /* ── Step 2 — Tax & finances ──────────────────────────────────────────────── */
@@ -190,6 +190,61 @@ export interface ComplianceInputs {
 const has = (opts: Option[], v: unknown): v is string =>
   typeof v === 'string' && opts.some((o) => o.value === v)
 
+
+const NAME_MAX = 50
+// Letters in any script (incl. accents/combining marks), spaces, and . ' ’ - only.
+const NAME_CHARS = /^[\p{L}\p{M}][\p{L}\p{M} .'’-]*$/u
+
+/** Returns an error message, or '' when the name is fine. `label` is e.g. "First name". */
+export function validateName(value: string, label: string): string {
+  const v = value.trim()
+  if (!v) return `${label} is required.`
+  if (v.length > NAME_MAX) return `${label} must be ${NAME_MAX} characters or fewer.`
+  if (!NAME_CHARS.test(v)) {
+    return `${label} can only contain letters, spaces, hyphens and apostrophes.`
+  }
+  return ''
+}
+
+export function validatePhone(value: string): string {
+  const v = value.trim()
+  if (!v) return ''
+  if (!/^\+?[\d\s().-]+$/.test(v) || v.indexOf('+') > 0) {
+    return 'Enter a valid phone number, e.g. +1 (555) 000-0000.'
+  }
+  const digits = v.replace(/\D/g, '').length
+  if (digits < 7) return 'That phone number is too short.'
+  if (digits > 15) return 'That phone number is too long.'
+  return ''
+}
+
+const COMPLETION_FIELDS: { key: keyof OnboardingProfile; label: string }[] = [
+  { key: 'planningHorizon', label: 'Long-term plan' },
+  { key: 'usFilingStatus', label: 'U.S. filing status' },
+  { key: 'filesTaxesIn', label: 'Where you file taxes' },
+  { key: 'hasSsnOrItin', label: 'SSN / ITIN' },
+  { key: 'hasPan', label: 'India PAN' },
+  { key: 'foreignAccountsOver10k', label: 'Foreign accounts over $10k' },
+  { key: 'ownsForeignFunds', label: 'Foreign funds' },
+  { key: 'incomeRange', label: 'Household income' },
+  { key: 'netWorthRange', label: 'Net worth' },
+  { key: 'riskTolerance', label: 'Risk tolerance' },
+  { key: 'goals', label: 'Financial goals' },
+  { key: 'holdings', label: 'Current holdings' },
+  { key: 'targetRetirementAge', label: 'Retirement age' },
+  { key: 'maritalStatus', label: 'Marital status' },
+  { key: 'supportsParentsIndia', label: 'Supporting parents' },
+  { key: 'sendsRemittances', label: 'Remittances' },
+]
+
+export function missingProfileFields(meta: Record<string, unknown>): string[] {
+  return COMPLETION_FIELDS.filter(({ key }) => {
+    const v = meta[key]
+    if (Array.isArray(v)) return v.length === 0
+    return v === null || v === undefined || v === ''
+  }).map((f) => f.label)
+}
+
 /**
  * Validate + normalize a raw onboarding payload. Returns the profile + compliance
  * inputs on success, or an error string on the first failing required field.
@@ -213,7 +268,10 @@ export function parseOnboarding(
   // Required (Step 1)
   const firstName = str(b.firstName)
   const lastName = str(b.lastName)
-  if (!firstName || !lastName) return { error: 'Please enter your first and last name.' }
+  const nameError = validateName(firstName, 'First name') || validateName(lastName, 'Last name')
+  if (nameError) return { error: nameError }
+  const phoneError = validatePhone(str(b.phone))
+  if (phoneError) return { error: phoneError }
 
   const dateOfBirth = str(b.dateOfBirth)
   const dob = new Date(dateOfBirth)

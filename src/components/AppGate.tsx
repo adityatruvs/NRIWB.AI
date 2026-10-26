@@ -6,6 +6,7 @@ import SaveErrorToast from "@/components/SaveErrorToast";
 import { CopilotLauncher } from "@/components/copilot/CopilotLauncher";
 import { ProfileProvider } from "@/context/ProfileContext";
 import { prisma } from "@/lib/prisma";
+import { missingProfileFields } from "@/lib/onboarding";
 
 // Renders for signed-in users only (nested inside <Show when="signed-in">).
 // Until the profile is complete we show onboarding; after that, the dashboard.
@@ -46,6 +47,7 @@ export default async function AppGate({
       taxStatus={meta.taxStatus ?? null}
       indiaDaysCurrentYear={compliance?.indiaDaysCurrentYear ?? null}
       riskTolerance={meta.riskTolerance ?? null}
+      missingFields={missingProfileFields(user?.privateMetadata ?? {})}
     >
       <TopNav />
       <div className="flex flex-1 overflow-hidden">

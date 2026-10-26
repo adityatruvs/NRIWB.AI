@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { Moon, Sun, Trash2 } from 'lucide-react'
+import { Moon, Sun, Trash2, UserCog } from 'lucide-react'
 import { useClerk, useUser, UserButton } from '@clerk/nextjs'
 import { useAccounts } from '@/context/AccountsContext'
 import { useCurrency } from '@/context/CurrencyContext'
@@ -107,6 +107,11 @@ export default function TopNav() {
           </div>
           <UserButton appearance={{ elements: { avatarBox: 'size-8' } }}>
             <UserButton.MenuItems>
+              <UserButton.Link
+                label="Edit profile"
+                labelIcon={<UserCog size={14} />}
+                href="/profile"
+              />
               <UserButton.Action
                 label="Delete account & data"
                 labelIcon={<Trash2 size={14} />}
