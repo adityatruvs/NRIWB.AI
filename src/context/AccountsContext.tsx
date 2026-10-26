@@ -22,6 +22,8 @@ interface AccountsContextValue {
    * `confirmBalance` = "mark updated": records today's balance in history.
    */
   updateAccount: (id: string, account: Holding, opts?: { confirmBalance?: boolean }) => void
+  /** Like `updateAccount`, but resolves to false when the save failed (and was rolled back). */
+  updateAccountChecked: (id: string, account: Holding, opts?: { confirmBalance?: boolean }) => Promise<boolean>
   removeAccount: (id: string) => void
   /** Re-fetch the ledger from the server (e.g. after a balance sync). */
   refresh: () => Promise<void>
@@ -169,28 +171,37 @@ export function AccountsProvider({ children }: { children: React.ReactNode }) {
     [demo],
   )
 
-  const updateAccount = useCallback(
-    (id: string, account: Holding, opts?: { confirmBalance?: boolean }) => {
+  // Applies the change at once, persists it, and rolls it back if the server refuses.
+  // Resolves to whether it stuck, for the few callers that must tell the user.
+  const persistUpdate = useCallback(
+    async (id: string, account: Holding, opts?: { confirmBalance?: boolean }): Promise<boolean> => {
       const prevItem = holdingsRef.current.find((h) => h.id === id)
       setHoldings((prev) => prev.map((h) => (h.id === id ? { ...account, id } : h)))
-      if (demo) return
-      void (async () => {
-        try {
-          const res = await fetch(`/api/accounts/${id}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...updateBody(account), ...(opts?.confirmBalance ? { confirmBalance: true } : {}) }),
-          })
-          if (!res.ok) throw new Error(`PATCH /api/accounts/${id} ${res.status}`)
-          const { account: saved } = (await res.json()) as { account: Holding }
-          setHoldings((prev) => prev.map((h) => (h.id === id ? saved : h)))
-        } catch (e) {
-          console.error('Failed to update account:', e)
-          if (prevItem) setHoldings((prev) => prev.map((h) => (h.id === id ? prevItem : h)))
-        }
-      })()
+      if (demo) return true
+      try {
+        const res = await fetch(`/api/accounts/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...updateBody(account), ...(opts?.confirmBalance ? { confirmBalance: true } : {}) }),
+        })
+        if (!res.ok) throw new Error(`PATCH /api/accounts/${id} ${res.status}`)
+        const { account: saved } = (await res.json()) as { account: Holding }
+        setHoldings((prev) => prev.map((h) => (h.id === id ? saved : h)))
+        return true
+      } catch (e) {
+        console.error('Failed to update account:', e)
+        if (prevItem) setHoldings((prev) => prev.map((h) => (h.id === id ? prevItem : h)))
+        return false
+      }
     },
     [demo],
+  )
+
+  const updateAccount = useCallback(
+    (id: string, account: Holding, opts?: { confirmBalance?: boolean }) => {
+      void persistUpdate(id, account, opts)
+    },
+    [persistUpdate],
   )
 
   const removeAccount = useCallback(
@@ -272,6 +283,7 @@ export function AccountsProvider({ children }: { children: React.ReactNode }) {
     clearLinked,
     addManual,
     updateAccount,
+    updateAccountChecked: persistUpdate,
     removeAccount,
     refresh: loadFromServer,
     loadDemoData,

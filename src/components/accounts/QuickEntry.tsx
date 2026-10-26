@@ -8,7 +8,7 @@
  * every line has a type and an amount.
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, Check, Link2, Plus, Sparkles, X } from 'lucide-react'
 import { useCurrency } from '@/context/CurrencyContext'
 import { formatAmount, formatLakhs, formatUSD } from '@/lib/currency'
@@ -26,6 +26,8 @@ import {
   type DraftLine,
   type LineGroup,
 } from '@/lib/quick-entry'
+import { MAX_REVISE_LINES, applyRevision, describeApplied, type Revision } from '@/lib/account-revise'
+import { track } from '@/lib/analytics'
 import type { Holding } from '@/lib/portfolio'
 import { AmountCell, CountryChip, MicButton, TypeCell, cellCls, missingCls } from '@/components/accounts/cells'
 import { cn } from '@/lib/utils'
@@ -50,12 +52,15 @@ const WHERE_OPTIONS = LINE_GROUPS.map((g) => ({ key: g.key, label: g.label }))
 
 export function QuickEntry({
   rate,
+  firstLedger = false,
   onSave,
   onDone,
   onMoreWays,
   onDirtyChange,
 }: {
   rate: number
+  /** The ledger was empty when this opened, so a save here is their first net worth. */
+  firstLedger?: boolean
   /** Saves each holding; resolves per holding to the saved row or null on failure. */
   onSave: (holdings: Holding[]) => Promise<(Holding | null)[]>
   /** Everything on the list was saved. */
@@ -78,6 +83,28 @@ export function QuickEntry({
   const [removed, setRemoved] = useState<{ line: DraftLine; index: number } | null>(null)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [changeNote, setChangeNote] = useState<string | null>(null)
+  const [undoChange, setUndoChange] = useState<{
+    before: Map<string, DraftLine>
+    applied: Map<string, DraftLine>
+    addedIds: Set<string>
+  } | null>(null)
+
+  const openedAt = useRef(Date.now())
+  const opened = useRef(false)
+  const firstLedgerAtOpen = useRef(firstLedger)
+  const savedOnce = useRef(false)
+  const needTypeFix = useRef(new Set<string>())
+  const linesRef = useRef<DraftLine[]>([])
+  linesRef.current = lines
+  useEffect(() => {
+    if (opened.current) return
+    opened.current = true
+    track('tell_us_opened', { first_ledger: firstLedgerAtOpen.current ? 1 : 0 })
+  }, [])
+  useEffect(() => {
+    for (const l of lines) if (!l.type) needTypeFix.current.add(l.id)
+  }, [lines])
 
   useEffect(() => onDirtyChange(lines.length), [lines.length, onDirtyChange])
   useEffect(() => {
@@ -96,34 +123,102 @@ export function QuickEntry({
   async function listAccounts() {
     const text = said.trim()
     if (!text) {
-      setStatus({ text: 'Tell us at least one account, for example “two accounts at HDFC”.', error: true })
+      setStatus({
+        text: lines.length
+          ? 'Say what to add or change, for example “the HDFC ones are NRE and NRO”.'
+          : 'Tell us at least one account, for example “two accounts at HDFC”.',
+        error: true,
+      })
+      return
+    }
+    const revising = linesRef.current.length > 0
+    if (linesRef.current.length > MAX_REVISE_LINES) {
+      setStatus({
+        text: `Your list has more than ${MAX_REVISE_LINES} lines, which is too many to change at once. Save some of them first, then change the rest.`,
+        error: true,
+      })
       return
     }
     setBusy(true)
-    setStatus({ text: 'Listing your accounts…' })
+    setStatus({ text: revising ? 'Updating your list…' : 'Listing your accounts…' })
     try {
-      const res = await fetch('/api/accounts/parse', {
+      const res = await fetch(revising ? '/api/accounts/revise' : '/api/accounts/parse', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify(
+          revising
+            ? {
+              text,
+              lines: linesRef.current.map(({ id, country, kind, type, name, institution, amount, currency }) => ({
+                id, country, kind, type, name, institution, amount, currency,
+              })),
+            }
+            : { text },
+        ),
       })
-      const data = (await res.json().catch(() => ({}))) as { lines?: DraftLine[]; error?: string }
-      if (!res.ok || !Array.isArray(data.lines)) {
+      const data = (await res.json().catch(() => ({}))) as {
+        lines?: DraftLine[]
+        error?: string
+      } & Partial<Revision>
+      if (!res.ok || (revising ? !Array.isArray(data.adds) || !Array.isArray(data.updates) : !Array.isArray(data.lines))) {
         setStatus({ text: data.error ?? 'NRIWB AI couldn’t read that just now. Try again in a moment.', error: true })
         return
       }
-      if (data.lines.length === 0) {
+      if (revising) {
+        if (data.ambiguous) {
+          setStatus({ text: data.ambiguous, error: true })
+          return
+        }
+        const rev: Revision = {
+          adds: (data.adds ?? []).map((l) => ({ ...l, id: newLineId() })),
+          updates: data.updates ?? [],
+        }
+        const result = applyRevision(linesRef.current, rev)
+        if (result.changedIds.length === 0) {
+          const missed = data.notFound?.length
+            ? ` We couldn’t find ${data.notFound.map((w) => `“${w}”`).join(', ')} on your list.`
+            : ''
+          setStatus({
+            text: `Nothing on your list changed.${missed}${result.skipped.length ? ` ${result.skipped.join('. ')}.` : ''} Try naming the bank and what it is.`,
+            error: true,
+          })
+          return
+        }
+        const was = new Map(linesRef.current.map((l) => [l.id, l]))
+        const added = new Set(rev.adds.map((l) => l.id))
+        setUndoChange({
+          before: new Map(result.changedIds.filter((id) => !added.has(id)).map((id) => [id, was.get(id)!])),
+          applied: new Map(result.lines.filter((l) => result.changedIds.includes(l.id)).map((l) => [l.id, l])),
+          addedIds: added,
+        })
+        setLines(result.lines)
+        setChangeNote(describeApplied(result))
+        setFresh(new Set(result.changedIds))
+        setHeard((prev) => [...prev, text])
+        setSaid('')
+        setStatus(null)
+        setStep('review')
+        toTop()
+        setTimeout(
+          () => document.querySelector(`[data-line="${result.changedIds[0]}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }),
+          80,
+        )
+        return
+      }
+      const parsed = data.lines as DraftLine[]
+      if (parsed.length === 0) {
         setStatus({
           text: 'We couldn’t find any accounts in that. Name the bank or what it is, like “HDFC NRE account” or “Schwab brokerage”.',
           error: true,
         })
         return
       }
-      // Fresh ids here, so lines from the server never collide with tile-added ones.
-      const added = data.lines.map((l) => ({ ...l, id: newLineId() }))
+      const added = parsed.map((l) => ({ ...l, id: newLineId() }))
       setLines((prev) => [...prev, ...added])
       setHeard((prev) => [...prev, text])
       setFresh(new Set(added.map((l) => l.id)))
+      setChangeNote(null)
+      setUndoChange(null)
       setSaid('')
       setStatus(null)
       setStep('review')
@@ -133,6 +228,20 @@ export function QuickEntry({
     } finally {
       setBusy(false)
     }
+  }
+
+  /** Takes back the last AI change, line by line, skipping any line edited since. */
+  function undoLastChange() {
+    if (!undoChange) return
+    const { before, applied, addedIds } = undoChange
+    setLines((prev) =>
+      prev
+        .filter((l) => !(addedIds.has(l.id) && applied.get(l.id) === l))
+        .map((l) => (before.has(l.id) && applied.get(l.id) === l ? before.get(l.id)! : l)),
+    )
+    setUndoChange(null)
+    setChangeNote('Took that back.')
+    setFresh(new Set())
   }
 
   const patch = (id: string, f: (l: DraftLine) => DraftLine) =>
@@ -166,6 +275,17 @@ export function QuickEntry({
     setSaving(false)
     const failed = lines.filter((_, i) => !results[i])
     const saved = results.filter((h): h is Holding => !!h)
+    if (saved.length > 0) {
+      const first = !savedOnce.current
+      savedOnce.current = true
+      track('tell_us_saved', {
+        first_ledger: firstLedgerAtOpen.current ? 1 : 0,
+        is_first_save: first ? 1 : 0,
+        accounts: saved.length,
+        type_fixes: lines.filter((l, i) => results[i] && needTypeFix.current.has(l.id)).length,
+        ...(first ? { ms_to_first_save: Date.now() - openedAt.current } : {}),
+      })
+    }
     if (failed.length === 0) {
       setLines([])
       onDone(saved)
@@ -234,54 +354,33 @@ export function QuickEntry({
           className="btn-ghost inline-flex items-center gap-1.5 rounded-xl border border-border/70 px-3.5 py-2 text-[13px] font-medium"
         >
           {heard.length ? <ArrowLeft size={14} /> : <Sparkles size={14} className="text-brand" />}
-          {heard.length ? 'Tell us more' : 'Describe them with AI'}
+          {lines.length ? 'Add or change with AI' : heard.length ? 'Tell us more' : 'Describe them with AI'}
         </button>
       </div>
 
+      {changeNote && (
+        <p role="status" className="flex items-center gap-2 rounded-xl border border-success/25 bg-success-muted/50 px-4 py-2.5 text-[13px]">
+          <Check size={14} className="shrink-0 text-success" />
+          <span className="min-w-0 flex-1">{changeNote}</span>
+          {undoChange && (
+            <button type="button" onClick={undoLastChange} className="shrink-0 font-semibold underline underline-offset-2">
+              Undo
+            </button>
+          )}
+        </p>
+      )}
+
       {lines.length > 0 && (
-      <section aria-label="Your accounts" className="card-surface @container overflow-hidden p-0">
-        {unknown.length > 0 && (
-          <div>
-            <div className="flex items-center gap-2.5 bg-muted/50 px-4 py-3 text-[13.5px] font-semibold">
-              Not sure where these go
-              <span className="rounded-full bg-warning-muted px-2 py-0.5 text-[11px] font-semibold text-warning">
-                Choose India or US
-              </span>
-            </div>
-            {unknown.map((l) => (
-              <LineRow
-                key={l.id}
-                line={l}
-                fresh={fresh.has(l.id)}
-                onPatch={(f) => patch(l.id, f)}
-                onRemove={() => remove(l)}
-              />
-            ))}
-          </div>
-        )}
-        {LINE_GROUPS.map((g) => {
-          const rows = lines.filter((l) => l.country === g.country && l.kind === g.kind)
-          if (rows.length === 0) return null
-          const cur = g.country === 'IN' ? 'INR' : 'USD'
-          const total = rows.reduce((s, l) => {
-            if (l.amount == null) return s
-            if (l.currency === cur) return s + l.amount
-            return s + (cur === 'INR' ? l.amount * rate : l.amount / rate)
-          }, 0)
-          return (
-            <div key={g.key} className="border-t border-border/50 first:border-t-0">
+        <section aria-label="Your accounts" className="card-surface @container overflow-hidden p-0">
+          {unknown.length > 0 && (
+            <div>
               <div className="flex items-center gap-2.5 bg-muted/50 px-4 py-3 text-[13.5px] font-semibold">
-                <CountryChip country={g.country} />
-                {g.label}
-                <span className="text-[12px] font-medium text-muted-foreground">
-                  {rows.length} account{rows.length === 1 ? '' : 's'}
-                </span>
-                <span className="ml-auto font-medium tabular-nums text-muted-foreground">
-                  {g.kind === 'liability' && total > 0 ? '−' : ''}
-                  {cur === 'INR' ? formatLakhs(total) : formatUSD(total)}
+                Not sure where these go
+                <span className="rounded-full bg-warning-muted px-2 py-0.5 text-[11px] font-semibold text-warning">
+                  Choose India or US
                 </span>
               </div>
-              {rows.map((l) => (
+              {unknown.map((l) => (
                 <LineRow
                   key={l.id}
                   line={l}
@@ -291,9 +390,42 @@ export function QuickEntry({
                 />
               ))}
             </div>
-          )
-        })}
-      </section>
+          )}
+          {LINE_GROUPS.map((g) => {
+            const rows = lines.filter((l) => l.country === g.country && l.kind === g.kind)
+            if (rows.length === 0) return null
+            const cur = g.country === 'IN' ? 'INR' : 'USD'
+            const total = rows.reduce((s, l) => {
+              if (l.amount == null) return s
+              if (l.currency === cur) return s + l.amount
+              return s + (cur === 'INR' ? l.amount * rate : l.amount / rate)
+            }, 0)
+            return (
+              <div key={g.key} className="border-t border-border/50 first:border-t-0">
+                <div className="flex items-center gap-2.5 bg-muted/50 px-4 py-3 text-[13.5px] font-semibold">
+                  <CountryChip country={g.country} />
+                  {g.label}
+                  <span className="text-[12px] font-medium text-muted-foreground">
+                    {rows.length} account{rows.length === 1 ? '' : 's'}
+                  </span>
+                  <span className="ml-auto font-medium tabular-nums text-muted-foreground">
+                    {g.kind === 'liability' && total > 0 ? '−' : ''}
+                    {cur === 'INR' ? formatLakhs(total) : formatUSD(total)}
+                  </span>
+                </div>
+                {rows.map((l) => (
+                  <LineRow
+                    key={l.id}
+                    line={l}
+                    fresh={fresh.has(l.id)}
+                    onPatch={(f) => patch(l.id, f)}
+                    onRemove={() => remove(l)}
+                  />
+                ))}
+              </div>
+            )
+          })}
+        </section>
       )}
 
       <AnythingElse lines={lines} onAdd={addTile} />
@@ -307,46 +439,46 @@ export function QuickEntry({
       {/* Save bar — stays in view while the list scrolls. Right margin keeps the
           button clear of the floating Copilot button. */}
       {lines.length > 0 && (
-      <div className="sticky bottom-3 z-20 mr-16 flex items-center justify-between gap-3 rounded-2xl border border-border/80 bg-card/95 px-4 py-3 shadow-[0_12px_28px_-10px_hsl(var(--shadow-color)/0.25)] backdrop-blur-md">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2 text-[13.5px]">
-            <span>
-              <b className="tabular-nums">{lines.length}</b> account{lines.length === 1 ? '' : 's'}
-            </span>
-            {counts.type > 0 && <NeedPill>{counts.type} need{counts.type === 1 ? 's' : ''} a type</NeedPill>}
-            {counts.amount > 0 && <NeedPill>{counts.amount} need{counts.amount === 1 ? 's' : ''} an amount</NeedPill>}
-            {ready && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-success-muted px-2 py-0.5 text-[11.5px] font-semibold text-success">
-                <Check size={11} />
-                Ready to save
+        <div className="sticky bottom-3 z-20 mr-16 flex items-center justify-between gap-3 rounded-2xl border border-border/80 bg-card/95 px-4 py-3 shadow-[0_12px_28px_-10px_hsl(var(--shadow-color)/0.25)] backdrop-blur-md">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2 text-[13.5px]">
+              <span>
+                <b className="tabular-nums">{lines.length}</b> account{lines.length === 1 ? '' : 's'}
               </span>
-            )}
-            {lines.length > 0 && (
-              <span className="text-[12.5px] text-muted-foreground">
-                Net worth of this list{' '}
-                <span className="font-semibold tabular-nums text-foreground">{formatAmount(netUsd, mode, rate)}</span>
-              </span>
+              {counts.type > 0 && <NeedPill>{counts.type} need{counts.type === 1 ? 's' : ''} a type</NeedPill>}
+              {counts.amount > 0 && <NeedPill>{counts.amount} need{counts.amount === 1 ? 's' : ''} an amount</NeedPill>}
+              {ready && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-success-muted px-2 py-0.5 text-[11.5px] font-semibold text-success">
+                  <Check size={11} />
+                  Ready to save
+                </span>
+              )}
+              {lines.length > 0 && (
+                <span className="text-[12.5px] text-muted-foreground">
+                  Net worth of this list{' '}
+                  <span className="font-semibold tabular-nums text-foreground">{formatAmount(netUsd, mode, rate)}</span>
+                </span>
+              )}
+            </div>
+            {!ready && lines.length > 0 && (
+              <p className="mt-1 hidden text-[12px] text-muted-foreground sm:block">
+                Nothing is saved until every line has a type and an amount.
+              </p>
             )}
           </div>
-          {!ready && lines.length > 0 && (
-            <p className="mt-1 hidden text-[12px] text-muted-foreground sm:block">
-              Nothing is saved until every line has a type and an amount.
-            </p>
-          )}
+          <button
+            type="button"
+            onClick={save}
+            disabled={!ready || saving}
+            className="btn-primary inline-flex shrink-0 items-center gap-1.5 rounded-xl px-4 py-2.5 text-[13.5px] font-semibold disabled:pointer-events-none disabled:opacity-45"
+          >
+            {saving
+              ? 'Saving…'
+              : ready
+                ? `Save ${lines.length} account${lines.length === 1 ? '' : 's'}`
+                : 'Save accounts'}
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={save}
-          disabled={!ready || saving}
-          className="btn-primary inline-flex shrink-0 items-center gap-1.5 rounded-xl px-4 py-2.5 text-[13.5px] font-semibold disabled:pointer-events-none disabled:opacity-45"
-        >
-          {saving
-            ? 'Saving…'
-            : ready
-              ? `Save ${lines.length} account${lines.length === 1 ? '' : 's'}`
-              : 'Save accounts'}
-        </button>
-      </div>
       )}
 
       {removed && (
@@ -408,10 +540,12 @@ function TellStep({
         </span>
         <div>
           <h2 id="qe-ask" className="font-serif text-[1.35rem] font-medium leading-snug tracking-tight">
-            What accounts do you have in India and the US?
+            {draftCount ? 'What should we add or change?' : 'What accounts do you have in India and the US?'}
           </h2>
           <p className="mt-0.5 text-[14.5px] text-muted-foreground">
-            Name your banks and what you hold. Amounts are optional. We list each account for you to check.
+            {draftCount
+              ? 'Try “the HDFC ones are NRE and NRO” or “also a flat in Hyderabad”. If it could mean more than one account, nothing changes and we ask which.'
+              : 'Name your banks and what you hold. Amounts are optional. We list each account for you to check.'}
           </p>
         </div>
       </div>
@@ -424,7 +558,11 @@ function TellStep({
             if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !busy) onList()
           }}
           aria-label="Describe your accounts"
-          placeholder="e.g. Two accounts at HDFC, an NRE fixed deposit at Axis for 5 lakh, and a flat in Hyderabad. In the US, Chase checking and my 401k at Fidelity."
+          placeholder={
+            draftCount
+              ? 'e.g. The HDFC ones are NRE and NRO. Also a flat in Hyderabad.'
+              : 'e.g. Two accounts at HDFC, an NRE fixed deposit at Axis for 5 lakh, and a flat in Hyderabad. In the US, Chase checking and my 401k at Fidelity.'
+          }
           maxLength={4000}
           className="block min-h-[120px] w-full resize-y rounded-2xl bg-transparent px-4 pb-2 pt-3.5 text-[15px] leading-relaxed outline-none placeholder:text-muted-foreground/60"
         />
@@ -437,11 +575,11 @@ function TellStep({
             className="btn-primary ml-auto inline-flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-[13.5px] font-semibold disabled:opacity-60"
           >
             {busy ? (
-              'Listing your accounts…'
+              draftCount ? 'Updating your list…' : 'Listing your accounts…'
             ) : draftCount ? (
               <>
-                <Plus size={14} />
-                Add to my list
+                <Sparkles size={14} />
+                Update my list
               </>
             ) : (
               'List my accounts'
@@ -486,7 +624,7 @@ function TellStep({
               Back to my list ({draftCount})
             </button>
             <span className="text-[12.5px] text-muted-foreground">
-              Anything new you tell us is added to your list. Nothing you already checked is lost.
+              Changes are highlighted on your list, and nothing you already checked is lost.
             </span>
           </>
         ) : (

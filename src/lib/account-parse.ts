@@ -13,7 +13,7 @@ export const MAX_SAID_CHARS = 4000
 /** Most lines one description can produce. */
 export const MAX_LINES = 40
 
-const GROUPS: { id: string; country: Country; kind: Kind; label: string }[] = [
+export const GROUPS: { id: string; country: Country; kind: Kind; label: string }[] = [
   { id: 'IN_asset', country: 'IN', kind: 'asset', label: 'India, owned (asset)' },
   { id: 'US_asset', country: 'US', kind: 'asset', label: 'US, owned (asset)' },
   { id: 'IN_liability', country: 'IN', kind: 'liability', label: 'India, owed (loan or card)' },

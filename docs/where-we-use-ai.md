@@ -130,3 +130,13 @@ built:
   before deep-building).
 - **Open items** — every AI finding lands here naming its source page, with a
   cost-of-inaction, and clears itself when the work is done (the retention loop).
+
+---
+
+## Quick entry list → `/api/accounts/revise`
+**Job: Translate intent → structured data.** On the "Add several at once" list, the
+customer can say *"the HDFC ones are NRE and NRO"* or *"also a flat in Hyderabad"*.
+The model sees the list and returns adds and edits; the server checks every one
+against the list. If a change could point at more than one account, **nothing
+changes** and the customer is asked which they meant. Changes are applied to the
+list (never saved) and highlighted; the customer still reviews and saves.
