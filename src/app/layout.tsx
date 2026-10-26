@@ -7,6 +7,7 @@ import { AccountsProvider } from "@/context/AccountsContext";
 import { GoalsProvider } from "@/context/GoalsContext";
 import { BudgetProvider } from "@/context/BudgetContext";
 import { ThemeProvider } from "@/context/ThemeContext";
+import { clerkLocalization } from "@/lib/clerk-localization";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -54,7 +55,7 @@ export default function RootLayout({
       </head>
       <body className="flex h-full flex-col bg-background text-foreground">
         <div aria-hidden className="page-aurora" />
-        <ClerkProvider appearance={{ theme: shadcn }}>
+        <ClerkProvider appearance={{ theme: shadcn }} localization={clerkLocalization}>
           <ThemeProvider>
             {/* CurrencyProvider lives in (app)/layout, seeded with the live rate. */}
             <AccountsProvider>
