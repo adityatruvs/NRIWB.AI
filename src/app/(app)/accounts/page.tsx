@@ -33,6 +33,8 @@ import {
   Calculator,
   PencilLine,
   ListChecks,
+  FileSpreadsheet,
+  Undo2,
 } from 'lucide-react'
 import { AccountsLogo } from '@/components/ui/logos'
 import { useCurrency } from '@/context/CurrencyContext'
@@ -71,7 +73,7 @@ import {
   typeChoicesFor,
   type TypeChoice,
 } from '@/lib/account-details'
-import { holdingChoice, retypeHolding } from '@/lib/quick-entry'
+import { formatAmountInput, holdingChoice, retypeHolding } from '@/lib/quick-entry'
 import { ageInDays, freshnessOf, relativeAge, type Freshness } from '@/lib/freshness'
 import { provenanceOf, CONFIDENCE_LABELS } from '@/lib/provenance'
 import { rankStaleAccounts, rankPhrase, type RefreshSuggestion } from '@/lib/refresh-guidance'
@@ -93,6 +95,9 @@ import { AddAccountChooser } from '@/components/AddAccountChooser'
 import { CasImportPanel } from '@/components/CasImportPanel'
 import { AiAddDialog } from '@/components/copilot/AiAddPanel'
 import { QuickEntry } from '@/components/accounts/QuickEntry'
+import { EditStrip } from '@/components/accounts/EditStrip'
+import { NewRow } from '@/components/accounts/NewRow'
+import { balanceText, isQuickEditable, reviewBalances, undoableChanges, type BalanceChange } from '@/lib/quick-balances'
 import { AmountCell, TypeCell, cellCls, sheetCellCls } from '@/components/accounts/cells'
 import { SearchParamsReader } from '@/components/SearchParamsReader'
 import { ReconnectButton } from '@/components/ReconnectButton'
@@ -102,6 +107,14 @@ import { cn } from '@/lib/utils'
 
 type CountryFilter = 'all' | 'US' | 'IN'
 
+/** Quick edit: every manual balance an input, saved together. */
+interface QuickEdit {
+  drafts: ReadonlyMap<string, string>
+  changedIds: ReadonlySet<string>
+  invalidIds: ReadonlySet<string>
+  onDraft: (h: Holding, text: string) => void
+}
+
 const COUNTRY_META = {
   US: { flag: '🇺🇸', name: 'United States', color: 'var(--us)' },
   IN: { flag: '🇮🇳', name: 'India', color: 'var(--india)' },
@@ -109,7 +122,7 @@ const COUNTRY_META = {
 
 export default function AccountsPage() {
   const { rate, mode } = useCurrency()
-  const { holdings, loading, demo, hasLinked, addLinked, addManual, updateAccount, removeAccount, refresh, loadDemoData, exitDemo } =
+  const { holdings, loading, demo, hasLinked, addLinked, addManual, updateAccount, updateAccountChecked, removeAccount, refresh, loadDemoData, exitDemo } =
     useAccounts()
 
   // Manual balance refresh — pulls live balances from linked banks via /api/plaid/sync.
@@ -194,6 +207,113 @@ export default function AccountsPage() {
   const [draftCount, setDraftCount] = useState(0)
   const [confirmLeave, setConfirmLeave] = useState(false)
   const [justSaved, setJustSaved] = useState<{ ids: ReadonlySet<string>; count: number } | null>(null)
+  const [quickOn, setQuickOn] = useState(false)
+  const [addingRow, setAddingRow] = useState(false)
+  const [online, setOnline] = useState(true)
+  useEffect(() => {
+    const sync = () => setOnline(navigator.onLine)
+    sync()
+    window.addEventListener('online', sync)
+    window.addEventListener('offline', sync)
+    return () => {
+      window.removeEventListener('online', sync)
+      window.removeEventListener('offline', sync)
+    }
+  }, [])
+  const [drafts, setDrafts] = useState<ReadonlyMap<string, string>>(new Map())
+  const [quickWarn, setQuickWarn] = useState(false)
+  const [quickSaved, setQuickSaved] = useState<BalanceChange[] | null>(null)
+  const [quickSaving, setQuickSaving] = useState(false)
+  const [quickFailed, setQuickFailed] = useState<string[]>([])
+  const review = useMemo(() => reviewBalances(holdings, drafts, rate), [holdings, drafts, rate])
+  const quick = useMemo<QuickEdit | undefined>(
+    () =>
+      quickOn
+        ? {
+          drafts,
+          changedIds: new Set(review.changes.map((c) => c.after.id!)),
+          invalidIds: review.invalid,
+          onDraft: (h, text) => {
+            setQuickWarn(false)
+            setQuickFailed([])
+            setDrafts((prev) => {
+              const next = new Map(prev)
+              if (text === balanceText(h, rate)) next.delete(h.id!)
+              else next.set(h.id!, text)
+              return next
+            })
+          },
+        }
+        : undefined,
+    [quickOn, drafts, review, rate],
+  )
+  const discardQuick = () => {
+    setDrafts(new Map())
+    setQuickWarn(false)
+    setQuickFailed([])
+  }
+  function toggleQuick() {
+    if (quickOn && drafts.size > 0) {
+      setQuickWarn(true)
+      return
+    }
+    setQuickOn((on) => !on)
+    setQuickWarn(false)
+  }
+  async function saveAllQuick() {
+    if (review.changes.length === 0 || review.invalid.size > 0 || quickSaving) return
+    const batch = review.changes
+    const typed = drafts
+    setQuickSaving(true)
+    setQuickFailed([])
+    const results = await Promise.all(
+      batch.map((c) => updateAccountChecked(c.after.id!, c.after, { confirmBalance: true })),
+    )
+    setQuickSaving(false)
+    const saved = batch.filter((_, i) => results[i])
+    const failed = batch.filter((_, i) => !results[i])
+    setQuickSaved(saved.length ? saved : null)
+    setQuickWarn(false)
+    setDrafts(new Map(failed.map((c) => [c.after.id!, typed.get(c.after.id!) ?? ''])))
+    setQuickFailed(failed.map((c) => c.after.nickname))
+  }
+
+  function undoQuick(which?: BalanceChange) {
+    if (!quickSaved) return
+    const targets = which ? [which] : quickSaved
+    for (const c of undoableChanges(targets, holdings)) updateAccount(c.before.id!, c.before)
+    const left = which ? quickSaved.filter((c) => c !== which) : []
+    setQuickSaved(left.length ? left : null)
+  }
+
+  useEffect(() => {
+    if (drafts.size === 0) return
+    const ask = (e: MouseEvent) => {
+      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+      const link = (e.target as Element | null)?.closest?.('a[href]') as HTMLAnchorElement | null
+      if (!link || (link.target && link.target !== '_self') || link.hasAttribute('download')) return
+      const url = new URL(link.href, window.location.href)
+      if (url.origin === window.location.origin && url.pathname === window.location.pathname) return
+      if (!window.confirm('You have balances you haven’t saved. Leave without saving them?')) {
+        e.preventDefault()
+        e.stopPropagation()
+      }
+    }
+    document.addEventListener('click', ask, true)
+    return () => document.removeEventListener('click', ask, true)
+  }, [drafts.size])
+
+  useEffect(() => {
+    if (drafts.size === 0) return
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault()
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [drafts.size])
+  useEffect(() => {
+    if (!quickSaved) return
+    const t = setTimeout(() => setQuickSaved(null), 30000)
+    return () => clearTimeout(t)
+  }, [quickSaved])
   const openEntry = useCallback(() => {
     setEntering(true)
     setConfirmLeave(false)
@@ -370,6 +490,7 @@ export default function AccountsPage() {
       {entering ? (
         <QuickEntry
           rate={rate}
+          firstLedger={holdings.length === 0}
           onSave={(list) => Promise.all(list.map((h) => addManual(h)))}
           onDone={(saved) => {
             setEntering(false)
@@ -394,248 +515,404 @@ export default function AccountsPage() {
         />
       ) : (
         <>
-      {reauthNeeded && <ReauthBanner />}
-      {justSaved && (
-        <div
-          role="status"
-          className="flex flex-wrap items-center gap-2 rounded-xl border border-success/25 bg-success-muted/50 px-4 py-3 text-[13px] animate-fade-in"
-        >
-          <Check size={15} className="shrink-0 text-success" />
-          <span>
-            <span className="font-medium">
-              Saved {justSaved.count} account{justSaved.count === 1 ? '' : 's'}.
-            </span>{' '}
-            <span className="text-muted-foreground">
-              They’re highlighted below. Edit any cell to change a name, type or balance.
-            </span>
-          </span>
-        </div>
-      )}
-      {/* ── Summary strip — three quiet figures + the split, one card ──── */}
-      <Reveal delay={0.04}>
-        <Card className="p-0 sm:p-0">
-          {/* Assets − Less debt = Net worth — three explicit, equally-weighted figures */}
-          <div className="grid grid-cols-3 divide-x divide-border/60">
-            <EquationCell label="Assets" usd={nw.assetsUsd} />
-            <EquationCell label="Less debt" usd={nw.liabilitiesUsd} op="−" tone="debt" />
-            <EquationCell
-              label="Net worth"
-              usd={nw.totalUsd}
-              op="="
-              emphasis
-              sub={`${holdings.length} account${holdings.length === 1 ? '' : 's'}`}
-            />
-          </div>
-
-          {/* Cross-border split — the same net worth, seen by jurisdiction */}
-          <div className="grid divide-y divide-border/60 border-t border-border/60 sm:grid-cols-[9rem_1fr_1fr] sm:divide-x sm:divide-y-0">
-            <div className="flex flex-col items-center justify-center gap-1.5 px-6 py-5">
-              <Donut
-                size={72}
-                thickness={9}
-                segments={[
-                  { value: nw.usUsd, color: 'var(--us)' },
-                  { value: nw.inUsd, color: 'var(--india)' },
-                ]}
-                activeIndex={jurHover}
-                onHover={setJurHover}
-              >
-                {jurHover !== null ? (
-                  <span
-                    key={jurHover}
-                    className="animate-fade-in tabular-nums text-[12px] font-bold tabular-nums"
-                    style={{ color: jurHover === 0 ? 'var(--us)' : 'var(--india)' }}
-                  >
-                    {jurHover === 0 ? nw.usPct : nw.inPct}%
-                  </span>
-                ) : (
-                  <span key="split" className="animate-fade-in tabular-nums text-[11px] font-bold tabular-nums text-muted-foreground">
-                    {nw.usPct}/{nw.inPct}
-                  </span>
-                )}
-              </Donut>
-              <span className="text-[11px] font-medium text-muted-foreground">US / India</span>
+          {reauthNeeded && <ReauthBanner />}
+          {justSaved && (
+            <div
+              role="status"
+              className="flex flex-wrap items-center gap-2 rounded-xl border border-success/25 bg-success-muted/50 px-4 py-3 text-[13px] animate-fade-in"
+            >
+              <Check size={15} className="shrink-0 text-success" />
+              <span>
+                <span className="font-medium">
+                  Saved {justSaved.count} account{justSaved.count === 1 ? '' : 's'}.
+                </span>{' '}
+                <span className="text-muted-foreground">
+                  They’re highlighted below. Edit any cell to change a name, type or balance.
+                </span>
+              </span>
             </div>
-          <SummaryCell
-            label="🇺🇸 United States"
-            usd={nw.usUsd}
-            sub={`${usCount} accounts · ${nw.usPct}%`}
-            color="var(--us)"
-            pct={nw.usPct}
-            active={jurHover === 0}
-            onEnter={() => setJurHover(0)}
-            onLeave={() => setJurHover(null)}
-          />
-          <SummaryCell
-            label="🇮🇳 India"
-            usd={nw.inUsd}
-            sub={`${inCount} accounts · ${nw.inPct}%`}
-            color="var(--india)"
-            pct={nw.inPct}
-            active={jurHover === 1}
-            onEnter={() => setJurHover(1)}
-            onLeave={() => setJurHover(null)}
-          />
-          </div>
-        </Card>
-      </Reveal>
-
-      {/* ── Toolbar: tabs + search ────────────────────────────────────── */}
-      <Reveal delay={0.08} className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex gap-0.5 rounded-xl border border-border/70 bg-muted/60 p-0.5">
-          {tabs.map((t) => (
-            <button
-              key={t.key}
-              onClick={() => setFilter(t.key)}
-              className={cn(
-                'flex items-center gap-1.5 rounded-[10px] px-3 py-1.5 text-xs font-medium transition-all duration-150',
-                filter === t.key
-                  ? 'bg-card text-foreground shadow-[0_1px_2px_hsl(var(--shadow-color)/0.1),0_2px_6px_-2px_hsl(var(--shadow-color)/0.12)] ring-1 ring-border/70'
-                  : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              {t.label}
-              <span
-                className={cn(
-                  'rounded-full px-1.5 py-px tabular-nums text-[10px] font-semibold tabular-nums',
-                  filter === t.key ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground',
-                )}
-              >
-                {t.count}
-              </span>
-            </button>
-          ))}
-        </div>
-
-        <div className="flex items-center gap-2">
-          <div className="relative">
-            <ArrowUpDown size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <select
-              value={sort}
-              onChange={(e) => chooseSort(e.target.value as SortKey)}
-              aria-label="Sort accounts"
-              className="h-9 cursor-pointer appearance-none rounded-xl border border-border/70 bg-card pl-7 pr-7 text-[13px] font-medium outline-none transition-colors hover:bg-accent/40 focus:border-brand/60"
-            >
-              {(Object.keys(SORT_LABELS) as SortKey[]).map((k) => (
-                <option key={k} value={k}>
-                  {SORT_LABELS[k]}
-                </option>
-              ))}
-            </select>
-            <ChevronDown size={13} className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          </div>
-          {!demo && hasLinked && (
-            <button
-              onClick={handleRefresh}
-              disabled={syncing}
-              title="Pull the latest balances from your linked banks"
-              className="btn-ghost inline-flex h-9 items-center gap-1.5 rounded-xl border border-border/70 px-3 text-[13px] font-medium disabled:opacity-60"
-            >
-              <RefreshCw size={13} className={cn(syncing && 'animate-spin')} />
-              {syncing ? 'Refreshing…' : 'Refresh'}
-            </button>
           )}
-          <div className="relative">
-            <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/70" />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search accounts…"
-              className="h-9 w-56 rounded-xl border border-input bg-card pl-8.5 pr-3 text-[13px] shadow-[0_1px_2px_hsl(var(--shadow-color)/0.04)] outline-none transition-all placeholder:text-muted-foreground/60 focus:border-brand/60 focus:ring-[3px] focus:ring-brand/12 sm:w-64"
-            />
-            {query && (
-              <button
-                onClick={() => setQuery('')}
-                aria-label="Clear search"
-                className="absolute right-2 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-              >
-                <X size={12} />
-              </button>
-            )}
-          </div>
-        </div>
-      </Reveal>
+          {/* ── Summary strip — three quiet figures + the split, one card ──── */}
+          <Reveal delay={0.04}>
+            <Card className="p-0 sm:p-0">
+              {/* Assets − Less debt = Net worth — three explicit, equally-weighted figures */}
+              <div className="grid grid-cols-3 divide-x divide-border/60">
+                <EquationCell label="Assets" usd={nw.assetsUsd} />
+                <EquationCell label="Less debt" usd={nw.liabilitiesUsd} op="−" tone="debt" />
+                <EquationCell
+                  label="Net worth"
+                  usd={nw.totalUsd}
+                  op="="
+                  emphasis
+                  sub={`${holdings.length} account${holdings.length === 1 ? '' : 's'}`}
+                />
+              </div>
 
-      {/* ── Ledger + side rail ────────────────────────────────────────── */}
-      <Reveal delay={0.12} className="grid items-start gap-6 2xl:grid-cols-[1fr_320px]">
-        {/* Ledger */}
-        <div className="flex min-w-0 flex-col gap-6">
-          {groups.length === 0 ? (
-            <Card className="flex flex-col items-center gap-2 py-14 text-center">
-              <span className="flex size-11 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
-                <Inbox size={20} />
-              </span>
-              <p className="mt-1 text-sm font-medium">No accounts match “{query}”</p>
-              <p className="text-[13px] text-muted-foreground">Try a different name, bank, or account type.</p>
-            </Card>
-          ) : (
-            groups.map((g) => (
-              <AccountGroup
-                key={g.country}
-                country={g.country}
-                accounts={g.accounts}
-                rate={rate}
-                grandTotalUsd={nw.totalUsd}
-                accountToGoal={accountToGoal}
-                sort={sort}
-                collapsed={collapsed}
-                focusedId={focusedId}
-                highlightIds={justSaved?.ids}
-                onToggleCollapse={toggleCollapse}
-                onUpdate={updateAccount}
-                onEdit={setEditing}
-                onDelete={setDeleting}
-                onMarkUpdated={demo ? undefined : markUpdated}
-                onReconnected={refresh}
-                onPrepay={setPrepayFor}
-              />
-            ))
-          )}
-        </div>
-
-        {/* Side rail — insights & intake, nothing else. Beside the sheet only when there's room for both. */}
-        <div className="grid items-start gap-6 md:grid-cols-2 2xl:grid-cols-1">
-          <DebtSummaryCard holdings={holdings} rate={rate} />
-          {!demo && guidance.top && (
-            <RefreshGuidanceCard
-              top={guidance.top}
-              syncing={syncing}
-              onRefresh={handleRefresh}
-              onEdit={() => setEditing(guidance.top!.holding)}
-            />
-          )}
-          {showInsights && (
-            <Card>
-              <CardHeader title="Insights" subtitle="Ways to save & stay compliant" icon={<Lightbulb size={15} />} />
-              <div className="flex flex-col gap-4">
-                {nro.length > 0 && (
-                  <InsightItem
-                    icon={<Lightbulb size={14} />}
-                    tone="warning"
-                    title="Move NRO savings to NRE"
+              {/* Cross-border split — the same net worth, seen by jurisdiction */}
+              <div className="grid divide-y divide-border/60 border-t border-border/60 sm:grid-cols-[9rem_1fr_1fr] sm:divide-x sm:divide-y-0">
+                <div className="flex flex-col items-center justify-center gap-1.5 px-6 py-5">
+                  <Donut
+                    size={72}
+                    thickness={9}
+                    segments={[
+                      { value: nw.usUsd, color: 'var(--us)' },
+                      { value: nw.inUsd, color: 'var(--india)' },
+                    ]}
+                    activeIndex={jurHover}
+                    onHover={setJurHover}
                   >
-                    <span className="font-medium text-foreground">{formatINR(nroInr)}</span> in NRO earns interest
-                    taxed at ~30% TDS. NRE interest is tax-free and repatriable — about{' '}
-                    <span className="font-semibold text-success">{formatINR(tdsSavingInr)}/yr</span>
-                    {mode === 'usd' ? ` (${formatUSD(tdsSavingInr / rate)})` : ''} saved.
-                  </InsightItem>
-                )}
-                {pfics.length > 0 && (
-                  <InsightItem
-                    icon={<FileText size={14} />}
-                    tone="danger"
-                    title={`${pfics.length} PFIC filing${pfics.length > 1 ? 's' : ''} due`}
-                  >
-                    India mutual funds are PFICs under US tax law — each needs{' '}
-                    <span className="font-medium text-foreground">Form 8621</span>. Ask Copilot about QEF vs
-                    mark-to-market.
-                  </InsightItem>
-                )}
+                    {jurHover !== null ? (
+                      <span
+                        key={jurHover}
+                        className="animate-fade-in tabular-nums text-[12px] font-bold tabular-nums"
+                        style={{ color: jurHover === 0 ? 'var(--us)' : 'var(--india)' }}
+                      >
+                        {jurHover === 0 ? nw.usPct : nw.inPct}%
+                      </span>
+                    ) : (
+                      <span key="split" className="animate-fade-in tabular-nums text-[11px] font-bold tabular-nums text-muted-foreground">
+                        {nw.usPct}/{nw.inPct}
+                      </span>
+                    )}
+                  </Donut>
+                  <span className="text-[11px] font-medium text-muted-foreground">US / India</span>
+                </div>
+                <SummaryCell
+                  label="🇺🇸 United States"
+                  usd={nw.usUsd}
+                  sub={`${usCount} accounts · ${nw.usPct}%`}
+                  color="var(--us)"
+                  pct={nw.usPct}
+                  active={jurHover === 0}
+                  onEnter={() => setJurHover(0)}
+                  onLeave={() => setJurHover(null)}
+                />
+                <SummaryCell
+                  label="🇮🇳 India"
+                  usd={nw.inUsd}
+                  sub={`${inCount} accounts · ${nw.inPct}%`}
+                  color="var(--india)"
+                  pct={nw.inPct}
+                  active={jurHover === 1}
+                  onEnter={() => setJurHover(1)}
+                  onLeave={() => setJurHover(null)}
+                />
               </div>
             </Card>
+          </Reveal>
+
+          {/* ── Toolbar: tabs + search ────────────────────────────────────── */}
+          <Reveal delay={0.08} className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+              <div className="flex gap-0.5 rounded-xl border border-border/70 bg-muted/60 p-0.5">
+                {tabs.map((t) => (
+                  <button
+                    key={t.key}
+                    onClick={() => setFilter(t.key)}
+                    className={cn(
+                      'flex items-center gap-1.5 rounded-[10px] px-3 py-1.5 text-xs font-medium transition-all duration-150',
+                      filter === t.key
+                        ? 'bg-card text-foreground shadow-[0_1px_2px_hsl(var(--shadow-color)/0.1),0_2px_6px_-2px_hsl(var(--shadow-color)/0.12)] ring-1 ring-border/70'
+                        : 'text-muted-foreground hover:text-foreground',
+                    )}
+                  >
+                    {t.label}
+                    <span
+                      className={cn(
+                        'rounded-full px-1.5 py-px tabular-nums text-[10px] font-semibold tabular-nums',
+                        filter === t.key ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground',
+                      )}
+                    >
+                      {t.count}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={quickOn}
+                onClick={toggleQuick}
+                title="Turn every balance into an input for your monthly update"
+                className="inline-flex h-9 items-center gap-2.5 text-[13px] font-semibold"
+              >
+                <span
+                  aria-hidden
+                  className={cn('relative h-5 w-9 shrink-0 rounded-full transition-colors', quickOn ? 'bg-brand' : 'bg-muted-foreground/30')}
+                >
+                  <span className={cn('absolute top-0.5 size-4 rounded-full bg-white shadow transition-all', quickOn ? 'left-[1.1rem]' : 'left-0.5')} />
+                </span>
+                Quick edit balances
+                <span className="rounded bg-brand/15 px-1.5 py-px text-[10px] font-bold uppercase tracking-wide text-brand">New</span>
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <ArrowUpDown size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <select
+                  value={sort}
+                  onChange={(e) => chooseSort(e.target.value as SortKey)}
+                  aria-label="Sort accounts"
+                  className="h-9 cursor-pointer appearance-none rounded-xl border border-border/70 bg-card pl-7 pr-7 text-[13px] font-medium outline-none transition-colors hover:bg-accent/40 focus:border-brand/60"
+                >
+                  {(Object.keys(SORT_LABELS) as SortKey[]).map((k) => (
+                    <option key={k} value={k}>
+                      {SORT_LABELS[k]}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown size={13} className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              </div>
+              {!demo && hasLinked && (
+                <button
+                  onClick={handleRefresh}
+                  disabled={syncing}
+                  title="Pull the latest balances from your linked banks"
+                  className="btn-ghost inline-flex h-9 items-center gap-1.5 rounded-xl border border-border/70 px-3 text-[13px] font-medium disabled:opacity-60"
+                >
+                  <RefreshCw size={13} className={cn(syncing && 'animate-spin')} />
+                  {syncing ? 'Refreshing…' : 'Refresh'}
+                </button>
+              )}
+              <div className="relative">
+                <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/70" />
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search accounts…"
+                  className="h-9 w-56 rounded-xl border border-input bg-card pl-8.5 pr-3 text-[13px] shadow-[0_1px_2px_hsl(var(--shadow-color)/0.04)] outline-none transition-all placeholder:text-muted-foreground/60 focus:border-brand/60 focus:ring-[3px] focus:ring-brand/12 sm:w-64"
+                />
+                {query && (
+                  <button
+                    onClick={() => setQuery('')}
+                    aria-label="Clear search"
+                    className="absolute right-2 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                  >
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+            </div>
+          </Reveal>
+
+          {/* ── Ledger + side rail ────────────────────────────────────────── */}
+          <Reveal delay={0.12} className="grid items-start gap-6 2xl:grid-cols-[1fr_320px]">
+            {/* Ledger */}
+            <div className="flex min-w-0 flex-col gap-6">
+              {groups.length === 0 ? (
+                <Card className="flex flex-col items-center gap-2 py-14 text-center">
+                  <span className="flex size-11 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
+                    <Inbox size={20} />
+                  </span>
+                  <p className="mt-1 text-sm font-medium">No accounts match “{query}”</p>
+                  <p className="text-[13px] text-muted-foreground">Try a different name, bank, or account type.</p>
+                </Card>
+              ) : (
+                groups.map((g) => (
+                  <AccountGroup
+                    key={g.country}
+                    country={g.country}
+                    accounts={g.accounts}
+                    rate={rate}
+                    grandTotalUsd={nw.totalUsd}
+                    accountToGoal={accountToGoal}
+                    sort={sort}
+                    collapsed={collapsed}
+                    focusedId={focusedId}
+                    highlightIds={justSaved?.ids}
+                    onToggleCollapse={toggleCollapse}
+                    onUpdate={updateAccount}
+                    onUpdateChecked={updateAccountChecked}
+                    onEdit={setEditing}
+                    onDelete={setDeleting}
+                    onMarkUpdated={demo ? undefined : markUpdated}
+                    onReconnected={refresh}
+                    onPrepay={setPrepayFor}
+                    quick={quick}
+                  />
+                ))
+              )}
+
+              {/* Foot of the sheet: add a row in place, export (coming), and where it's saved */}
+              <div className="@container -mt-3 overflow-hidden rounded-2xl border border-border/70 bg-card">
+                {addingRow && (
+                  <NewRow
+                    rate={rate}
+                    defaultGroup={filter === 'US' ? 'US:asset' : 'IN:asset'}
+                    onCancel={() => setAddingRow(false)}
+                    onSave={async (h) => {
+                      const saved = await addManual(h)
+                      if (saved) {
+                        setAddingRow(false)
+                        setQuery('')
+                        setFilter('all')
+                        setJustSaved({ ids: new Set(saved.id ? [saved.id] : []), count: 1 })
+                      }
+                      return saved
+                    }}
+                  />
+                )}
+                <div className="flex flex-wrap items-center gap-2 px-4 py-3">
+                  <button
+                    type="button"
+                    onClick={() => setAddingRow(true)}
+                    disabled={addingRow}
+                    className="btn-ghost inline-flex h-9 items-center gap-1.5 rounded-xl border border-border/70 px-3.5 text-[13px] font-medium disabled:opacity-50"
+                  >
+                    <Plus size={14} />
+                    Add row
+                  </button>
+                  <button
+                    type="button"
+                    disabled
+                    aria-disabled="true"
+                    title="Coming soon"
+                    className="inline-flex h-9 cursor-not-allowed items-center gap-1.5 rounded-xl border border-border/70 px-3.5 text-[13px] font-medium text-muted-foreground opacity-70"
+                  >
+                    <FileSpreadsheet size={13} />
+                    Export to Excel
+                    <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide">
+                      Coming soon
+                    </span>
+                  </button>
+                  {(demo || !online) && (
+                    <span className="ml-auto inline-flex items-center gap-1.5 text-[12.5px] text-muted-foreground">
+                      <span aria-hidden className="size-1.5 rounded-full bg-warning" />
+                      Saved on this device only
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Side rail — insights & intake, nothing else. Beside the sheet only when there's room for both. */}
+            <div className="grid items-start gap-6 md:grid-cols-2 2xl:grid-cols-1">
+              <DebtSummaryCard holdings={holdings} rate={rate} />
+              {!demo && guidance.top && (
+                <RefreshGuidanceCard
+                  top={guidance.top}
+                  syncing={syncing}
+                  onRefresh={handleRefresh}
+                  onEdit={() => setEditing(guidance.top!.holding)}
+                />
+              )}
+              {showInsights && (
+                <Card>
+                  <CardHeader title="Insights" subtitle="Ways to save & stay compliant" icon={<Lightbulb size={15} />} />
+                  <div className="flex flex-col gap-4">
+                    {nro.length > 0 && (
+                      <InsightItem
+                        icon={<Lightbulb size={14} />}
+                        tone="warning"
+                        title="Move NRO savings to NRE"
+                      >
+                        <span className="font-medium text-foreground">{formatINR(nroInr)}</span> in NRO earns interest
+                        taxed at ~30% TDS. NRE interest is tax-free and repatriable — about{' '}
+                        <span className="font-semibold text-success">{formatINR(tdsSavingInr)}/yr</span>
+                        {mode === 'usd' ? ` (${formatUSD(tdsSavingInr / rate)})` : ''} saved.
+                      </InsightItem>
+                    )}
+                    {pfics.length > 0 && (
+                      <InsightItem
+                        icon={<FileText size={14} />}
+                        tone="danger"
+                        title={`${pfics.length} PFIC filing${pfics.length > 1 ? 's' : ''} due`}
+                      >
+                        India mutual funds are PFICs under US tax law — each needs{' '}
+                        <span className="font-medium text-foreground">Form 8621</span>. Ask Copilot about QEF vs
+                        mark-to-market.
+                      </InsightItem>
+                    )}
+                  </div>
+                </Card>
+              )}
+            </div>
+          </Reveal>
+          {quickOn && (
+            <div className="sticky bottom-3 z-20 mr-16 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border/80 bg-card/95 px-4 py-3 shadow-[0_12px_28px_-10px_hsl(var(--shadow-color)/0.25)] backdrop-blur-md">
+              <div className="min-w-0 text-[13.5px]" aria-live="polite">
+                <b className="tabular-nums">{review.changes.length}</b> balance{review.changes.length === 1 ? '' : 's'} changed
+                {review.invalid.size > 0 && (
+                  <span className="ml-2 rounded-full bg-warning-muted px-2 py-0.5 text-[11.5px] font-semibold text-warning">
+                    {review.invalid.size} can’t be read
+                  </span>
+                )}
+                {quickFailed.length > 0 && (
+                  <p role="alert" className="mt-0.5 text-[12px] font-medium text-danger">
+                    {quickFailed.length} couldn’t be saved and {quickFailed.length === 1 ? 'is' : 'are'} back to the old
+                    balance: {quickFailed.slice(0, 3).join(', ')}
+                    {quickFailed.length > 3 ? ` and ${quickFailed.length - 3} more` : ''}. What you typed is still here.
+                    Try Save all again.
+                  </p>
+                )}
+                <p className={cn('mt-0.5 text-[12px]', quickWarn ? 'font-medium text-warning' : 'text-muted-foreground')}>
+                  {quickWarn
+                    ? 'Save all or Discard your changes before turning Quick edit off.'
+                    : 'Type new balances; changed rows are highlighted. Bank-synced balances update on their own.'}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={discardQuick}
+                  disabled={drafts.size === 0}
+                  className="btn-ghost rounded-xl border border-border/70 px-3.5 py-2 text-[13px] font-medium disabled:pointer-events-none disabled:opacity-45"
+                >
+                  Discard
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void saveAllQuick()}
+                  disabled={review.changes.length === 0 || review.invalid.size > 0 || quickSaving}
+                  className="btn-primary rounded-xl px-4 py-2 text-[13px] font-semibold disabled:pointer-events-none disabled:opacity-45"
+                >
+                  {quickSaving ? 'Saving…' : `Save all${review.changes.length > 0 ? ` (${review.changes.length})` : ''}`}
+                </button>
+              </div>
+            </div>
           )}
-        </div>
-      </Reveal>
+          {quickSaved && (
+            <div
+              role="status"
+              className="fixed bottom-24 left-1/2 z-50 w-[min(26rem,calc(100%-2rem))] -translate-x-1/2 rounded-xl bg-foreground p-3 text-[13px] text-background shadow-lg animate-fade-in"
+            >
+              <div className="flex items-center gap-3">
+                <span className="min-w-0 flex-1 truncate font-medium">
+                  Saved {quickSaved.length} balance{quickSaved.length === 1 ? '' : 's'}.
+                </span>
+                {quickSaved.length > 1 && (
+                  <button type="button" onClick={() => undoQuick()} className="font-semibold underline underline-offset-2">
+                    Undo all
+                  </button>
+                )}
+                <button type="button" aria-label="Dismiss" onClick={() => setQuickSaved(null)} className="opacity-70 hover:opacity-100">
+                  <X size={14} />
+                </button>
+              </div>
+              <ul className="mt-2 flex max-h-44 flex-col gap-1 overflow-y-auto">
+                {quickSaved.map((c) => (
+                  <li key={c.after.id} className="flex items-center gap-2 rounded-lg bg-background/10 px-2.5 py-1.5">
+                    <span className="min-w-0 flex-1 truncate">
+                      {c.after.nickname}
+                      <span className="ml-1.5 tabular-nums opacity-70">
+                        {balanceText(c.before, rate)} → {balanceText(c.after, rate)}
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => undoQuick(c)}
+                      aria-label={`Undo ${c.after.nickname}`}
+                      className="inline-flex shrink-0 items-center gap-1 font-semibold underline underline-offset-2"
+                    >
+                      <Undo2 size={12} />
+                      Undo
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </>
       )}
 
@@ -1114,11 +1391,13 @@ function AccountGroup({
   highlightIds,
   onToggleCollapse,
   onUpdate,
+  onUpdateChecked,
   onEdit,
   onDelete,
   onMarkUpdated,
   onReconnected,
   onPrepay,
+  quick,
 }: {
   country: 'US' | 'IN'
   accounts: Holding[]
@@ -1136,6 +1415,8 @@ function AccountGroup({
   onToggleCollapse: (key: string) => void
   /** Save an inline edit (name, type or balance). */
   onUpdate: (id: string, h: Holding) => void
+  /** Like `onUpdate`, resolving to false if the save failed. */
+  onUpdateChecked: (id: string, h: Holding) => Promise<boolean>
   /** Opens the full edit dialog (rates, maturity, ownership, links). */
   onEdit: (h: Holding) => void
   onDelete: (h: Holding) => void
@@ -1145,6 +1426,7 @@ function AccountGroup({
   onReconnected: () => void
   /** Opens the prepay-vs-invest calculator for a loan. */
   onPrepay: (h: Holding) => void
+  quick?: QuickEdit
 }) {
   // Every figure in the card follows the currency view (USD / ₹ / lakhs-crore).
   const { mode } = useCurrency()
@@ -1244,11 +1526,13 @@ function AccountGroup({
                       note={securedNote(a, accounts, rate, money)}
                       focused={!!a.id && (a.id === focusedId || !!highlightIds?.has(a.id))}
                       onUpdate={onUpdate}
+                      onUpdateChecked={onUpdateChecked}
                       onEdit={onEdit}
                       onDelete={onDelete}
                       onMarkUpdated={onMarkUpdated}
                       onReconnected={onReconnected}
                       onPrepay={onPrepay}
+                      quick={quick}
                     />
                   ))}
                 </div>
@@ -1286,11 +1570,13 @@ function AccountRow({
   note,
   focused = false,
   onUpdate,
+  onUpdateChecked,
   onEdit,
   onDelete,
   onMarkUpdated,
   onReconnected,
   onPrepay,
+  quick,
 }: {
   a: Holding
   color: string
@@ -1301,11 +1587,13 @@ function AccountRow({
   /** Briefly highlighted after a deep link lands on it, or right after it was added. */
   focused?: boolean
   onUpdate: (id: string, h: Holding) => void
+  onUpdateChecked: (id: string, h: Holding) => Promise<boolean>
   onEdit: (h: Holding) => void
   onDelete: (h: Holding) => void
   onMarkUpdated?: (h: Holding) => void
   onReconnected?: () => void
   onPrepay?: (h: Holding) => void
+  quick?: QuickEdit
 }) {
   const { mode } = useCurrency()
   const days = ageInDays(a.lastSyncedAt)
@@ -1316,6 +1604,9 @@ function AccountRow({
   const linked = a.source !== 'manual'
   const [name, setName] = useState(a.nickname)
   useEffect(() => setName(a.nickname), [a.nickname])
+  const [stripOpen, setStripOpen] = useState(false)
+  const quickInput = !!quick && isQuickEditable(a)
+  const quickChanged = !!quick && !!a.id && quick.changedIds.has(a.id)
 
   const choice = holdingChoice(a)
   const options = useMemo(() => {
@@ -1331,149 +1622,218 @@ function AccountRow({
   const details = detailSummary(a.details)
 
   return (
-    <div
-      id={a.id ? `acct-${a.id}` : undefined}
-      className={cn(
-        'group grid scroll-mt-24 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 gap-y-2 px-4 py-2.5 transition-colors duration-500 hover:bg-accent/25 @2xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,0.95fr)_7rem] @2xl:items-center @2xl:gap-3',
-        // Colour stale rows so they stand out from fresh ones at a glance.
-        fresh === 'stale' && 'bg-warning-muted/20',
-        focused && 'bg-brand/10 ring-2 ring-inset ring-brand/40',
-      )}
-    >
-      {/* Account: name (editable) + where it is and what's attached to it */}
-      <div className="flex min-w-0 items-start gap-2.5">
-        <Monogram institution={a.institution} color={color} />
-        <div className="min-w-0 flex-1">
-          <input
-            value={name}
-            maxLength={120}
-            aria-label={`Name of ${a.nickname}`}
-            onChange={(e) => setName(e.target.value)}
-            onBlur={() => {
-              const t = name.trim()
-              if (!t) setName(a.nickname)
-              else if (t !== a.nickname) save({ ...a, nickname: t })
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') e.currentTarget.blur()
-              if (e.key === 'Escape') setName(a.nickname)
-            }}
-            className={cn(cellCls, sheetCellCls, '-ml-2 h-8 px-2 text-[14.5px] font-medium')}
-          />
-          <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px] text-muted-foreground">
-            <span className="truncate">
-              {a.institution}
-              {details ? ` · ${details}` : ''}
-              {note ? ` · ${note}` : ''}
-            </span>
-            {a.isPfic && (
-              <span className="shrink-0 rounded bg-warning/12 px-1 py-px text-[10px] font-bold uppercase text-warning ring-1 ring-warning/20">
-                PFIC
+    <>
+      <div
+        id={a.id ? `acct-${a.id}` : undefined}
+        className={cn(
+          'group grid scroll-mt-24 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 gap-y-2 px-4 py-2.5 transition-colors duration-500 hover:bg-accent/25 @2xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,0.95fr)_7rem] @2xl:items-center @2xl:gap-3',
+          // Colour stale rows so they stand out from fresh ones at a glance.
+          fresh === 'stale' && 'bg-warning-muted/20',
+          focused && 'bg-brand/10 ring-2 ring-inset ring-brand/40',
+          quickChanged && 'bg-success-muted/50 ring-1 ring-inset ring-success/30',
+        )}
+      >
+        {/* Account: name (editable) + where it is and what's attached to it */}
+        <div className="flex min-w-0 items-start gap-2.5">
+          <Monogram institution={a.institution} color={color} />
+          <div className="min-w-0 flex-1">
+            <input
+              value={name}
+              maxLength={120}
+              aria-label={`Name of ${a.nickname}`}
+              onChange={(e) => setName(e.target.value)}
+              onBlur={() => {
+                const t = name.trim()
+                if (!t) setName(a.nickname)
+                else if (t !== a.nickname) save({ ...a, nickname: t })
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') e.currentTarget.blur()
+                if (e.key === 'Escape') setName(a.nickname)
+              }}
+              className={cn(cellCls, sheetCellCls, '-ml-2 h-8 px-2 text-[14.5px] font-medium')}
+            />
+            <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px] text-muted-foreground">
+              <span className="truncate">
+                {a.institution}
+                {details ? ` · ${details}` : ''}
+                {note ? ` · ${note}` : ''}
               </span>
-            )}
-            <ProvenanceBadge holding={a} />
-            {ownershipLabel(a) && (
-              <span
-                className="inline-flex shrink-0 items-center gap-1 rounded bg-accent px-1.5 py-px text-[10.5px] font-medium text-accent-foreground/80 ring-1 ring-border/60"
-                title={a.ownership === 'family' ? `Held in ${ownershipLabel(a)}’s name` : `Jointly held: ${ownershipLabel(a)}`}
-              >
-                <Users size={10} />
-                {ownershipLabel(a)}
-              </span>
-            )}
-            {a.id && accountToGoal.has(a.id) && isGoalFundingAccount(a) && (
-              <span
-                className="inline-flex shrink-0 items-center gap-1 rounded bg-brand/10 px-1.5 py-px text-[10.5px] font-medium text-brand"
-                title={`Funds your “${accountToGoal.get(a.id)}” goal`}
-              >
-                <Link2 size={10} />
-                {accountToGoal.get(a.id)}
-              </span>
-            )}
-            <FreshnessPill days={days} fresh={fresh} source={a.source} />
-            {a.needsReauth && a.plaidItemId && (
-              <ReconnectButton itemId={a.plaidItemId} rate={rate} onDone={onReconnected ?? (() => {})} />
-            )}
-          </p>
-        </div>
-      </div>
-
-      <div className="col-span-2 grid grid-cols-2 gap-2 pl-[2.875rem] @2xl:contents">
-        {/* Type */}
-        <TypeCell
-          value={choice}
-          options={options}
-          label={`Type of ${a.nickname}`}
-          onChange={(t) => {
-            if (t && t !== choice) save(retypeHolding(a, t))
-          }}
-          className={cn(sheetCellCls, 'h-9 text-[13.5px]')}
-        />
-
-        {/* Balance — in the account's own currency; its value in the chosen view below */}
-        <div className="min-w-0 text-right">
-          <AmountCell
-            value={Math.round(entryAmount(a, rate) * 100) / 100}
-            currency={cur}
-            allowBlank={false}
-            readOnly={linked}
-            title={linked ? 'Synced from your bank — it refreshes on its own' : undefined}
-            label={`${liability ? 'Amount owed on' : 'Balance of'} ${a.nickname}`}
-            onCommit={(n) => {
-              if (n != null) save({ ...a, ...balancesFromEntry(a.country, a.accountType, n, rate) })
-            }}
-            inlineSymbol
-            className={cn(sheetCellCls, 'h-9 font-semibold', liability && 'text-danger')}
-          />
-          {showConverted && (
-            <p className="mt-0.5 pr-3 text-[11px] tabular-nums text-muted-foreground">
-              ≈ {liability ? '−' : ''}
-              {formatAmount(Math.abs(usdValue(a, rate)), mode, rate)}
+              {a.isPfic && (
+                <span className="shrink-0 rounded bg-warning/12 px-1 py-px text-[10px] font-bold uppercase text-warning ring-1 ring-warning/20">
+                  PFIC
+                </span>
+              )}
+              <ProvenanceBadge holding={a} />
+              {ownershipLabel(a) && (
+                <span
+                  className="inline-flex shrink-0 items-center gap-1 rounded bg-accent px-1.5 py-px text-[10.5px] font-medium text-accent-foreground/80 ring-1 ring-border/60"
+                  title={a.ownership === 'family' ? `Held in ${ownershipLabel(a)}’s name` : `Jointly held: ${ownershipLabel(a)}`}
+                >
+                  <Users size={10} />
+                  {ownershipLabel(a)}
+                </span>
+              )}
+              {a.id && accountToGoal.has(a.id) && isGoalFundingAccount(a) && (
+                <span
+                  className="inline-flex shrink-0 items-center gap-1 rounded bg-brand/10 px-1.5 py-px text-[10.5px] font-medium text-brand"
+                  title={`Funds your “${accountToGoal.get(a.id)}” goal`}
+                >
+                  <Link2 size={10} />
+                  {accountToGoal.get(a.id)}
+                </span>
+              )}
+              <FreshnessPill days={days} fresh={fresh} source={a.source} />
+              {a.needsReauth && a.plaidItemId && (
+                <ReconnectButton itemId={a.plaidItemId} rate={rate} onDone={onReconnected ?? (() => { })} />
+              )}
             </p>
+          </div>
+        </div>
+
+        <div className="col-span-2 grid grid-cols-2 gap-2 pl-[2.875rem] @2xl:contents">
+          {/* Type */}
+          <TypeCell
+            value={choice}
+            options={options}
+            label={`Type of ${a.nickname}`}
+            onChange={(t) => {
+              if (t && t !== choice) save(retypeHolding(a, t))
+            }}
+            className={cn(sheetCellCls, 'h-9 text-[13.5px]')}
+          />
+
+          {/* Balance — in the account's own currency; its value in the chosen view below */}
+          <div className={cn('min-w-0 text-right', quick && 'flex flex-wrap items-start justify-end gap-x-3')}>
+            {quick && (
+              <span className="mt-2.5 whitespace-nowrap text-[12px] text-muted-foreground">
+                {linked ? `synced ${relativeAge(days).toLowerCase()}` : relativeAge(days)}
+              </span>
+            )}
+            {quickInput && quick && a.id ? (
+              <div className="relative w-36 shrink-0">
+                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[13px] font-medium text-muted-foreground">
+                  {cur === 'USD' ? '$' : '₹'}
+                </span>
+                <input
+                  data-quick-balance
+                  value={quick.drafts.get(a.id) ?? balanceText(a, rate)}
+                  inputMode="decimal"
+                  aria-label={`${liability ? 'Amount owed on' : 'Balance of'} ${a.nickname}`}
+                  aria-invalid={quick.invalidIds.has(a.id) || undefined}
+                  placeholder={cur === 'USD' ? 'e.g. 95k' : 'e.g. 40L'}
+                  onFocus={(e) => e.currentTarget.select()}
+                  onChange={(e) => quick.onDraft(a, e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key !== 'Enter' || e.nativeEvent.isComposing) return
+                    e.preventDefault()
+                    // Enter moves down the column, like a sheet.
+                    const all = Array.from(document.querySelectorAll<HTMLInputElement>('input[data-quick-balance]'))
+                    all[all.indexOf(e.currentTarget) + 1]?.focus()
+                  }}
+                  className={cn(
+                    cellCls,
+                    'h-9 pl-7 text-right font-semibold tabular-nums',
+                    liability && 'text-danger',
+                    quick.invalidIds.has(a.id) && 'border-danger focus:border-danger focus:ring-danger/12',
+                  )}
+                />
+                {quick.invalidIds.has(a.id) && (
+                  <p role="alert" className="mt-1 text-[11.5px] text-danger">
+                    Use numbers, or 40L / 1.2Cr / 95k
+                  </p>
+                )}
+              </div>
+            ) : quick && linked ? (
+              <p
+                className={cn('h-9 w-36 shrink-0 pr-3 text-[14px] font-semibold leading-9 tabular-nums', liability && 'text-danger')}
+                title="Synced from your bank — it refreshes on its own"
+              >
+                {formatAmountInput(Math.round(entryAmount(a, rate) * 100) / 100, cur) && (cur === 'USD' ? '$' : '₹')}
+                {formatAmountInput(Math.round(entryAmount(a, rate) * 100) / 100, cur)}
+              </p>
+            ) : (
+              <AmountCell
+                value={Math.round(entryAmount(a, rate) * 100) / 100}
+                currency={cur}
+                allowBlank={false}
+                readOnly={linked}
+                title={linked ? 'Synced from your bank — it refreshes on its own' : undefined}
+                label={`${liability ? 'Amount owed on' : 'Balance of'} ${a.nickname}`}
+                onCommit={(n) => {
+                  if (n != null) save({ ...a, ...balancesFromEntry(a.country, a.accountType, n, rate) })
+                }}
+                inlineSymbol
+                className={cn(sheetCellCls, 'h-9 font-semibold', liability && 'text-danger')}
+              />
+            )}
+            {showConverted && (
+              <p className="mt-0.5 basis-full pr-3 text-[11px] tabular-nums text-muted-foreground">
+                ≈ {liability ? '−' : ''}
+                {formatAmount(Math.abs(usdValue(a, rate)), mode, rate)}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="col-start-2 row-start-1 flex items-center justify-end gap-0.5 opacity-100 transition-opacity focus-within:opacity-100 @2xl:col-start-auto @2xl:row-start-auto @2xl:opacity-0 @2xl:group-hover:opacity-100">
+          {onPrepay && liability && (
+            <button
+              onClick={() => onPrepay(a)}
+              aria-label={`Prepay or invest: ${a.nickname}`}
+              title="Prepay this loan or invest?"
+              className="flex size-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            >
+              <Calculator size={13} />
+            </button>
           )}
+          {canMark && (
+            <button
+              onClick={() => onMarkUpdated!(a)}
+              aria-label={`Mark ${a.nickname} updated`}
+              title="Mark as updated today"
+              className="flex size-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            >
+              <Clock size={13} />
+            </button>
+          )}
+          <button
+            onClick={() => (a.id ? setStripOpen((o) => !o) : onEdit(a))}
+            aria-label={`Edit ${a.nickname}`}
+            aria-expanded={a.id ? stripOpen : undefined}
+            title="Edit name, type, balance, rate and ownership"
+            className="flex size-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <Pencil size={13} />
+          </button>
+          <button
+            onClick={() => onDelete(a)}
+            aria-label={`Delete ${a.nickname}`}
+            title="Delete"
+            className="flex size-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-danger-muted hover:text-danger"
+          >
+            <Trash2 size={13} />
+          </button>
         </div>
       </div>
-
-      {/* Actions */}
-      <div className="col-start-2 row-start-1 flex items-center justify-end gap-0.5 opacity-100 transition-opacity focus-within:opacity-100 @2xl:col-start-auto @2xl:row-start-auto @2xl:opacity-0 @2xl:group-hover:opacity-100">
-        {onPrepay && liability && (
-          <button
-            onClick={() => onPrepay(a)}
-            aria-label={`Prepay or invest: ${a.nickname}`}
-            title="Prepay this loan or invest?"
-            className="flex size-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          >
-            <Calculator size={13} />
-          </button>
-        )}
-        {canMark && (
-          <button
-            onClick={() => onMarkUpdated!(a)}
-            aria-label={`Mark ${a.nickname} updated`}
-            title="Mark as updated today"
-            className="flex size-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          >
-            <Clock size={13} />
-          </button>
-        )}
-        <button
-          onClick={() => onEdit(a)}
-          aria-label={`Edit ${a.nickname}`}
-          title="All details: rates, maturity, ownership, loans"
-          className="flex size-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        >
-          <Pencil size={13} />
-        </button>
-        <button
-          onClick={() => onDelete(a)}
-          aria-label={`Delete ${a.nickname}`}
-          title="Delete"
-          className="flex size-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-danger-muted hover:text-danger"
-        >
-          <Trash2 size={13} />
-        </button>
-      </div>
-    </div>
+      {stripOpen && a.id && (
+        <EditStrip
+          holding={a}
+          rate={rate}
+          onSave={async (next) => {
+            const ok = await onUpdateChecked(a.id!, next)
+            if (ok) setStripOpen(false)
+            return ok
+          }}
+          onCancel={() => setStripOpen(false)}
+          onAllDetails={() => {
+            setStripOpen(false)
+            onEdit(a)
+          }}
+        />
+      )}
+    </>
   )
 }
 
@@ -1739,7 +2099,7 @@ function AccountDialog({
   const spec = detailSpec(country, accountType, isSgb, fdScheme)
   // Named like an FD but typed as NRE/NRO Savings — suggest the FD choice (never auto-switched).
   const suggestedScheme = liability ? null : mistypedFdScheme({ country, accountType, nickname })
-  const valid =nickname.trim() && institution.trim() && Number(amount) > 0
+  const valid = nickname.trim() && institution.trim() && Number(amount) > 0
 
   // Asset-side loan linking — for any securable asset being edited (it has an id).
   const canSecure = SECURABLE_ASSET_TYPES.has(accountType)
@@ -1903,276 +2263,276 @@ function AccountDialog({
           </div>
 
           <div className="flex flex-col gap-3.5">
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Nickname">
-              <input value={nickname} onChange={(e) => setNickname(e.target.value)} placeholder={liability ? 'e.g. Chase Mortgage' : 'e.g. Chase Checking'} className={inputCls} />
-            </Field>
-            <Field label={liability ? 'Lender' : 'Institution'}>
-              <input value={institution} onChange={(e) => setInstitution(e.target.value)} placeholder="e.g. Chase" className={inputCls} />
-            </Field>
-          </div>
-          <Field label="Type">
-            <TypeSelect
-              value={typeChoice(country, accountType, fdScheme)}
-              options={types}
-              onChange={(c) => {
-                const next = fromTypeChoice(c)
-                setAccountType(next.accountType)
-                if (next.fdScheme) setFdScheme(next.fdScheme)
-              }}
-              liability={liability}
-            />
-            {suggestedScheme && (
-              <p className="mt-1.5 text-[11.5px] text-muted-foreground">
-                Sounds like a fixed deposit.{' '}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setFdScheme(suggestedScheme)
-                    setAccountType('fd')
-                  }}
-                  className="font-medium text-foreground underline underline-offset-2"
-                >
-                  Use {suggestedScheme} Fixed Deposit
-                </button>{' '}
-                so it sits with your other FDs.
-              </p>
-            )}
-            {spec.hasScheme && (
-              <p className="mt-1.5 text-[11.5px] text-muted-foreground">
-                {fdScheme === 'NRE'
-                  ? 'Interest is tax-free in India and fully repatriable — no TDS.'
-                  : 'Interest is taxable in India — TDS applies.'}
-              </p>
-            )}
-          </Field>
-          <Field label={liability ? 'Amount owed' : 'Balance'}>
-            <div className="relative">
-              <span className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-base font-medium text-muted-foreground/80">
-                {cur === 'USD' ? '$' : '₹'}
-              </span>
-              <input
-                value={amount}
-                onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ''))}
-                inputMode="decimal"
-                placeholder="0"
-                className={cn(inputCls, 'h-11 pl-8 text-base tabular-nums')}
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Nickname">
+                <input value={nickname} onChange={(e) => setNickname(e.target.value)} placeholder={liability ? 'e.g. Chase Mortgage' : 'e.g. Chase Checking'} className={inputCls} />
+              </Field>
+              <Field label={liability ? 'Lender' : 'Institution'}>
+                <input value={institution} onChange={(e) => setInstitution(e.target.value)} placeholder="e.g. Chase" className={inputCls} />
+              </Field>
+            </div>
+            <Field label="Type">
+              <TypeSelect
+                value={typeChoice(country, accountType, fdScheme)}
+                options={types}
+                onChange={(c) => {
+                  const next = fromTypeChoice(c)
+                  setAccountType(next.accountType)
+                  if (next.fdScheme) setFdScheme(next.fdScheme)
+                }}
+                liability={liability}
               />
-            </div>
-            {spec.depositCurrency && (
-              <p className="mt-1.5 text-[11.5px] text-muted-foreground">
-                {depositCurrency === 'USD'
-                  ? 'In US dollars, as the deposit is held.'
-                  : `In US dollars: enter your ${depositCurrency} deposit's dollar value (we convert USD ↔ INR only).`}
-              </p>
-            )}
-          </Field>
-          {accountType === 'mutual_fund' && (
-            <p className="flex items-start gap-2 rounded-xl bg-warning-muted/60 px-3 py-2.5 text-[13px] leading-snug text-warning ring-1 ring-warning/20">
-              <AlertTriangle size={14} className="mt-px shrink-0" />
-              <span>India mutual funds are auto-flagged as PFIC (Form 8621).</span>
-            </p>
-          )}
-
-          {/* ── Instrument details — only the fields this type actually has ──── */}
-          {spec.any && (
-            <div className="mt-1 flex flex-col gap-3.5 rounded-xl bg-muted/35 p-4 ring-1 ring-border/50">
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
-                Details
-              </p>
-
-              {spec.goldToggle && (
-                <label className="flex cursor-pointer items-start gap-2.5 rounded-xl bg-muted/50 px-3 py-2.5">
-                  <input
-                    type="checkbox"
-                    checked={isSgb}
-                    onChange={(e) => setIsSgb(e.target.checked)}
-                    className="mt-0.5 size-4 accent-[var(--brand)]"
-                  />
-                  <span className="text-[13px] leading-snug">
-                    <span className="font-medium">Sovereign Gold Bond</span>
-                    <span className="block text-muted-foreground">Earns interest and has a maturity date, unlike physical gold.</span>
-                  </span>
-                </label>
-              )}
-
-              {(spec.interestRate || spec.tdsRate || spec.minPayment) && (
-                <div className="grid grid-cols-2 gap-3">
-                  {spec.interestRate && (
-                    <Field label={liability ? 'APR (%)' : 'Interest rate (%)'}>
-                      <input
-                        value={interestRate}
-                        onChange={(e) => setInterestRate(e.target.value.replace(/[^0-9.]/g, ''))}
-                        inputMode="decimal"
-                        placeholder={liability ? 'e.g. 6.5' : 'e.g. 7.1'}
-                        className={cn(inputCls, 'tabular-nums')}
-                      />
-                    </Field>
-                  )}
-                  {spec.tdsRate && (
-                    <Field label="TDS withheld (%)">
-                      <input
-                        value={tdsRate}
-                        onChange={(e) => setTdsRate(e.target.value.replace(/[^0-9.]/g, ''))}
-                        inputMode="decimal"
-                        placeholder="e.g. 30"
-                        className={cn(inputCls, 'tabular-nums')}
-                      />
-                    </Field>
-                  )}
-                  {spec.minPayment && (
-                    <Field label={`Min. payment (${cur})`}>
-                      <input
-                        value={minPayment}
-                        onChange={(e) => setMinPayment(e.target.value.replace(/[^0-9.]/g, ''))}
-                        inputMode="decimal"
-                        placeholder="0"
-                        className={cn(inputCls, 'tabular-nums')}
-                      />
-                    </Field>
-                  )}
-                </div>
-              )}
-
-              {spec.expectedReturn && (
-                <Field label="Expected return (%)">
-                  <input
-                    value={expReturn}
-                    onChange={(e) => setExpReturn(e.target.value.replace(/[^0-9.]/g, ''))}
-                    inputMode="decimal"
-                    placeholder={`Default ${(typeExpectedReturn(accountType) * 100).toFixed(1)} — your estimate for projections`}
-                    className={cn(inputCls, 'tabular-nums')}
-                  />
-                </Field>
-              )}
-
-              {(spec.maturityDate || spec.compounding) && (
-                <div className="grid grid-cols-2 gap-3">
-                  {spec.maturityDate && (
-                    <Field label={liability ? 'Payoff date' : 'Maturity date'}>
-                      <input
-                        type="date"
-                        value={maturityDate}
-                        onChange={(e) => setMaturityDate(e.target.value)}
-                        className={cn(inputCls, 'tabular-nums')}
-                      />
-                    </Field>
-                  )}
-                  {spec.compounding && (
-                    <Field label="Compounding">
-                      <select
-                        value={compounding}
-                        onChange={(e) => setCompounding(e.target.value as NonNullable<HoldingDetails['compounding']>)}
-                        className={inputCls}
-                      >
-                        {(Object.keys(COMPOUNDING_LABELS) as (keyof typeof COMPOUNDING_LABELS)[]).map((k) => (
-                          <option key={k} value={k}>
-                            {COMPOUNDING_LABELS[k]}
-                          </option>
-                        ))}
-                      </select>
-                    </Field>
-                  )}
-                </div>
-              )}
-
-              {spec.depositCurrency && (
-                <Field label="Held in currency">
-                  <select
-                    value={depositCurrency}
-                    onChange={(e) => setDepositCurrency(e.target.value as NonNullable<HoldingDetails['depositCurrency']>)}
-                    className={inputCls}
+              {suggestedScheme && (
+                <p className="mt-1.5 text-[11.5px] text-muted-foreground">
+                  Sounds like a fixed deposit.{' '}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFdScheme(suggestedScheme)
+                      setAccountType('fd')
+                    }}
+                    className="font-medium text-foreground underline underline-offset-2"
                   >
-                    {FCNR_CURRENCIES.map((c) => (
-                      <option key={c} value={c}>
-                        {c}
-                      </option>
-                    ))}
-                  </select>
-                  <span className="text-[11px] text-muted-foreground">
-                    FCNR deposits are held in foreign currency, not INR, so the balance is in dollars.
-                  </span>
-                </Field>
+                    Use {suggestedScheme} Fixed Deposit
+                  </button>{' '}
+                  so it sits with your other FDs.
+                </p>
               )}
-            </div>
-          )}
-
-          {/* ── Secured against — tie this loan to the asset it finances ── */}
-          {liability && (
-            <Field label="Secured against (optional)">
-              {securableAssets.length > 0 ? (
-                <AssetSelect value={securedAgainstId} assets={securableAssets} onChange={setSecuredAgainstId} />
-              ) : (
-                <p className="text-[12px] leading-snug text-muted-foreground">
-                  Add an asset (home, vehicle, gold, brokerage…) first, then you can secure this loan against it.
+              {spec.hasScheme && (
+                <p className="mt-1.5 text-[11.5px] text-muted-foreground">
+                  {fdScheme === 'NRE'
+                    ? 'Interest is tax-free in India and fully repatriable — no TDS.'
+                    : 'Interest is taxable in India — TDS applies.'}
                 </p>
               )}
             </Field>
-          )}
-
-          <OwnershipField
-            ownership={ownership}
-            coOwners={coOwners}
-            liability={liability}
-            onOwnershipChange={(o) => {
-              setOwnership(o)
-              // Seed one person so the list is never empty when it matters.
-              if (o !== 'self' && coOwners.length === 0) {
-                setCoOwners([{ name: '', relation: o === 'joint' ? 'spouse' : 'father' }])
-              }
-            }}
-            onCoOwnersChange={setCoOwners}
-          />
-
-          {/* ── Linked loans — attach mortgages/HELOCs to this property for equity ── */}
-          {editingAssetId && (
-            <div className="flex flex-col gap-2.5 rounded-xl bg-muted/35 p-4 ring-1 ring-border/50">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
-                  Linked loans
+            <Field label={liability ? 'Amount owed' : 'Balance'}>
+              <div className="relative">
+                <span className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-base font-medium text-muted-foreground/80">
+                  {cur === 'USD' ? '$' : '₹'}
+                </span>
+                <input
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ''))}
+                  inputMode="decimal"
+                  placeholder="0"
+                  className={cn(inputCls, 'h-11 pl-8 text-base tabular-nums')}
+                />
+              </div>
+              {spec.depositCurrency && (
+                <p className="mt-1.5 text-[11.5px] text-muted-foreground">
+                  {depositCurrency === 'USD'
+                    ? 'In US dollars, as the deposit is held.'
+                    : `In US dollars: enter your ${depositCurrency} deposit's dollar value (we convert USD ↔ INR only).`}
                 </p>
-                {linkedLoansUsd > 0 && (
-                  <span className="text-[12px] text-muted-foreground">
-                    Equity{' '}
-                    <span className="font-semibold text-foreground tabular-nums">{money(equityPreview)}</span>
-                  </span>
+              )}
+            </Field>
+            {accountType === 'mutual_fund' && (
+              <p className="flex items-start gap-2 rounded-xl bg-warning-muted/60 px-3 py-2.5 text-[13px] leading-snug text-warning ring-1 ring-warning/20">
+                <AlertTriangle size={14} className="mt-px shrink-0" />
+                <span>India mutual funds are auto-flagged as PFIC (Form 8621).</span>
+              </p>
+            )}
+
+            {/* ── Instrument details — only the fields this type actually has ──── */}
+            {spec.any && (
+              <div className="mt-1 flex flex-col gap-3.5 rounded-xl bg-muted/35 p-4 ring-1 ring-border/50">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
+                  Details
+                </p>
+
+                {spec.goldToggle && (
+                  <label className="flex cursor-pointer items-start gap-2.5 rounded-xl bg-muted/50 px-3 py-2.5">
+                    <input
+                      type="checkbox"
+                      checked={isSgb}
+                      onChange={(e) => setIsSgb(e.target.checked)}
+                      className="mt-0.5 size-4 accent-[var(--brand)]"
+                    />
+                    <span className="text-[13px] leading-snug">
+                      <span className="font-medium">Sovereign Gold Bond</span>
+                      <span className="block text-muted-foreground">Earns interest and has a maturity date, unlike physical gold.</span>
+                    </span>
+                  </label>
+                )}
+
+                {(spec.interestRate || spec.tdsRate || spec.minPayment) && (
+                  <div className="grid grid-cols-2 gap-3">
+                    {spec.interestRate && (
+                      <Field label={liability ? 'APR (%)' : 'Interest rate (%)'}>
+                        <input
+                          value={interestRate}
+                          onChange={(e) => setInterestRate(e.target.value.replace(/[^0-9.]/g, ''))}
+                          inputMode="decimal"
+                          placeholder={liability ? 'e.g. 6.5' : 'e.g. 7.1'}
+                          className={cn(inputCls, 'tabular-nums')}
+                        />
+                      </Field>
+                    )}
+                    {spec.tdsRate && (
+                      <Field label="TDS withheld (%)">
+                        <input
+                          value={tdsRate}
+                          onChange={(e) => setTdsRate(e.target.value.replace(/[^0-9.]/g, ''))}
+                          inputMode="decimal"
+                          placeholder="e.g. 30"
+                          className={cn(inputCls, 'tabular-nums')}
+                        />
+                      </Field>
+                    )}
+                    {spec.minPayment && (
+                      <Field label={`Min. payment (${cur})`}>
+                        <input
+                          value={minPayment}
+                          onChange={(e) => setMinPayment(e.target.value.replace(/[^0-9.]/g, ''))}
+                          inputMode="decimal"
+                          placeholder="0"
+                          className={cn(inputCls, 'tabular-nums')}
+                        />
+                      </Field>
+                    )}
+                  </div>
+                )}
+
+                {spec.expectedReturn && (
+                  <Field label="Expected return (%)">
+                    <input
+                      value={expReturn}
+                      onChange={(e) => setExpReturn(e.target.value.replace(/[^0-9.]/g, ''))}
+                      inputMode="decimal"
+                      placeholder={`Default ${(typeExpectedReturn(accountType) * 100).toFixed(1)} — your estimate for projections`}
+                      className={cn(inputCls, 'tabular-nums')}
+                    />
+                  </Field>
+                )}
+
+                {(spec.maturityDate || spec.compounding) && (
+                  <div className="grid grid-cols-2 gap-3">
+                    {spec.maturityDate && (
+                      <Field label={liability ? 'Payoff date' : 'Maturity date'}>
+                        <input
+                          type="date"
+                          value={maturityDate}
+                          onChange={(e) => setMaturityDate(e.target.value)}
+                          className={cn(inputCls, 'tabular-nums')}
+                        />
+                      </Field>
+                    )}
+                    {spec.compounding && (
+                      <Field label="Compounding">
+                        <select
+                          value={compounding}
+                          onChange={(e) => setCompounding(e.target.value as NonNullable<HoldingDetails['compounding']>)}
+                          className={inputCls}
+                        >
+                          {(Object.keys(COMPOUNDING_LABELS) as (keyof typeof COMPOUNDING_LABELS)[]).map((k) => (
+                            <option key={k} value={k}>
+                              {COMPOUNDING_LABELS[k]}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
+                    )}
+                  </div>
+                )}
+
+                {spec.depositCurrency && (
+                  <Field label="Held in currency">
+                    <select
+                      value={depositCurrency}
+                      onChange={(e) => setDepositCurrency(e.target.value as NonNullable<HoldingDetails['depositCurrency']>)}
+                      className={inputCls}
+                    >
+                      {FCNR_CURRENCIES.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="text-[11px] text-muted-foreground">
+                      FCNR deposits are held in foreign currency, not INR, so the balance is in dollars.
+                    </span>
+                  </Field>
                 )}
               </div>
-              {loanOptions.length === 0 ? (
-                <p className="text-[12px] leading-snug text-muted-foreground">
-                  No loans yet. Add a liability first, then come back here to secure it against this property.
-                </p>
-              ) : (
-                loanOptions.map((loan) => {
-                  const linked = loan.securedAgainstId === editingAssetId
-                  const elsewhere = !linked && !!loan.securedAgainstId
-                  return (
-                    <label key={loan.id} className="flex cursor-pointer items-center gap-2.5">
-                      <input
-                        type="checkbox"
-                        checked={linked}
-                        onChange={() =>
-                          updateAccount(loan.id!, {
-                            ...loan,
-                            securedAgainstId: linked ? undefined : editingAssetId,
-                          })
-                        }
-                        className="size-4 shrink-0 accent-[var(--danger)]"
-                      />
-                      <span className="min-w-0 flex-1 truncate text-[13px]">
-                        {loan.nickname}
-                        <span className="text-muted-foreground"> · {TYPE_LABELS[loan.accountType] ?? loan.accountType}</span>
-                        {elsewhere && <span className="ml-1 text-[11px] text-muted-foreground">(linked elsewhere)</span>}
-                      </span>
-                      <span className="shrink-0 text-[12px] font-medium tabular-nums text-danger">
-                        −{money(Math.abs(usdValue(loan, rate)))}
-                      </span>
-                    </label>
-                  )
-                })
-              )}
-            </div>
-          )}
+            )}
+
+            {/* ── Secured against — tie this loan to the asset it finances ── */}
+            {liability && (
+              <Field label="Secured against (optional)">
+                {securableAssets.length > 0 ? (
+                  <AssetSelect value={securedAgainstId} assets={securableAssets} onChange={setSecuredAgainstId} />
+                ) : (
+                  <p className="text-[12px] leading-snug text-muted-foreground">
+                    Add an asset (home, vehicle, gold, brokerage…) first, then you can secure this loan against it.
+                  </p>
+                )}
+              </Field>
+            )}
+
+            <OwnershipField
+              ownership={ownership}
+              coOwners={coOwners}
+              liability={liability}
+              onOwnershipChange={(o) => {
+                setOwnership(o)
+                // Seed one person so the list is never empty when it matters.
+                if (o !== 'self' && coOwners.length === 0) {
+                  setCoOwners([{ name: '', relation: o === 'joint' ? 'spouse' : 'father' }])
+                }
+              }}
+              onCoOwnersChange={setCoOwners}
+            />
+
+            {/* ── Linked loans — attach mortgages/HELOCs to this property for equity ── */}
+            {editingAssetId && (
+              <div className="flex flex-col gap-2.5 rounded-xl bg-muted/35 p-4 ring-1 ring-border/50">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
+                    Linked loans
+                  </p>
+                  {linkedLoansUsd > 0 && (
+                    <span className="text-[12px] text-muted-foreground">
+                      Equity{' '}
+                      <span className="font-semibold text-foreground tabular-nums">{money(equityPreview)}</span>
+                    </span>
+                  )}
+                </div>
+                {loanOptions.length === 0 ? (
+                  <p className="text-[12px] leading-snug text-muted-foreground">
+                    No loans yet. Add a liability first, then come back here to secure it against this property.
+                  </p>
+                ) : (
+                  loanOptions.map((loan) => {
+                    const linked = loan.securedAgainstId === editingAssetId
+                    const elsewhere = !linked && !!loan.securedAgainstId
+                    return (
+                      <label key={loan.id} className="flex cursor-pointer items-center gap-2.5">
+                        <input
+                          type="checkbox"
+                          checked={linked}
+                          onChange={() =>
+                            updateAccount(loan.id!, {
+                              ...loan,
+                              securedAgainstId: linked ? undefined : editingAssetId,
+                            })
+                          }
+                          className="size-4 shrink-0 accent-[var(--danger)]"
+                        />
+                        <span className="min-w-0 flex-1 truncate text-[13px]">
+                          {loan.nickname}
+                          <span className="text-muted-foreground"> · {TYPE_LABELS[loan.accountType] ?? loan.accountType}</span>
+                          {elsewhere && <span className="ml-1 text-[11px] text-muted-foreground">(linked elsewhere)</span>}
+                        </span>
+                        <span className="shrink-0 text-[12px] font-medium tabular-nums text-danger">
+                          −{money(Math.abs(usdValue(loan, rate)))}
+                        </span>
+                      </label>
+                    )
+                  })
+                )}
+              </div>
+            )}
           </div>
         </div>
 
