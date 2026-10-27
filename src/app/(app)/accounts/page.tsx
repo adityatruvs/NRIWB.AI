@@ -31,6 +31,8 @@ import {
   Home,
   Users,
   Calculator,
+  PencilLine,
+  ListChecks,
 } from 'lucide-react'
 import { AccountsLogo } from '@/components/ui/logos'
 import { useCurrency } from '@/context/CurrencyContext'
@@ -39,8 +41,6 @@ import { useGoals } from '@/context/GoalsContext'
 import { formatAmount, formatUSD, formatINR } from '@/lib/currency'
 import {
   netWorth,
-  byAssetClass,
-  byLiabilityClass,
   usdValue,
   isLiability,
   isSecurableAsset,
@@ -60,7 +60,6 @@ import {
 } from '@/lib/portfolio'
 import { typeExpectedReturn } from '@/lib/allocation'
 import {
-  IN_ASSET_CHOICES,
   balancesFromEntry,
   detailSpec,
   entryAmount,
@@ -69,8 +68,10 @@ import {
   mistypedFdScheme,
   typeChoice,
   typeChoiceLabel,
+  typeChoicesFor,
   type TypeChoice,
 } from '@/lib/account-details'
+import { holdingChoice, retypeHolding } from '@/lib/quick-entry'
 import { ageInDays, freshnessOf, relativeAge, type Freshness } from '@/lib/freshness'
 import { provenanceOf, CONFIDENCE_LABELS } from '@/lib/provenance'
 import { rankStaleAccounts, rankPhrase, type RefreshSuggestion } from '@/lib/refresh-guidance'
@@ -90,7 +91,9 @@ import { Money } from '@/components/ui/Money'
 import { Reveal } from '@/components/ui/Reveal'
 import { AddAccountChooser } from '@/components/AddAccountChooser'
 import { CasImportPanel } from '@/components/CasImportPanel'
-import { AiAdd } from '@/components/copilot/AiAddPanel'
+import { AiAddDialog } from '@/components/copilot/AiAddPanel'
+import { QuickEntry } from '@/components/accounts/QuickEntry'
+import { AmountCell, TypeCell, cellCls, sheetCellCls } from '@/components/accounts/cells'
 import { SearchParamsReader } from '@/components/SearchParamsReader'
 import { ReconnectButton } from '@/components/ReconnectButton'
 import { DebtSummaryCard } from '@/components/DebtSummary'
@@ -185,6 +188,34 @@ export default function AccountsPage() {
   }, [goals])
   const [adding, setAdding] = useState(false)
   const [choosing, setChoosing] = useState(false)
+  // Quick entry ("tell us what you have") replaces the sheet while it's open.
+  const [entering, setEntering] = useState(false)
+  const [aiOpen, setAiOpen] = useState(false)
+  const [draftCount, setDraftCount] = useState(0)
+  const [confirmLeave, setConfirmLeave] = useState(false)
+  const [justSaved, setJustSaved] = useState<{ ids: ReadonlySet<string>; count: number } | null>(null)
+  const openEntry = useCallback(() => {
+    setEntering(true)
+    setConfirmLeave(false)
+    window.scrollTo({ top: 0 })
+  }, [])
+  const leaveEntry = useCallback(
+    (force = false) => {
+      if (!force && draftCount > 0) {
+        setConfirmLeave(true)
+        return
+      }
+      setEntering(false)
+      setConfirmLeave(false)
+      setDraftCount(0)
+    },
+    [draftCount],
+  )
+  useEffect(() => {
+    if (!justSaved) return
+    const t = setTimeout(() => setJustSaved(null), 6000)
+    return () => clearTimeout(t)
+  }, [justSaved])
   const [importingCas, setImportingCas] = useState(false)
   const [editing, setEditing] = useState<Holding | null>(null)
   const [deleting, setDeleting] = useState<Holding | null>(null)
@@ -221,6 +252,7 @@ export default function AccountsPage() {
     // ?edit=<id> opens that account's edit dialog (e.g. "add the loan's rate").
     const toEdit = holdings.find((h) => h.id && h.id === linkParams.get('edit'))
     if (toEdit) setEditing(toEdit)
+    if (linkParams.get('add') === '1') setEntering(true)
     if (linkParams.get('section') === 'debt') {
       requestAnimationFrame(() =>
         document.getElementById('debt-summary')?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
@@ -284,30 +316,101 @@ export default function AccountsPage() {
             <AccountsLogo size={18} />
           </span>
           <div>
-            <h1 className="font-serif text-[1.7rem] font-medium tracking-tight">Accounts</h1>
+            <h1 className="font-serif text-[1.7rem] font-medium tracking-tight">
+              {entering ? 'Add your accounts' : 'Accounts'}
+            </h1>
             <p className="mt-1 text-[15px] text-muted-foreground">
-              Everything you own, across both countries
+              {entering
+                ? 'Pick what you have in India and the US, fill in the amounts, and save them together.'
+                : 'Everything you own and owe, across both countries'}
             </p>
           </div>
         </div>
-        <button
-          onClick={() => setChoosing(true)}
-          className="btn-primary inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-[13px] font-medium"
-        >
-          <Plus size={14} />
-          Add account
-        </button>
+        {entering ? (
+          confirmLeave ? (
+            <div role="alertdialog" aria-label="Discard unsaved accounts" className="flex flex-wrap items-center gap-2 text-[13px]">
+              <span className="text-muted-foreground">
+                Discard {draftCount} unsaved line{draftCount === 1 ? '' : 's'}?
+              </span>
+              <button
+                onClick={() => setConfirmLeave(false)}
+                className="btn-ghost rounded-xl border border-border/70 px-3 py-2 font-medium"
+              >
+                Keep editing
+              </button>
+              <button
+                onClick={() => leaveEntry(true)}
+                className="rounded-xl bg-danger px-3 py-2 font-medium text-white hover:brightness-110"
+              >
+                Discard
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => leaveEntry()}
+              className="btn-ghost inline-flex items-center gap-1.5 rounded-xl border border-border/70 px-3.5 py-2 text-[13px] font-medium"
+            >
+              <X size={14} />
+              {holdings.length ? 'Back to my accounts' : 'Close'}
+            </button>
+          )
+        ) : (
+          <button
+            onClick={() => setChoosing(true)}
+            className="btn-primary inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-[13px] font-medium"
+          >
+            <Plus size={14} />
+            Add account
+          </button>
+        )}
       </div>
 
       {demo && <DemoBanner onExit={exitDemo} />}
 
-      {loading ? (
+      {entering ? (
+        <QuickEntry
+          rate={rate}
+          onSave={(list) => Promise.all(list.map((h) => addManual(h)))}
+          onDone={(saved) => {
+            setEntering(false)
+            setDraftCount(0)
+            setFilter('all')
+            setQuery('')
+            setJustSaved({ ids: new Set(saved.flatMap((h) => (h.id ? [h.id] : []))), count: saved.length })
+            window.scrollTo({ top: 0, behavior: 'smooth' })
+          }}
+          onMoreWays={() => setChoosing(true)}
+          onDirtyChange={setDraftCount}
+        />
+      ) : loading ? (
         <LedgerSkeleton />
       ) : holdings.length === 0 ? (
-        <EmptyLedger onAdd={() => setChoosing(true)} onLoadDemo={loadDemoData} />
+        <EmptyLedger
+          onAi={() => setAiOpen(true)}
+          onManual={() => setAdding(true)}
+          onSeveral={openEntry}
+          onLinkOrImport={() => setChoosing(true)}
+          onLoadDemo={loadDemoData}
+        />
       ) : (
         <>
       {reauthNeeded && <ReauthBanner />}
+      {justSaved && (
+        <div
+          role="status"
+          className="flex flex-wrap items-center gap-2 rounded-xl border border-success/25 bg-success-muted/50 px-4 py-3 text-[13px] animate-fade-in"
+        >
+          <Check size={15} className="shrink-0 text-success" />
+          <span>
+            <span className="font-medium">
+              Saved {justSaved.count} account{justSaved.count === 1 ? '' : 's'}.
+            </span>{' '}
+            <span className="text-muted-foreground">
+              They’re highlighted below. Edit any cell to change a name, type or balance.
+            </span>
+          </span>
+        </div>
+      )}
       {/* ── Summary strip — three quiet figures + the split, one card ──── */}
       <Reveal delay={0.04}>
         <Card className="p-0 sm:p-0">
@@ -454,7 +557,7 @@ export default function AccountsPage() {
       </Reveal>
 
       {/* ── Ledger + side rail ────────────────────────────────────────── */}
-      <Reveal delay={0.12} className="grid items-start gap-6 lg:grid-cols-[1fr_320px]">
+      <Reveal delay={0.12} className="grid items-start gap-6 2xl:grid-cols-[1fr_320px]">
         {/* Ledger */}
         <div className="flex min-w-0 flex-col gap-6">
           {groups.length === 0 ? (
@@ -477,7 +580,9 @@ export default function AccountsPage() {
                 sort={sort}
                 collapsed={collapsed}
                 focusedId={focusedId}
+                highlightIds={justSaved?.ids}
                 onToggleCollapse={toggleCollapse}
+                onUpdate={updateAccount}
                 onEdit={setEditing}
                 onDelete={setDeleting}
                 onMarkUpdated={demo ? undefined : markUpdated}
@@ -488,8 +593,8 @@ export default function AccountsPage() {
           )}
         </div>
 
-        {/* Side rail — insights & intake, nothing else */}
-        <div className="flex flex-col gap-6">
+        {/* Side rail — insights & intake, nothing else. Beside the sheet only when there's room for both. */}
+        <div className="grid items-start gap-6 md:grid-cols-2 2xl:grid-cols-1">
           <DebtSummaryCard holdings={holdings} rate={rate} />
           {!demo && guidance.top && (
             <RefreshGuidanceCard
@@ -529,8 +634,6 @@ export default function AccountsPage() {
               </div>
             </Card>
           )}
-
-          <AiAdd />
         </div>
       </Reveal>
         </>
@@ -542,9 +645,13 @@ export default function AccountsPage() {
           onLinked={addLinked}
           onManual={() => setAdding(true)}
           onImportCas={() => setImportingCas(true)}
+          onAddSeveral={openEntry}
+          onAddWithAi={() => setAiOpen(true)}
           onClose={() => setChoosing(false)}
         />
       )}
+      {/* Always mounted, so a conversation survives closing and reopening the panel. */}
+      <AiAddDialog open={aiOpen} onClose={() => setAiOpen(false)} />
       {importingCas && (
         <CasImportPanel onClose={() => setImportingCas(false)} onManual={() => setAdding(true)} />
       )}
@@ -608,28 +715,89 @@ function LedgerSkeleton() {
   )
 }
 
-/** Shown when the user has no accounts yet — add the first, or opt into demo data. */
-function EmptyLedger({ onAdd, onLoadDemo }: { onAdd: () => void; onLoadDemo: () => void }) {
+/** Shown when the user has no accounts yet — the ways to add them, up front, or demo data. */
+function EmptyLedger({
+  onAi,
+  onManual,
+  onSeveral,
+  onLinkOrImport,
+  onLoadDemo,
+}: {
+  onAi: () => void
+  onManual: () => void
+  onSeveral: () => void
+  onLinkOrImport: () => void
+  onLoadDemo: () => void
+}) {
+  const ways = [
+    {
+      key: 'ai',
+      icon: <Sparkles size={18} className="text-white" />,
+      chip: 'ai-chip',
+      title: 'Add with AI',
+      text: 'Describe it — “my ICICI NRE FD, ₹40L at 7%” — and check what it fills in.',
+      onClick: onAi,
+    },
+    {
+      key: 'manual',
+      icon: <PencilLine size={18} />,
+      chip: 'bg-brand/10 text-brand ring-1 ring-brand/20',
+      title: 'Add manually',
+      text: 'Fill in one account with every detail: rate, maturity, ownership.',
+      onClick: onManual,
+    },
+    {
+      key: 'several',
+      icon: <ListChecks size={18} />,
+      chip: 'bg-brand/10 text-brand ring-1 ring-brand/20',
+      title: 'Add several at once',
+      text: 'Tick what you have from a checklist, type the amounts, save them together.',
+      onClick: onSeveral,
+    },
+  ]
   return (
     <Reveal delay={0.04}>
-      <Card className="flex flex-col items-center gap-3 py-16 text-center">
+      <Card className="flex flex-col items-center gap-5 py-12 text-center">
         <span className="flex size-12 items-center justify-center rounded-2xl bg-brand/10 text-brand ring-1 ring-brand/20">
           <Wallet size={22} />
         </span>
         <div>
           <h2 className="font-serif text-lg font-medium tracking-tight">Start your ledger</h2>
-          <p className="mx-auto mt-1 max-w-sm text-[13px] leading-relaxed text-muted-foreground">
-            Add your first account — US or India, asset or liability — and everything else
-            (net worth, allocation, compliance) builds from it.
+          <p className="mx-auto mt-1 max-w-md text-[13px] leading-relaxed text-muted-foreground">
+            Add what you own and owe — US or India — and everything else (net worth, allocation,
+            compliance) builds from it.
           </p>
         </div>
-        <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
+        <div className="grid w-full max-w-3xl gap-3 text-left sm:grid-cols-3">
+          {ways.map((w) => (
+            <button
+              key={w.key}
+              type="button"
+              onClick={w.onClick}
+              className={cn(
+                'group flex flex-col gap-2.5 rounded-2xl border border-border bg-card p-4 text-left transition-all hover:-translate-y-0.5 hover:border-brand/45 hover:shadow-[0_8px_24px_-12px_hsl(var(--shadow-color)/0.35)]',
+                w.key === 'ai' && 'ai-ring',
+              )}
+            >
+              <span className={cn('flex size-9 items-center justify-center rounded-xl', w.chip)}>{w.icon}</span>
+              <span className="flex items-center gap-1 text-[14px] font-semibold">
+                {w.title}
+                <ChevronRight
+                  size={15}
+                  className="text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground"
+                />
+              </span>
+              <span className="text-[12.5px] leading-snug text-muted-foreground">{w.text}</span>
+            </button>
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center justify-center gap-2">
           <button
-            onClick={onAdd}
-            className="btn-primary inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-[13px] font-medium"
+            onClick={onLinkOrImport}
+            className="btn-ghost inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-[13px] font-medium"
           >
-            <Plus size={14} />
-            Add account
+            <Link2 size={14} />
+            Link a US bank or import a CAS statement
           </button>
           <button
             onClick={onLoadDemo}
@@ -639,7 +807,7 @@ function EmptyLedger({ onAdd, onLoadDemo }: { onAdd: () => void; onLoadDemo: () 
             Load demo data
           </button>
         </div>
-        <p className="text-[11px] text-muted-foreground/70">
+        <p className="-mt-2 text-[11px] text-muted-foreground/70">
           Demo data is a sample portfolio — it’s never saved to your account.
         </p>
       </Card>
@@ -943,7 +1111,9 @@ function AccountGroup({
   sort,
   collapsed,
   focusedId,
+  highlightIds,
   onToggleCollapse,
+  onUpdate,
   onEdit,
   onDelete,
   onMarkUpdated,
@@ -961,7 +1131,12 @@ function AccountGroup({
   collapsed: ReadonlySet<string>
   /** Row to scroll to and highlight (from a ?focus= deep link). */
   focusedId: string | null
+  /** Rows just added through quick entry, tinted for a moment. */
+  highlightIds?: ReadonlySet<string>
   onToggleCollapse: (key: string) => void
+  /** Save an inline edit (name, type or balance). */
+  onUpdate: (id: string, h: Holding) => void
+  /** Opens the full edit dialog (rates, maturity, ownership, links). */
   onEdit: (h: Holding) => void
   onDelete: (h: Holding) => void
   /** When set, manual rows can be marked freshly-updated. Omitted in demo mode. */
@@ -975,14 +1150,10 @@ function AccountGroup({
   const { mode } = useCurrency()
   const money = (usd: number) => formatAmount(usd, mode, rate)
   const { flag, name, color } = COUNTRY_META[country]
-  const [activeSlice, setActiveSlice] = useState<number | null>(null)
   const total = accounts.reduce((s, h) => s + usdValue(h, rate), 0)
   const share = grandTotalUsd > 0 ? Math.round((total / grandTotalUsd) * 100) : 0
-  const slices = useMemo(() => byAssetClass(accounts, rate), [accounts, rate])
-  // Debt broken out by category too, so the breakdown reconciles to net worth.
-  const debtSlices = useMemo(() => byLiabilityClass(accounts, rate), [accounts, rate])
-  const assetsUsd = slices.reduce((s, x) => s + x.usd, 0)
-  const debtUsd = debtSlices.reduce((s, x) => s + x.usd, 0)
+  const assetsUsd = accounts.filter((h) => !isLiability(h)).reduce((s, h) => s + usdValue(h, rate), 0)
+  const debtUsd = -accounts.filter(isLiability).reduce((s, h) => s + usdValue(h, rate), 0)
   // Group into category folders (Banking / Investments / … / Liabilities), each
   // sorted by the chosen key. Empty categories are dropped.
   const folders = useMemo(
@@ -999,7 +1170,8 @@ function AccountGroup({
   )
 
   return (
-    <Card className="overflow-hidden p-0 sm:p-0">
+    // A container, so the sheet lays out by its own width (sidebar and rail vary), not the window's.
+    <Card className="@container overflow-hidden p-0 sm:p-0">
       {/* Group header */}
       <div
         className="flex items-center gap-2.5 border-b border-border/60 px-5 py-3.5"
@@ -1022,96 +1194,16 @@ function AccountGroup({
           {accounts.length}
         </span>
         <FreshnessSummary accounts={accounts} />
-        <Money usd={total} className="ml-auto tabular-nums text-[15px] font-semibold tabular-nums" />
+        <span className="ml-auto hidden text-[12px] text-muted-foreground @lg:inline">{share}% of net worth</span>
+        <Money usd={total} className="ml-auto tabular-nums text-[15px] font-semibold tabular-nums @lg:ml-0" />
       </div>
 
-      {/* Breakdown — assets by class, debts by category, reconciled to net worth */}
-      <div className="border-b border-border/60 bg-muted/30 px-5 py-4">
-        <div className="flex items-center gap-5">
-        <Donut
-          size={88}
-          thickness={11}
-          segments={slices.map((s) => ({ value: s.usd, color: s.colorVar }))}
-          activeIndex={activeSlice}
-          onHover={setActiveSlice}
-        >
-          {activeSlice !== null && slices[activeSlice] ? (
-            <div key={activeSlice} className="animate-fade-in">
-              <p className="tabular-nums text-sm font-bold tabular-nums" style={{ color: slices[activeSlice].colorVar }}>
-                {slices[activeSlice].pct.toFixed(0)}%
-              </p>
-              <p className="mx-auto max-w-[54px] truncate text-[9px] leading-tight text-muted-foreground">
-                {slices[activeSlice].label}
-              </p>
-            </div>
-          ) : (
-            <div key="share" className="animate-fade-in">
-              <p className="tabular-nums text-sm font-bold tabular-nums" style={{ color }}>
-                {share}%
-              </p>
-              <p className="text-[10px] leading-tight text-muted-foreground">of total</p>
-            </div>
-          )}
-        </Donut>
-        <div className="grid min-w-0 flex-1 grid-cols-2 gap-x-5 gap-y-2 sm:grid-cols-3">
-          {slices.map((s, i) => (
-            <div
-              key={s.key}
-              onPointerEnter={() => setActiveSlice(i)}
-              onPointerLeave={() => setActiveSlice(null)}
-              className={cn(
-                '-mx-1.5 -my-1 min-w-0 cursor-pointer rounded-lg px-1.5 py-1 transition-all duration-200',
-                activeSlice === i && 'bg-card shadow-[0_1px_3px_hsl(var(--shadow-color)/0.08)]',
-                activeSlice !== null && activeSlice !== i && 'opacity-40',
-              )}
-            >
-              <div className="flex items-center gap-1.5 text-[13px]">
-                <span
-                  className="size-2 shrink-0 rounded-[4px] transition-transform duration-200"
-                  style={{
-                    background: s.colorVar,
-                    transform: activeSlice === i ? 'scale(1.35)' : undefined,
-                    boxShadow: activeSlice === i ? `0 0 6px color-mix(in oklch, ${s.colorVar} 60%, transparent)` : undefined,
-                  }}
-                />
-                <span className="truncate font-medium">{s.label}</span>
-                <span className="ml-auto tabular-nums font-semibold tabular-nums">{s.pct.toFixed(0)}%</span>
-              </div>
-              <p className="mt-0.5 pl-3.5 tabular-nums text-[11px] tabular-nums text-muted-foreground">
-                {money(s.usd)}
-              </p>
-            </div>
-          ))}
-        </div>
-        </div>
-
-        {debtSlices.length > 0 && (
-          <div className="mt-4 border-t border-border/50 pt-3">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                Liabilities
-              </span>
-              <span className="tabular-nums text-[12px] font-semibold text-danger">−{money(debtUsd)}</span>
-            </div>
-            <div className="grid grid-cols-2 gap-x-5 gap-y-1.5 sm:grid-cols-3">
-              {debtSlices.map((l) => (
-                <div key={l.key} className="flex items-center gap-1.5 text-[13px]">
-                  <span className="size-2 shrink-0 rounded-[4px]" style={{ background: l.colorVar }} />
-                  <span className="truncate font-medium">{l.label}</span>
-                  <span className="ml-auto tabular-nums text-[11px] text-muted-foreground">−{money(l.usd)}</span>
-                </div>
-              ))}
-            </div>
-            {/* Reconciliation — assets − debt = this country's net worth */}
-            <div className="mt-3 flex flex-wrap items-center justify-end gap-x-1.5 gap-y-1 border-t border-border/40 pt-2.5 text-[12px] text-muted-foreground">
-              <span className="tabular-nums">{money(assetsUsd)} assets</span>
-              <span>−</span>
-              <span className="tabular-nums text-danger">{money(debtUsd)} debt</span>
-              <span>=</span>
-              <span className="tabular-nums font-semibold text-foreground">{money(total)} net worth</span>
-            </div>
-          </div>
-        )}
+      {/* Column heads — the sheet's columns, on wide screens */}
+      <div className="hidden grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,0.95fr)_7rem] items-center gap-3 border-b border-border/60 bg-muted/25 px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground @2xl:grid">
+        <span className="pl-11">Account</span>
+        <span className="pl-3">Type</span>
+        <span className="pr-3 text-right">Balance</span>
+        <span className="sr-only">Actions</span>
       </div>
 
       {/* Category folders — collapsible, sorted, scale to 30+ rows */}
@@ -1150,7 +1242,8 @@ function AccountGroup({
                       rate={rate}
                       accountToGoal={accountToGoal}
                       note={securedNote(a, accounts, rate, money)}
-                      focused={!!a.id && a.id === focusedId}
+                      focused={!!a.id && (a.id === focusedId || !!highlightIds?.has(a.id))}
+                      onUpdate={onUpdate}
                       onEdit={onEdit}
                       onDelete={onDelete}
                       onMarkUpdated={onMarkUpdated}
@@ -1164,10 +1257,27 @@ function AccountGroup({
           )
         })}
       </div>
+
+      {/* Reconciliation — assets − debt = this country's net worth */}
+      {debtUsd > 0 && (
+        <div className="flex flex-wrap items-center justify-end gap-x-1.5 gap-y-1 border-t border-border/60 bg-muted/25 px-5 py-2.5 text-[12px] text-muted-foreground">
+          <span className="tabular-nums">{money(assetsUsd)} assets</span>
+          <span>−</span>
+          <span className="tabular-nums text-danger">{money(debtUsd)} debt</span>
+          <span>=</span>
+          <span className="tabular-nums font-semibold text-foreground">{money(total)} net worth</span>
+        </div>
+      )}
     </Card>
   )
 }
 
+/**
+ * One account as a sheet row: account · type · balance · actions. Name, type and
+ * balance are edited in place and saved when the cell is left; rates, maturity,
+ * ownership and loan links live in the full edit dialog. A linked (Plaid)
+ * balance is read-only: the bank sync sets it.
+ */
 function AccountRow({
   a,
   color,
@@ -1175,12 +1285,12 @@ function AccountRow({
   accountToGoal,
   note,
   focused = false,
+  onUpdate,
   onEdit,
   onDelete,
   onMarkUpdated,
   onReconnected,
   onPrepay,
-  indent = false,
 }: {
   a: Holding
   color: string
@@ -1188,77 +1298,145 @@ function AccountRow({
   accountToGoal: Map<string, string>
   /** Optional trailing note on the meta line (e.g. equity / "secured by …"). */
   note?: string
-  /** Briefly highlighted after a deep link lands on it. */
+  /** Briefly highlighted after a deep link lands on it, or right after it was added. */
   focused?: boolean
+  onUpdate: (id: string, h: Holding) => void
   onEdit: (h: Holding) => void
   onDelete: (h: Holding) => void
   onMarkUpdated?: (h: Holding) => void
   onReconnected?: () => void
   onPrepay?: (h: Holding) => void
-  indent?: boolean
 }) {
+  const { mode } = useCurrency()
   const days = ageInDays(a.lastSyncedAt)
   const fresh = freshnessOf(days)
   const canMark = !!onMarkUpdated && a.source === 'manual'
+  const liability = isLiability(a)
+  const cur = entryCurrency(a.country, a.accountType)
+  const linked = a.source !== 'manual'
+  const [name, setName] = useState(a.nickname)
+  useEffect(() => setName(a.nickname), [a.nickname])
+
+  const choice = holdingChoice(a)
+  const options = useMemo(() => {
+    const list = typeChoicesFor(a.country, liability ? 'liability' : 'asset')
+    return list.includes(choice) ? list : [choice, ...list]
+  }, [a.country, liability, choice])
+
+  const save = (next: Holding) => {
+    if (a.id) onUpdate(a.id, next)
+  }
+  // The view currency differs from the account's own — show what it's worth in the view too.
+  const showConverted = (mode === 'usd') !== (cur === 'USD')
+  const details = detailSummary(a.details)
+
   return (
     <div
       id={a.id ? `acct-${a.id}` : undefined}
       className={cn(
-        'group flex scroll-mt-24 items-center gap-3.5 transition-colors duration-500 hover:bg-accent/35',
-        indent ? 'py-2.5 pl-[4.5rem] pr-5' : 'px-5 py-3.5',
+        'group grid scroll-mt-24 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 gap-y-2 px-4 py-2.5 transition-colors duration-500 hover:bg-accent/25 @2xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,0.95fr)_7rem] @2xl:items-center @2xl:gap-3',
         // Colour stale rows so they stand out from fresh ones at a glance.
         fresh === 'stale' && 'bg-warning-muted/20',
         focused && 'bg-brand/10 ring-2 ring-inset ring-brand/40',
       )}
     >
-      {!indent && <Monogram institution={a.institution} color={color} />}
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5">
-          <p className={cn('truncate font-medium', indent ? 'text-[13px]' : 'text-[15px]')}>{a.nickname}</p>
-          {isLiability(a) && (
-            <span className="shrink-0 rounded bg-danger/12 px-1 py-px text-[10px] font-bold uppercase text-danger ring-1 ring-danger/20">
-              Debt
+      {/* Account: name (editable) + where it is and what's attached to it */}
+      <div className="flex min-w-0 items-start gap-2.5">
+        <Monogram institution={a.institution} color={color} />
+        <div className="min-w-0 flex-1">
+          <input
+            value={name}
+            maxLength={120}
+            aria-label={`Name of ${a.nickname}`}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={() => {
+              const t = name.trim()
+              if (!t) setName(a.nickname)
+              else if (t !== a.nickname) save({ ...a, nickname: t })
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') e.currentTarget.blur()
+              if (e.key === 'Escape') setName(a.nickname)
+            }}
+            className={cn(cellCls, sheetCellCls, '-ml-2 h-8 px-2 text-[14.5px] font-medium')}
+          />
+          <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px] text-muted-foreground">
+            <span className="truncate">
+              {a.institution}
+              {details ? ` · ${details}` : ''}
+              {note ? ` · ${note}` : ''}
             </span>
-          )}
-          {a.isPfic && (
-            <span className="shrink-0 rounded bg-warning/12 px-1 py-px text-[10px] font-bold uppercase text-warning ring-1 ring-warning/20">
-              PFIC
-            </span>
-          )}
-          <ProvenanceBadge holding={a} />
-          {a.needsReauth && a.plaidItemId && (
-            <ReconnectButton itemId={a.plaidItemId} rate={rate} onDone={onReconnected ?? (() => {})} />
+            {a.isPfic && (
+              <span className="shrink-0 rounded bg-warning/12 px-1 py-px text-[10px] font-bold uppercase text-warning ring-1 ring-warning/20">
+                PFIC
+              </span>
+            )}
+            <ProvenanceBadge holding={a} />
+            {ownershipLabel(a) && (
+              <span
+                className="inline-flex shrink-0 items-center gap-1 rounded bg-accent px-1.5 py-px text-[10.5px] font-medium text-accent-foreground/80 ring-1 ring-border/60"
+                title={a.ownership === 'family' ? `Held in ${ownershipLabel(a)}’s name` : `Jointly held: ${ownershipLabel(a)}`}
+              >
+                <Users size={10} />
+                {ownershipLabel(a)}
+              </span>
+            )}
+            {a.id && accountToGoal.has(a.id) && isGoalFundingAccount(a) && (
+              <span
+                className="inline-flex shrink-0 items-center gap-1 rounded bg-brand/10 px-1.5 py-px text-[10.5px] font-medium text-brand"
+                title={`Funds your “${accountToGoal.get(a.id)}” goal`}
+              >
+                <Link2 size={10} />
+                {accountToGoal.get(a.id)}
+              </span>
+            )}
+            <FreshnessPill days={days} fresh={fresh} source={a.source} />
+            {a.needsReauth && a.plaidItemId && (
+              <ReconnectButton itemId={a.plaidItemId} rate={rate} onDone={onReconnected ?? (() => {})} />
+            )}
+          </p>
+        </div>
+      </div>
+
+      <div className="col-span-2 grid grid-cols-2 gap-2 pl-[2.875rem] @2xl:contents">
+        {/* Type */}
+        <TypeCell
+          value={choice}
+          options={options}
+          label={`Type of ${a.nickname}`}
+          onChange={(t) => {
+            if (t && t !== choice) save(retypeHolding(a, t))
+          }}
+          className={cn(sheetCellCls, 'h-9 text-[13.5px]')}
+        />
+
+        {/* Balance — in the account's own currency; its value in the chosen view below */}
+        <div className="min-w-0 text-right">
+          <AmountCell
+            value={Math.round(entryAmount(a, rate) * 100) / 100}
+            currency={cur}
+            allowBlank={false}
+            readOnly={linked}
+            title={linked ? 'Synced from your bank — it refreshes on its own' : undefined}
+            label={`${liability ? 'Amount owed on' : 'Balance of'} ${a.nickname}`}
+            onCommit={(n) => {
+              if (n != null) save({ ...a, ...balancesFromEntry(a.country, a.accountType, n, rate) })
+            }}
+            inlineSymbol
+            className={cn(sheetCellCls, 'h-9 font-semibold', liability && 'text-danger')}
+          />
+          {showConverted && (
+            <p className="mt-0.5 pr-3 text-[11px] tabular-nums text-muted-foreground">
+              ≈ {liability ? '−' : ''}
+              {formatAmount(Math.abs(usdValue(a, rate)), mode, rate)}
+            </p>
           )}
         </div>
-        <p className="mt-0.5 flex items-center gap-1.5 truncate text-[13px] text-muted-foreground">
-          <span className="truncate">
-            {a.institution} · {TYPE_LABELS[a.accountType] ?? a.accountType}
-            {detailSummary(a.details) ? ` · ${detailSummary(a.details)}` : ''}
-            {note ? ` · ${note}` : ''}
-          </span>
-          {ownershipLabel(a) && (
-            <span
-              className="inline-flex shrink-0 items-center gap-1 rounded bg-accent px-1.5 py-px text-[10.5px] font-medium text-accent-foreground/80 ring-1 ring-border/60"
-              title={a.ownership === 'family' ? `Held in ${ownershipLabel(a)}’s name` : `Jointly held: ${ownershipLabel(a)}`}
-            >
-              <Users size={10} />
-              {ownershipLabel(a)}
-            </span>
-          )}
-          {a.id && accountToGoal.has(a.id) && isGoalFundingAccount(a) && (
-            <span
-              className="inline-flex shrink-0 items-center gap-1 rounded bg-brand/10 px-1.5 py-px text-[10.5px] font-medium text-brand"
-              title={`Funds your “${accountToGoal.get(a.id)}” goal`}
-            >
-              <Link2 size={10} />
-              {accountToGoal.get(a.id)}
-            </span>
-          )}
-          <FreshnessPill days={days} fresh={fresh} source={a.source} />
-        </p>
       </div>
-      <div className="flex shrink-0 items-center gap-0.5 opacity-100 transition-opacity focus-within:opacity-100 sm:opacity-0 sm:group-hover:opacity-100">
-        {onPrepay && isLiability(a) && (
+
+      {/* Actions */}
+      <div className="col-start-2 row-start-1 flex items-center justify-end gap-0.5 opacity-100 transition-opacity focus-within:opacity-100 @2xl:col-start-auto @2xl:row-start-auto @2xl:opacity-0 @2xl:group-hover:opacity-100">
+        {onPrepay && liability && (
           <button
             onClick={() => onPrepay(a)}
             aria-label={`Prepay or invest: ${a.nickname}`}
@@ -1281,7 +1459,7 @@ function AccountRow({
         <button
           onClick={() => onEdit(a)}
           aria-label={`Edit ${a.nickname}`}
-          title="Edit"
+          title="All details: rates, maturity, ownership, loans"
           className="flex size-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         >
           <Pencil size={13} />
@@ -1295,10 +1473,6 @@ function AccountRow({
           <Trash2 size={13} />
         </button>
       </div>
-      <Money
-        usd={usdValue(a, rate)}
-        className={cn('shrink-0 text-right font-semibold tabular-nums', indent ? 'text-[13px]' : 'text-[15px]')}
-      />
     </div>
   )
 }
@@ -1351,12 +1525,6 @@ function ProvenanceBadge({ holding }: { holding: Holding }) {
 }
 
 /* ── Add / edit account dialog ─────────────────────────────────────────────── */
-
-const US_TYPES: AccountType[] = ['checking', 'savings', 'cd', 'brokerage', 'bond', '401k', 'ira', 'roth_ira', 'real_estate', 'vehicle', 'notes_receivable', 'other']
-// India FDs are offered per scheme (NRE / NRO Fixed Deposit) — see TypeChoice.
-const IN_TYPES = IN_ASSET_CHOICES
-const US_LIABILITY_TYPES: AccountType[] = ['mortgage', 'heloc', 'auto_loan', 'student_loan', 'credit_card', 'personal_loan', 'notes_payable', 'other_debt']
-const IN_LIABILITY_TYPES: AccountType[] = ['home_loan', 'auto_loan', 'education_loan', 'credit_card', 'personal_loan', 'notes_payable', 'other_debt']
 
 /** First type to default to for a given country + asset/liability kind. */
 function firstType(country: 'US' | 'IN', kind: 'asset' | 'liability'): AccountType {
@@ -1566,9 +1734,8 @@ function AccountDialog({
   const liability = kind === 'liability'
   // FCNR is held in foreign currency, so it's entered in dollars even in India.
   const cur = entryCurrency(country, accountType)
-  const assetTypes = country === 'US' ? US_TYPES : IN_TYPES
-  const liabilityTypes = country === 'US' ? US_LIABILITY_TYPES : IN_LIABILITY_TYPES
-  const types = liability ? liabilityTypes : assetTypes
+  // India FDs are offered per scheme (NRE / NRO Fixed Deposit) — see TypeChoice.
+  const types = typeChoicesFor(country, kind)
   const spec = detailSpec(country, accountType, isSgb, fdScheme)
   // Named like an FD but typed as NRE/NRO Savings — suggest the FD choice (never auto-switched).
   const suggestedScheme = liability ? null : mistypedFdScheme({ country, accountType, nickname })

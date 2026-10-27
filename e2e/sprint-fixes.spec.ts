@@ -66,13 +66,13 @@ test('an FCNR deposit is entered and saved in dollars — real data', async ({ p
   await setMode(page, 'real')
   await setCurrency(page, 'usd')
   await page.goto('/accounts')
-  await page.getByRole('button', { name: /Add account/ }).first().click()
+  await page.getByRole('button', { name: 'Add account', exact: true }).first().click()
   await page.getByRole('button', { name: /Add manually/ }).click()
   await page.getByRole('button', { name: /India$/ }).click()
   await page.getByLabel('Nickname').fill('E2E FCNR USD')
   await page.getByLabel('Institution').fill('ICICI Bank')
-  await page.getByLabel('Type').click()
-  await page.getByRole('option', { name: /FCNR/ }).click()
+  await page.getByRole('combobox', { name: 'Type', exact: true }).click()
+  await page.getByRole('listbox').getByRole('option', { name: /FCNR/ }).click()
   // The balance field switches to $ for FCNR.
   const balance = page.locator('label').filter({ has: page.getByText('Balance', { exact: true }) })
   await expect(balance).toContainText('$')
@@ -80,8 +80,11 @@ test('an FCNR deposit is entered and saved in dollars — real data', async ({ p
   await balance.locator('input').fill('50000')
   await page.getByRole('button', { name: /^\+?\s*Add account$/ }).last().click()
 
-  const row = page.locator('main').getByText('E2E FCNR USD').locator('xpath=ancestor::*[contains(@class,"group")][1]')
-  await expect(row).toContainText('FCNR Deposit · USD')
+  const row = page.locator('main').getByRole('textbox', { name: 'Name of E2E FCNR USD' }).locator('xpath=ancestor::*[contains(@class,"group")][1]')
+  await expect(row.getByLabel('Type of E2E FCNR USD')).toHaveValue('fcnr')
+  await expect(row).toContainText('USD')
+  // The sheet shows (and edits) its balance in dollars, as it's held.
+  await expect(row.getByLabel('Balance of E2E FCNR USD')).toHaveValue('$50,000')
   await row.screenshot({ path: 'e2e/screenshots/fcnr-usd-row.png' })
 
   // What was saved: $50,000, and its rupee value at the live rate (the row's

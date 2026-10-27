@@ -15,7 +15,8 @@ interface AccountsContextValue {
   /** Merge accounts the server just persisted (e.g. a Plaid link) into the ledger. */
   addLinked: (accounts: Holding[]) => void
   clearLinked: () => void
-  addManual: (account: Holding) => void
+  /** Add one account. Resolves to the saved row, or null when the save failed (it's rolled back). */
+  addManual: (account: Holding) => Promise<Holding | null>
   /**
    * Replace the holding with this id (keeps its id and position in the list).
    * `confirmBalance` = "mark updated": records today's balance in history.
@@ -143,27 +144,27 @@ export function AccountsProvider({ children }: { children: React.ReactNode }) {
   }, [isLoaded, userId, loadFromServer])
 
   const addManual = useCallback(
-    (account: Holding) => {
+    async (account: Holding): Promise<Holding | null> => {
       const tempId = account.id ?? crypto.randomUUID()
       const optimistic: Holding = { ...account, id: tempId }
       setHoldings((prev) => [...prev, optimistic])
-      if (demo) return
+      if (demo) return optimistic
       // Persist, then swap the temp row for the server row (which has the real id).
-      void (async () => {
-        try {
-          const res = await fetch('/api/accounts', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(createBody(account)),
-          })
-          if (!res.ok) throw new Error(`POST /api/accounts ${res.status}`)
-          const { account: saved } = (await res.json()) as { account: Holding }
-          setHoldings((prev) => prev.map((h) => (h.id === tempId ? saved : h)))
-        } catch (e) {
-          console.error('Failed to add account:', e)
-          setHoldings((prev) => prev.filter((h) => h.id !== tempId)) // roll back the add
-        }
-      })()
+      try {
+        const res = await fetch('/api/accounts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(createBody(account)),
+        })
+        if (!res.ok) throw new Error(`POST /api/accounts ${res.status}`)
+        const { account: saved } = (await res.json()) as { account: Holding }
+        setHoldings((prev) => prev.map((h) => (h.id === tempId ? saved : h)))
+        return saved
+      } catch (e) {
+        console.error('Failed to add account:', e)
+        setHoldings((prev) => prev.filter((h) => h.id !== tempId)) // roll back the add
+        return null
+      }
     },
     [demo],
   )
