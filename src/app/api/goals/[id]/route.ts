@@ -59,7 +59,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   // Confirm the row exists AND belongs to this user before touching it.
   const existing = await prisma.goal.findFirst({
     where: { id, userId },
-    select: { id: true, targetYear: true, category: true, linkedAccountIds: true, linkedLiabilityId: true },
+    select: { id: true, targetYear: true, category: true, linkedAccountIds: true, linkedLiabilityIds: true, linkedLiabilityId: true },
   })
   if (!existing) return notFound()
 
@@ -80,8 +80,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     {
       category: parsed.data.category ?? existing.category,
       linkedAccountIds: parsed.data.linkedAccountIds ?? existing.linkedAccountIds,
-      linkedLiabilityId:
-        parsed.data.linkedLiabilityId !== undefined ? parsed.data.linkedLiabilityId : existing.linkedLiabilityId,
+      linkedLiabilityIds:
+        parsed.data.linkedLiabilityIds ??
+        (existing.linkedLiabilityIds.length > 0 || !existing.linkedLiabilityId ? existing.linkedLiabilityIds : [existing.linkedLiabilityId]),
     },
     false,
     existing.linkedAccountIds,

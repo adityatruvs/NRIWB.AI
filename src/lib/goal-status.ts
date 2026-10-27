@@ -16,7 +16,9 @@ import { goalExpectedReturn, monthlyNeededOver, type Goal } from '@/lib/goals'
 import type { Holding } from '@/lib/portfolio'
 import {
   debtProgress,
-  linkedLoan,
+  linkedLoans,
+  loanBalanceNative,
+  loanCurrency,
   monthsUntilYearEnd,
   nativeToUsd,
   payoffMonths,
@@ -30,8 +32,8 @@ export type GoalStatusKind =
   | 'behind'
   | 'overdue'
   // Debt payoff only:
-  | 'needs_details' // the loan has no APR or minimum payment yet
-  | 'loan_removed' // the linked loan was deleted
+  | 'needs_details' // a loan has no APR or minimum payment yet
+  | 'loan_removed' // every linked loan was deleted
 
 export interface GoalStatus {
   status: GoalStatusKind
@@ -120,36 +122,38 @@ export function goalStatus(
 }
 
 /**
- * Debt payoff: project the payoff month from the loan's APR and minimum payment
- * and compare it with the target year. Paying off before the target year is
- * Ahead, during it On track, after it Behind (with the extra per month that
- * would clear it by the end of the target year).
+ * Debt payoff: project each loan's payoff month from its APR and minimum payment;
+ * the goal clears when the last one does. Compare that with the target year:
+ * before it is Ahead, during it On track, after it Behind (with the extra per
+ * month, across the loans, that would clear them by the end of the target year).
  */
 export function debtGoalStatus(goal: Goal, holdings: Holding[], rate: number, now: Date = new Date()): GoalStatus {
   const base = { projectedUsd: 0, ratio: 0, monthlyGapUsd: null, monthsLeftThisYear: null, hasPlan: true, annualReturn: 0 }
-  const loan = linkedLoan(goal, holdings)
-  if (!loan) return { ...base, status: 'loan_removed' }
-  const p = debtProgress(goal, loan)
-  if (p.remainingNative <= 0) return { ...base, ratio: 1, status: 'reached', payoffMonth: null }
+  const loans = linkedLoans(goal, holdings)
+  if (loans.length === 0) return { ...base, status: 'loan_removed' }
+  const p = debtProgress(goal, loans, rate)
+  const open = loans.filter((l) => loanBalanceNative(l) > 0)
+  if (open.length === 0) return { ...base, ratio: 1, status: 'reached', payoffMonth: null }
 
-  const apr = loan.details?.interestRate
-  const payment = loan.details?.minPayment
-  if (apr == null || !payment || payment <= 0) return { ...base, status: 'needs_details' }
+  if (open.some((l) => l.details?.interestRate == null || !(l.details?.minPayment && l.details.minPayment > 0))) {
+    return { ...base, status: 'needs_details' }
+  }
 
-  const months = payoffMonths(p.remainingNative, apr, payment)
-  const payoff = Number.isFinite(months) ? new Date(now.getFullYear(), now.getMonth() + months, 1) : null
+  const monthsLeft = monthsUntilYearEnd(goal.targetYear, now)
+  const months = open.map((l) => payoffMonths(loanBalanceNative(l), l.details!.interestRate!, l.details!.minPayment!))
+  const last = Math.max(...months)
+  const payoff = Number.isFinite(last) ? new Date(now.getFullYear(), now.getMonth() + last, 1) : null
   const payoffMonth = payoff ? `${payoff.getFullYear()}-${String(payoff.getMonth() + 1).padStart(2, '0')}` : null
   const withPayoff = { ...base, ratio: p.pct, payoffMonth }
 
   if (goal.targetYear < now.getFullYear()) return { ...withPayoff, status: 'overdue' }
   if (payoff && payoff.getFullYear() < goal.targetYear) return { ...withPayoff, status: 'ahead' }
   if (payoff && payoff.getFullYear() === goal.targetYear) return { ...withPayoff, status: 'on_track' }
-  const needed = paymentFor(p.remainingNative, apr, monthsUntilYearEnd(goal.targetYear, now))
-  return {
-    ...withPayoff,
-    status: 'behind',
-    monthlyGapUsd: nativeToUsd(Math.max(0, needed - payment), p.currency, rate),
-  }
+  const gapUsd = open.reduce((sum, l) => {
+    const needed = paymentFor(loanBalanceNative(l), l.details!.interestRate!, monthsLeft)
+    return sum + nativeToUsd(Math.max(0, needed - l.details!.minPayment!), loanCurrency(l), rate)
+  }, 0)
+  return { ...withPayoff, status: 'behind', monthlyGapUsd: gapUsd }
 }
 
 /** "Within current year – 3 months left" (or "due this month"). */

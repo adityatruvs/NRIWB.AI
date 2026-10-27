@@ -26,6 +26,8 @@ function row(overrides: Partial<GoalRecord> = {}): GoalRecord {
     linkedAccountIds: [],
     targetMonth: null,
     plannedMonthlyUsd: null,
+    linkedLiabilityIds: [],
+    originalAmounts: {},
     linkedLiabilityId: null,
     originalAmount: null,
     ...overrides,

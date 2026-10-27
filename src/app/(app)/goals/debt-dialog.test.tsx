@@ -55,67 +55,78 @@ function openDebtDialog() {
   const dialog = screen.getByText('Add a goal').closest('div.card-surface') as HTMLElement
   fireEvent.click(within(dialog).getByRole('button', { name: 'Debt payoff' }))
 }
-const radios = () => screen.getAllByRole('radio')
-const startBalance = () => screen.getByLabelText(/starting balance/i) as HTMLInputElement
+const boxes = () => screen.getAllByRole('checkbox')
+const startBalance = (loan: string) =>
+  screen.getByLabelText(new RegExp(`starting balance.*${loan}`, 'i')) as HTMLInputElement
 const nameInput = () => screen.getByPlaceholderText(/e\.g\. Retirement/i) as HTMLInputElement
 
 describe('Debt payoff dialog (UI)', () => {
   it('offers only liabilities', () => {
     openDebtDialog()
-    expect(radios().map((r) => r.textContent)).toEqual([
+    expect(boxes().map((r) => r.textContent)).toEqual([
       expect.stringContaining('Bangalore home loan'),
       expect.stringContaining('Car loan'),
       expect.stringContaining('US mortgage'),
     ])
   })
 
-  it('lets every liability be selected, one at a time, and the amount follows', () => {
+  it('uses square checkboxes, not round radios', () => {
     openDebtDialog()
-    const [home, car, us] = radios()
+    expect(screen.queryAllByRole('radio')).toHaveLength(0)
+    for (const box of boxes()) {
+      expect(box.querySelector('span')).toHaveClass('rounded')
+      expect(box.querySelector('span')).not.toHaveClass('rounded-full')
+    }
+  })
+
+  it('lets several liabilities be selected at once, each with its own amount', () => {
+    openDebtDialog()
+    const [home, car, us] = boxes()
 
     fireEvent.click(home)
     expect(home).toHaveAttribute('aria-checked', 'true')
-    expect(startBalance().value).toBe(String(32 * LAKH))
+    expect(startBalance('Bangalore home loan').value).toBe(String(32 * LAKH))
     expect(nameInput().value).toBe('Pay off Bangalore home loan')
 
     fireEvent.click(car)
+    expect(home).toHaveAttribute('aria-checked', 'true')
     expect(car).toHaveAttribute('aria-checked', 'true')
-    expect(home).toHaveAttribute('aria-checked', 'false')
-    expect(startBalance().value).toBe(String(5 * LAKH))
-    expect(nameInput().value).toBe('Pay off Car loan')
+    expect(startBalance('Car loan').value).toBe(String(5 * LAKH))
+    expect(nameInput().value).toBe('Pay off 2 loans')
 
     fireEvent.click(us)
-    expect(us).toHaveAttribute('aria-checked', 'true')
-    expect(startBalance().value).toBe('250000')
+    expect(startBalance('US mortgage').value).toBe('250000')
 
-    fireEvent.click(home) // and back again
-    expect(startBalance().value).toBe(String(32 * LAKH))
+    fireEvent.click(home) // untick one
+    expect(home).toHaveAttribute('aria-checked', 'false')
+    expect(screen.queryByLabelText(/starting balance.*Bangalore/i)).toBeNull()
+    expect(car).toHaveAttribute('aria-checked', 'true')
   })
 
-  it('resets a typed amount when switching loans but keeps it on re-click', () => {
+  it('keeps a typed amount when other loans are ticked', () => {
     openDebtDialog()
-    const [home, car] = radios()
+    const [home, car] = boxes()
     fireEvent.click(home)
-    fireEvent.change(startBalance(), { target: { value: String(60 * LAKH) } })
-    fireEvent.click(home)
-    expect(startBalance().value).toBe(String(60 * LAKH))
+    fireEvent.change(startBalance('Bangalore home loan'), { target: { value: String(60 * LAKH) } })
     fireEvent.click(car)
-    expect(startBalance().value).toBe(String(5 * LAKH))
+    expect(startBalance('Bangalore home loan').value).toBe(String(60 * LAKH))
+    expect(startBalance('Car loan').value).toBe(String(5 * LAKH))
   })
 
-  it('saves the goal against the last-selected loan with its amount', () => {
+  it('saves the goal against every selected loan with its amount', () => {
     openDebtDialog()
-    const [home, car] = radios()
+    const [home, car] = boxes()
     fireEvent.click(home)
     fireEvent.click(car)
+    fireEvent.change(startBalance('Bangalore home loan'), { target: { value: String(60 * LAKH) } })
     const dialog = screen.getByText('Add a goal').closest('div.card-surface') as HTMLElement
     fireEvent.click(within(dialog).getByRole('button', { name: /^add goal$/i }))
     expect(addGoal).toHaveBeenCalledTimes(1)
     expect(addGoal.mock.calls[0][0]).toMatchObject({
       category: 'debt',
-      linkedLiabilityId: 'l2',
-      originalAmount: 5 * LAKH,
-      name: 'Pay off Car loan',
+      linkedLiabilityIds: ['l1', 'l2'],
+      originalAmounts: { l1: 60 * LAKH, l2: 5 * LAKH },
+      name: 'Pay off 2 loans',
     })
   })
 })
@@ -128,8 +139,8 @@ describe('Debt payoff card (UI)', () => {
     targetUsd: 0,
     currentUsd: 0,
     targetYear: 2028,
-    linkedLiabilityId: 'l1',
-    originalAmount: 60 * LAKH,
+    linkedLiabilityIds: ['l1'],
+    originalAmounts: { l1: 60 * LAKH },
     ...over,
   })
   const show = (goals: Goal[], hs: Holding[] = holdings) => {
@@ -158,7 +169,7 @@ describe('Debt payoff card (UI)', () => {
   })
 
   it('keeps the goal and says the loan was removed when it is deleted', () => {
-    show([debtGoal({ linkedLiabilityId: undefined })])
+    show([debtGoal({ linkedLiabilityIds: [] })])
     expect(screen.getByText('Clear the Bangalore home loan')).toBeInTheDocument()
     expect(screen.getByText(/loan removed/i, { selector: 'p' })).toHaveTextContent(/relink a loan.*or delete this goal/i)
   })

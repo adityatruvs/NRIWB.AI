@@ -31,11 +31,12 @@ import { usdValue, isLiability, isGoalFundingAccount, TYPE_LABELS, type Holding 
 import { formatLakhs, formatUSD } from '@/lib/currency'
 import {
   debtProgress,
-  linkedLoan,
+  linkedLoans,
+  loanProgress,
   loanBalanceNative,
   loanCurrency,
   nativeToUsd,
-  pickLoan,
+  toggleLoan,
   type LoanCurrency,
 } from '@/lib/debt-goal'
 import {
@@ -333,22 +334,24 @@ function GoalCard({
           <p className="truncate text-[15px] font-semibold">{goal.name}</p>
           <p className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
             {GOAL_CATEGORY_META[goal.category].label}
-            <span
-              className="rounded px-1 py-px text-[10px] font-medium capitalize"
-              style={{
-                background: `color-mix(in oklch, ${
-                  goalKind(goal) === 'cost' ? 'var(--danger)' : 'var(--success)'
-                } 12%, transparent)`,
-                color: goalKind(goal) === 'cost' ? 'var(--danger)' : 'var(--success)',
-              }}
-              title={
-                goalKind(goal) === 'cost'
-                  ? 'Cost — dips your projection the year it’s paid'
-                  : 'Investment — stays your wealth, no dip'
-              }
-            >
-              {goalKind(goal)}
-            </span>
+            {/* A debt goal isn't a cost-or-investment: it has no projection to dip. */}
+            {goal.category !== 'debt' && (
+              <span
+                className="rounded px-1 py-px text-[10px] font-medium capitalize"
+                style={{
+                  background: `color-mix(in oklch, ${goalKind(goal) === 'cost' ? 'var(--danger)' : 'var(--success)'
+                    } 12%, transparent)`,
+                  color: goalKind(goal) === 'cost' ? 'var(--danger)' : 'var(--success)',
+                }}
+                title={
+                  goalKind(goal) === 'cost'
+                    ? 'Cost — dips your projection the year it’s paid'
+                    : 'Investment — stays your wealth, no dip'
+                }
+              >
+                {goalKind(goal)}
+              </span>
+            )}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-0.5 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
@@ -372,114 +375,116 @@ function GoalCard({
       </div>
 
       {goal.category === 'debt' ? (
-        <DebtGoalBody goal={goal} holdings={holdings} status={status} accent={accent} onEdit={onEdit} />
+        <DebtGoalBody goal={goal} holdings={holdings} rate={rate} status={status} accent={accent} onEdit={onEdit} />
       ) : (
         <>
-      <div className="mb-3">
-        <GoalStatusChip status={status} targetYear={goal.targetYear} />
-      </div>
+          <div className="mb-3">
+            <GoalStatusChip status={status} targetYear={goal.targetYear} />
+          </div>
 
-      <div className="mb-1.5 flex items-baseline justify-between">
-        <Money
-          usd={funded}
-          className="tabular-nums text-[1.35rem] font-semibold leading-none tracking-tight tabular-nums"
-        />
-        <span className="tabular-nums text-xs font-semibold tabular-nums" style={{ color: accent }}>
-          {Math.round(pct * 100)}%
-        </span>
-      </div>
-      <ProgressBar value={pct} color={accent} height={7} />
-      <div className="mt-1.5 flex items-center justify-between text-[12px] text-muted-foreground">
-        <span className="tabular-nums tabular-nums">of {formatAmount(goal.targetUsd, mode, rate)}</span>
-        <span className="rounded-full bg-muted px-1.5 py-0.5 text-[11px] font-medium">
-          by {goal.targetYear}
-          {age != null && goal.targetYear > currentYear && showsOwnAge(goal.category)
-            ? ` · age ${age + (goal.targetYear - currentYear)}`
-            : ''}
-        </span>
-      </div>
+          <div className="mb-1.5 flex items-baseline justify-between">
+            <Money
+              usd={funded}
+              className="tabular-nums text-[1.35rem] font-semibold leading-none tracking-tight tabular-nums"
+            />
+            <span className="tabular-nums text-xs font-semibold tabular-nums" style={{ color: accent }}>
+              {Math.round(pct * 100)}%
+            </span>
+          </div>
+          <ProgressBar value={pct} color={accent} height={7} />
+          <div className="mt-1.5 flex items-center justify-between text-[12px] text-muted-foreground">
+            <span className="tabular-nums tabular-nums">of {formatAmount(goal.targetUsd, mode, rate)}</span>
+            <span className="rounded-full bg-muted px-1.5 py-0.5 text-[11px] font-medium">
+              by {goal.targetYear}
+              {age != null && goal.targetYear > currentYear && showsOwnAge(goal.category)
+                ? ` · age ${age + (goal.targetYear - currentYear)}`
+                : ''}
+            </span>
+          </div>
 
-      {funders.length > 0 ? (
-        <ul className="mt-3 flex flex-col gap-0.5" aria-label="Funded by">
-          {funders.slice(0, 3).map((h) => (
-            <li key={h.id}>
-              <NextLink
-                href={`/accounts?focus=${encodeURIComponent(h.id!)}`}
-                className="-mx-1.5 flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[12px] text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
-              >
-                <Link2 size={11} className="shrink-0" style={{ color: accent }} />
-                <span className="min-w-0 flex-1 truncate">{h.nickname}</span>
-                <Money usd={usdValue(h, rate)} className="shrink-0 tabular-nums font-medium text-foreground" />
-              </NextLink>
-            </li>
-          ))}
-          {funders.length > 3 && (
-            <li className="pl-5 text-[11px] text-muted-foreground">+{funders.length - 3} more</li>
+          {funders.length > 0 ? (
+            <ul className="mt-3 flex flex-col gap-0.5" aria-label="Funded by">
+              {funders.slice(0, 3).map((h) => (
+                <li key={h.id}>
+                  <NextLink
+                    href={`/accounts?focus=${encodeURIComponent(h.id!)}`}
+                    className="-mx-1.5 flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[12px] text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+                  >
+                    <Link2 size={11} className="shrink-0" style={{ color: accent }} />
+                    <span className="min-w-0 flex-1 truncate">{h.nickname}</span>
+                    <Money usd={usdValue(h, rate)} className="shrink-0 tabular-nums font-medium text-foreground" />
+                  </NextLink>
+                </li>
+              ))}
+              {funders.length > 3 && (
+                <li className="pl-5 text-[11px] text-muted-foreground">+{funders.length - 3} more</li>
+              )}
+            </ul>
+          ) : (
+            <p className="mt-2 text-[11px] text-muted-foreground">Tracked manually</p>
           )}
-        </ul>
-      ) : (
-        <p className="mt-2 text-[11px] text-muted-foreground">Tracked manually</p>
-      )}
 
-      <div className="mt-4 border-t border-border/60 pt-3 text-[12px] text-muted-foreground">
-        {reached ? (
-          <span className="inline-flex items-center gap-1.5 font-medium text-success">
-            <ShieldCheck size={13} /> Goal reached — nice work
-          </span>
-        ) : status.monthsLeftThisYear != null ? (
-          <span className="inline-flex items-center gap-1.5">
-            <Money usd={goalRemaining(goal)} className="font-medium text-foreground" /> left ·{' '}
-            {withinYearLabel(status.monthsLeftThisYear)}
-          </span>
-        ) : yearsLeft <= 0 ? (
-          <span className="inline-flex items-center gap-1.5">
-            <Money usd={goalRemaining(goal)} className="font-medium text-foreground" /> left · target year
-            passed
-          </span>
-        ) : onTrack ? (
-          <span
-            className="inline-flex items-start gap-1.5"
-            title="Illustrative: assumes this growth rate holds every year. Not a guarantee."
-          >
-            <TrendingUp size={13} className="mt-px shrink-0 text-success" />
-            <span>
-              <span className="font-medium text-success">On track</span> — at ~
-              {(growth * 100).toFixed(1).replace(/\.0$/, '')}%/yr, what you&apos;ve saved grows to this by{' '}
-              {goal.targetYear}
-            </span>
-          </span>
-        ) : (
-          <span className="inline-flex items-center gap-1.5">
-            <TrendingUp size={13} className="shrink-0" />
-            <span>
-              ~<Money usd={monthly} className="font-medium text-foreground" />/mo for {yearsLeft} year
-              {yearsLeft > 1 ? 's' : ''}
-            </span>
-          </span>
-        )}
-      </div>
+          <div className="mt-4 border-t border-border/60 pt-3 text-[12px] text-muted-foreground">
+            {reached ? (
+              <span className="inline-flex items-center gap-1.5 font-medium text-success">
+                <ShieldCheck size={13} /> Goal reached — nice work
+              </span>
+            ) : status.monthsLeftThisYear != null ? (
+              <span className="inline-flex items-center gap-1.5">
+                <Money usd={goalRemaining(goal)} className="font-medium text-foreground" /> left ·{' '}
+                {withinYearLabel(status.monthsLeftThisYear)}
+              </span>
+            ) : yearsLeft <= 0 ? (
+              <span className="inline-flex items-center gap-1.5">
+                <Money usd={goalRemaining(goal)} className="font-medium text-foreground" /> left · target year
+                passed
+              </span>
+            ) : onTrack ? (
+              <span
+                className="inline-flex items-start gap-1.5"
+                title="Illustrative: assumes this growth rate holds every year. Not a guarantee."
+              >
+                <TrendingUp size={13} className="mt-px shrink-0 text-success" />
+                <span>
+                  <span className="font-medium text-success">On track</span> — at ~
+                  {(growth * 100).toFixed(1).replace(/\.0$/, '')}%/yr, what you&apos;ve saved grows to this by{' '}
+                  {goal.targetYear}
+                </span>
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5">
+                <TrendingUp size={13} className="shrink-0" />
+                <span>
+                  ~<Money usd={monthly} className="font-medium text-foreground" />/mo for {yearsLeft} year
+                  {yearsLeft > 1 ? 's' : ''}
+                </span>
+              </span>
+            )}
+          </div>
         </>
       )}
     </Card>
   )
 }
 
-/** Card body for a debt-payoff goal: progress in the loan's own currency. */
+/** Card body for a debt-payoff goal: progress in the loans' own currency. */
 function DebtGoalBody({
   goal,
   holdings,
+  rate,
   status,
   accent,
   onEdit,
 }: {
   goal: Goal
   holdings: Holding[]
+  rate: number
   status: ReturnType<typeof goalStatus>
   accent: string
   onEdit: () => void
 }) {
-  const loan = linkedLoan(goal, holdings)
-  if (!loan) {
+  const loans = linkedLoans(goal, holdings)
+  if (loans.length === 0) {
     return (
       <div className="mt-1 flex flex-col gap-2 text-[12px] text-muted-foreground">
         <GoalStatusChip status={status} targetYear={goal.targetYear} />
@@ -493,8 +498,7 @@ function DebtGoalBody({
       </div>
     )
   }
-  const p = debtProgress(goal, loan)
-  const focusHref = `/accounts?focus=${encodeURIComponent(loan.id!)}`
+  const p = debtProgress(goal, loans, rate)
   return (
     <>
       <div className="mb-3">
@@ -516,22 +520,36 @@ function DebtGoalBody({
         <span className="tabular-nums">{fmtNative(p.remainingNative, p.currency)} left</span>
         <span className="rounded-full bg-muted px-1.5 py-0.5 text-[11px] font-medium">by {goal.targetYear}</span>
       </div>
-      <NextLink
-        href={focusHref}
-        className="-mx-1.5 mt-3 flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[12px] text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
-      >
-        <CreditCard size={11} className="shrink-0" style={{ color: accent }} />
-        <span className="truncate">Paying off {loan.nickname}</span>
-      </NextLink>
+      <div className="mt-3 space-y-0.5">
+        {loans.map((loan) => {
+          const lp = loanProgress(goal, loan)
+          return (
+            <NextLink
+              key={loan.id}
+              href={`/accounts?focus=${encodeURIComponent(loan.id!)}`}
+              className="-mx-1.5 flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[12px] text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+            >
+              <CreditCard size={11} className="shrink-0" style={{ color: accent }} />
+              <span className="min-w-0 flex-1 truncate">Paying off {loan.nickname}</span>
+              {loans.length > 1 && (
+                <span className="shrink-0 tabular-nums">{fmtNative(lp.remainingNative, lp.currency)} left</span>
+              )}
+            </NextLink>
+          )
+        })}
+      </div>
       <div className="mt-4 border-t border-border/60 pt-3 text-[12px] text-muted-foreground">
         {status.status === 'needs_details' ? (
           <span>
-            Add this loan&apos;s interest rate and minimum payment to see when it&apos;s paid off.{' '}
+            Add {loans.length > 1 ? 'each loan\u2019s' : 'this loan\u2019s'} interest rate and minimum payment to see when{' '}
+            {loans.length > 1 ? 'they\u2019re' : 'it\u2019s'} paid off.{' '}
             <NextLink
-              href={`/accounts?edit=${encodeURIComponent(loan.id!)}`}
+              href={`/accounts?edit=${encodeURIComponent(
+                (loans.find((l) => l.details?.interestRate == null || !l.details?.minPayment) ?? loans[0]).id!,
+              )}`}
               className="font-medium text-foreground underline-offset-2 hover:underline"
             >
-              Edit loan
+              Edit {loans.length > 1 ? 'a loan' : 'loan'}
             </NextLink>
           </span>
         ) : status.status === 'reached' ? (
@@ -540,7 +558,7 @@ function DebtGoalBody({
           </span>
         ) : status.payoffMonth ? (
           <span>
-            At the minimum payment: paid off around{' '}
+            At the minimum payments: {loans.length > 1 ? 'all paid off' : 'paid off'} around{' '}
             <span className="font-medium text-foreground">
               {new Date(`${status.payoffMonth}-01T00:00:00Z`).toLocaleDateString(undefined, {
                 month: 'short',
@@ -561,39 +579,38 @@ function DebtGoalBody({
 
 function DebtFields({
   holdings,
-  loanId,
-  onLoan,
-  original,
+  loanIds,
+  onToggle,
+  originals,
   setOriginal,
 }: {
   holdings: Holding[]
-  loanId: string | null
-  onLoan: (h: Holding) => void
-  original: string
-  setOriginal: (v: string) => void
+  loanIds: string[]
+  onToggle: (h: Holding) => void
+  originals: Record<string, string>
+  setOriginal: (id: string, v: string) => void
 }) {
   // Only liabilities can be paid off; assets are never offered here.
   const loans = holdings.filter((h) => isLiability(h) && h.id)
-  const loan = loans.find((h) => h.id === loanId) ?? null
-  const currency = loan ? loanCurrency(loan) : 'USD'
+  const picked = loanIds.flatMap((id) => loans.find((h) => h.id === id) ?? [])
   return (
     <>
-      <Field label="Loan to pay off">
+      <Field label="Loans to pay off">
         {loans.length === 0 ? (
           <p className="rounded-xl border border-dashed border-border/70 px-3 py-2.5 text-[12px] text-muted-foreground">
             No loans yet. Add your home loan, mortgage or card in Accounts first.
           </p>
         ) : (
-          <div className="max-h-44 space-y-1 overflow-y-auto rounded-xl border border-border/70 p-1" role="radiogroup">
+          <div className="max-h-44 space-y-1 overflow-y-auto rounded-xl border border-border/70 p-1">
             {loans.map((h) => {
-              const on = h.id === loanId
+              const on = loanIds.includes(h.id!)
               return (
                 <button
                   key={h.id}
                   type="button"
-                  role="radio"
+                  role="checkbox"
                   aria-checked={on}
-                  onClick={() => onLoan(h)}
+                  onClick={() => onToggle(h)}
                   className={cn(
                     'flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors',
                     on ? 'bg-accent/70' : 'hover:bg-accent/40',
@@ -601,7 +618,7 @@ function DebtFields({
                 >
                   <span
                     className={cn(
-                      'flex size-4 shrink-0 items-center justify-center rounded-full border',
+                      'flex size-4 shrink-0 items-center justify-center rounded border',
                       on ? 'border-transparent bg-foreground text-background' : 'border-border',
                     )}
                   >
@@ -622,20 +639,22 @@ function DebtFields({
           </div>
         )}
       </Field>
-      {loan && (
-        <Field label={`Starting balance (${currency}): progress is measured from here`}>
+      {picked.map((loan, i) => (
+        <Field key={loan.id} label={`Starting balance (${loanCurrency(loan)}): ${loan.nickname}`}>
           <input
-            value={original}
-            onChange={(e) => setOriginal(e.target.value.replace(/[^0-9.]/g, ''))}
+            value={originals[loan.id!] ?? ''}
+            onChange={(e) => setOriginal(loan.id!, e.target.value.replace(/[^0-9.]/g, ''))}
             inputMode="decimal"
             className={cn(inputCls, 'tabular-nums')}
           />
-          <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
-            Defaults to what you owe today. Enter the original loan amount to count what you&apos;ve already
-            repaid.
-          </p>
+          {i === picked.length - 1 && (
+            <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
+              Progress is measured from here. Defaults to what you owe today; enter the original loan amount to
+              count what you&apos;ve already repaid.
+            </p>
+          )}
         </Field>
-      )}
+      ))}
     </>
   )
 }
@@ -686,18 +705,16 @@ function GoalDialog({
     initial?.kind ?? defaultGoalKind(initial?.category ?? 'retirement'),
   )
   const [linkedIds, setLinkedIds] = useState<string[]>(initial?.linkedAccountIds ?? [])
-  // Debt payoff: the loan being paid off and its starting balance (loan's currency).
-  const [loanId, setLoanId] = useState<string | null>(initial?.linkedLiabilityId ?? null)
-  const [original, setOriginal] = useState(
-    initial?.originalAmount != null ? String(Math.round(initial.originalAmount)) : '',
+  // Debt payoff: the loans being paid off and each one's starting balance (its own currency).
+  const [loanIds, setLoanIds] = useState<string[]>(initial?.linkedLiabilityIds ?? [])
+  const [originals, setOriginals] = useState<Record<string, string>>(() =>
+    Object.fromEntries(Object.entries(initial?.originalAmounts ?? {}).map(([id, n]) => [id, String(Math.round(n))])),
   )
-  // Editing an existing goal keeps its saved starting balance; otherwise it tracks the picked loan.
-  const [originalEdited, setOriginalEdited] = useState(initial?.originalAmount != null)
   const [autoName, setAutoName] = useState('')
   const isDebt = category === 'debt'
   // The user's age at the target year — not for education (that's the child's timeline).
   const ownAge = age != null && showsOwnAge(category)
-  const loan = loanId ? (holdings.find((h) => h.id === loanId && isLiability(h)) ?? null) : null
+  const loans = loanIds.flatMap((id) => holdings.find((h) => h.id === id && isLiability(h)) ?? [])
   const [planned, setPlanned] = useState(
     initial?.plannedMonthlyUsd != null ? String(Math.round(initial.plannedMonthlyUsd)) : '',
   )
@@ -798,23 +815,24 @@ function GoalDialog({
   const monthPassed = !isDebt && year === currentYear && month != null && month < currentMonth
   const plannedValid = planned.trim() === '' || Number(planned) >= 0
   const valid = isDebt
-    ? !!name.trim() && !!loan && Number(original) > 0
+    ? !!name.trim() && loans.length > 0 && loans.every((l) => Number(originals[l.id!]) > 0)
     : name.trim() && Number(target) > 0 && (linked || Number(current) >= 0) && plannedValid
 
   function submit() {
     if (!valid) return
-    if (isDebt && loan) {
-      const c = loanCurrency(loan)
-      const orig = Number(original)
+    if (isDebt && loans.length > 0) {
+      const originalAmounts = Object.fromEntries(loans.map((l) => [l.id!, Number(originals[l.id!])]))
+      const sumUsd = (pick: (l: Holding, orig: number) => number) =>
+        loans.reduce((t, l) => t + nativeToUsd(pick(l, originalAmounts[l.id!]), loanCurrency(l), rate), 0)
       onSave({
         name: name.trim(),
         category: 'debt',
         // Stored in USD for sorting/summaries; the card reads progress natively.
-        targetUsd: nativeToUsd(orig, c, rate),
-        currentUsd: Math.max(0, nativeToUsd(orig - loanBalanceNative(loan), c, rate)),
+        targetUsd: sumUsd((_, orig) => orig),
+        currentUsd: Math.max(0, sumUsd((l, orig) => orig - loanBalanceNative(l))),
         targetYear: year,
-        linkedLiabilityId: loan.id,
-        originalAmount: orig,
+        linkedLiabilityIds: loans.map((l) => l.id!),
+        originalAmounts,
       })
       return
     }
@@ -865,45 +883,45 @@ function GoalDialog({
           {/* AI assist — describe it, let Claude fill the amount + timing. Not for a
               debt payoff goal: it tracks a loan, which AI Fill can't edit. */}
           {!isDebt && (
-          <div className="ai-ring p-2.5">
-            <div className="mb-1.5 flex items-center gap-1.5">
-              <Sparkles size={13} className="text-brand" />
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-brand">
-                Describe it — AI fills the rest
-              </span>
+            <div className="ai-ring p-2.5">
+              <div className="mb-1.5 flex items-center gap-1.5">
+                <Sparkles size={13} className="text-brand" />
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-brand">
+                  Describe it — AI fills the rest
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <input
+                  value={aiInput}
+                  onChange={(e) => setAiInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      runSuggest()
+                    }
+                  }}
+                  placeholder="e.g. fund my 8-year-old's US college"
+                  className={cn(inputCls, 'flex-1')}
+                />
+                <button
+                  type="button"
+                  onClick={runSuggest}
+                  disabled={aiLoading || !aiInput.trim()}
+                  className="btn-primary inline-flex shrink-0 items-center gap-1 rounded-xl px-3 py-2 text-[12px] font-medium disabled:pointer-events-none disabled:opacity-50"
+                >
+                  <Sparkles size={12} className={cn(aiLoading && 'animate-pulse')} />
+                  {aiLoading ? 'Thinking…' : 'Fill'}
+                </button>
+              </div>
+              {aiError ? (
+                <p className="mt-1.5 text-[11px] text-danger">{aiError}</p>
+              ) : aiRationale ? (
+                <p className="mt-1.5 flex items-start gap-1 text-[11px] text-muted-foreground">
+                  <Sparkles size={11} className="mt-0.5 shrink-0 text-brand" />
+                  {aiRationale} — review and adjust below.
+                </p>
+              ) : null}
             </div>
-            <div className="flex items-center gap-1.5">
-              <input
-                value={aiInput}
-                onChange={(e) => setAiInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
-                    runSuggest()
-                  }
-                }}
-                placeholder="e.g. fund my 8-year-old's US college"
-                className={cn(inputCls, 'flex-1')}
-              />
-              <button
-                type="button"
-                onClick={runSuggest}
-                disabled={aiLoading || !aiInput.trim()}
-                className="btn-primary inline-flex shrink-0 items-center gap-1 rounded-xl px-3 py-2 text-[12px] font-medium disabled:pointer-events-none disabled:opacity-50"
-              >
-                <Sparkles size={12} className={cn(aiLoading && 'animate-pulse')} />
-                {aiLoading ? 'Thinking…' : 'Fill'}
-              </button>
-            </div>
-            {aiError ? (
-              <p className="mt-1.5 text-[11px] text-danger">{aiError}</p>
-            ) : aiRationale ? (
-              <p className="mt-1.5 flex items-start gap-1 text-[11px] text-muted-foreground">
-                <Sparkles size={11} className="mt-0.5 shrink-0 text-brand" />
-                {aiRationale} — review and adjust below.
-              </p>
-            ) : null}
-          </div>
           )}
 
           <Field label="Goal name">
@@ -939,9 +957,9 @@ function GoalDialog({
                     style={
                       active
                         ? {
-                            background: `color-mix(in oklch, ${accent} 12%, var(--card))`,
-                            boxShadow: `inset 0 0 0 1px color-mix(in oklch, ${accent} 35%, transparent)`,
-                          }
+                          background: `color-mix(in oklch, ${accent} 12%, var(--card))`,
+                          boxShadow: `inset 0 0 0 1px color-mix(in oklch, ${accent} 35%, transparent)`,
+                        }
                         : undefined
                     }
                   >
@@ -956,164 +974,160 @@ function GoalDialog({
           {isDebt ? (
             <DebtFields
               holdings={holdings}
-              loanId={loanId}
-              onLoan={(h) => {
-                const next = pickLoan({ loanId, original, originalEdited, name, autoName }, h)
-                setLoanId(next.loanId)
-                setOriginal(next.original)
-                setOriginalEdited(next.originalEdited)
+              loanIds={loanIds}
+              onToggle={(h) => {
+                const next = toggleLoan({ loanIds, originals, name, autoName }, h, holdings)
+                setLoanIds(next.loanIds)
+                setOriginals(next.originals)
                 setName(next.name)
                 setAutoName(next.autoName)
               }}
-              original={original}
-              setOriginal={(v) => {
-                setOriginalEdited(true)
-                setOriginal(v)
-              }}
+              originals={originals}
+              setOriginal={(id, v) => setOriginals((prev) => ({ ...prev, [id]: v }))}
             />
           ) : (
             <>
-          <Field label="Type — affects your projection">
-            <div className="grid grid-cols-2 gap-1.5">
-              {(['cost', 'investment'] as GoalKind[]).map((k) => {
-                const active = kind === k
-                const accent = k === 'cost' ? 'var(--danger)' : 'var(--success)'
-                return (
-                  <button
-                    key={k}
-                    type="button"
-                    onClick={() => setKind(k)}
-                    className={cn(
-                      'rounded-xl border px-3 py-2 text-left transition-all',
-                      active
-                        ? 'border-transparent shadow-sm'
-                        : 'border-border/70 text-muted-foreground hover:bg-accent/50',
-                    )}
-                    style={
-                      active
-                        ? {
-                            background: `color-mix(in oklch, ${accent} 10%, var(--card))`,
-                            boxShadow: `inset 0 0 0 1px color-mix(in oklch, ${accent} 35%, transparent)`,
-                          }
-                        : undefined
-                    }
-                  >
-                    <span
-                      className="block text-[12px] font-medium capitalize"
-                      style={active ? { color: accent } : undefined}
-                    >
-                      {k}
-                    </span>
-                    <span className="block text-[11px] text-muted-foreground">
-                      {k === 'cost' ? 'Spent — dips projection' : 'Stays your wealth'}
-                    </span>
-                  </button>
-                )
-              })}
-            </div>
-          </Field>
-
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Target (USD)">
-              <input
-                value={target}
-                onChange={(e) => setTarget(e.target.value.replace(/[^0-9.]/g, ''))}
-                inputMode="decimal"
-                placeholder="0"
-                className={cn(inputCls, 'tabular-nums tabular-nums')}
-              />
-            </Field>
-            <Field label={linked ? 'Saved so far — from accounts' : 'Saved so far (USD)'}>
-              {linked ? (
-                <div
-                  className={cn(
-                    inputCls,
-                    'flex items-center gap-1.5 tabular-nums text-muted-foreground',
-                  )}
-                  title="Derived live from your linked accounts"
-                >
-                  <Link2 size={13} className="shrink-0" />
-                  {formatAmount(linkedUsd, 'usd', rate)}
-                </div>
-              ) : (
-                <input
-                  value={current}
-                  onChange={(e) => setCurrent(e.target.value.replace(/[^0-9.]/g, ''))}
-                  inputMode="decimal"
-                  placeholder="0"
-                  className={cn(inputCls, 'tabular-nums tabular-nums')}
-                />
-              )}
-            </Field>
-          </div>
-
-          <Field label="Fund from accounts (optional)">
-            {holdings.length === 0 ? (
-              <p className="rounded-xl border border-dashed border-border/70 px-3 py-2.5 text-[12px] text-muted-foreground">
-                No accounts yet — add some in Accounts to fund this goal automatically.
-              </p>
-            ) : (
-              <>
-                <div className="max-h-44 space-y-1 overflow-y-auto rounded-xl border border-border/70 p-1">
-                  {/* Cash, deposits and investments only. One linked before that rule
-                      (a loan, flat or car) stays listed so it can be unticked. */}
-                  {holdings.filter((h) => isGoalFundingAccount(h) || (h.id && linkedIds.includes(h.id))).map((h) => {
-                    const id = h.id ?? ''
-                    const on = linkedIds.includes(id)
-                    const cantFund = !isGoalFundingAccount(h)
-                    const owner = accountToGoal.get(id)
-                    const elsewhere = owner && owner.id !== initial?.id ? owner.name : null
+              <Field label="Type — affects your projection">
+                <div className="grid grid-cols-2 gap-1.5">
+                  {(['cost', 'investment'] as GoalKind[]).map((k) => {
+                    const active = kind === k
+                    const accent = k === 'cost' ? 'var(--danger)' : 'var(--success)'
                     return (
                       <button
-                        key={id}
+                        key={k}
                         type="button"
-                        onClick={() => toggleAccount(id)}
+                        onClick={() => setKind(k)}
                         className={cn(
-                          'flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors',
-                          on ? 'bg-accent/70' : 'hover:bg-accent/40',
+                          'rounded-xl border px-3 py-2 text-left transition-all',
+                          active
+                            ? 'border-transparent shadow-sm'
+                            : 'border-border/70 text-muted-foreground hover:bg-accent/50',
                         )}
+                        style={
+                          active
+                            ? {
+                              background: `color-mix(in oklch, ${accent} 10%, var(--card))`,
+                              boxShadow: `inset 0 0 0 1px color-mix(in oklch, ${accent} 35%, transparent)`,
+                            }
+                            : undefined
+                        }
                       >
                         <span
-                          className={cn(
-                            'flex size-4 shrink-0 items-center justify-center rounded border',
-                            on ? 'border-transparent bg-foreground text-background' : 'border-border',
-                          )}
+                          className="block text-[12px] font-medium capitalize"
+                          style={active ? { color: accent } : undefined}
                         >
-                          {on && <Check size={11} strokeWidth={3} />}
+                          {k}
                         </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[12px] font-medium">
-                            {h.nickname}
-                            <span className="ml-1 font-normal text-muted-foreground">
-                              · {TYPE_LABELS[h.accountType] ?? h.accountType}
-                            </span>
-                          </span>
-                          {cantFund && (
-                            <span className="block truncate text-[10.5px] text-warning">
-                              Can&apos;t fund a goal, so it isn&apos;t counted. Untick to remove.
-                            </span>
-                          )}
-                          {elsewhere && (
-                            <span className="block truncate text-[10.5px] text-warning">
-                              moves from “{elsewhere}”
-                            </span>
-                          )}
-                        </span>
-                        <span className="shrink-0 tabular-nums text-[12px] text-muted-foreground">
-                          {formatAmount(usdValue(h, rate), 'usd', rate)}
+                        <span className="block text-[11px] text-muted-foreground">
+                          {k === 'cost' ? 'Spent — dips projection' : 'Stays your wealth'}
                         </span>
                       </button>
                     )
                   })}
                 </div>
-                <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
-                  {linked
-                    ? `${linkedIds.length} account${linkedIds.length > 1 ? 's' : ''} linked — funded amount tracks them automatically.`
-                    : 'Pick accounts and this goal funds itself from their live balances. Leave empty to enter a number by hand.'}
-                </p>
-              </>
-            )}
-          </Field>
+              </Field>
+
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Target (USD)">
+                  <input
+                    value={target}
+                    onChange={(e) => setTarget(e.target.value.replace(/[^0-9.]/g, ''))}
+                    inputMode="decimal"
+                    placeholder="0"
+                    className={cn(inputCls, 'tabular-nums tabular-nums')}
+                  />
+                </Field>
+                <Field label={linked ? 'Saved so far — from accounts' : 'Saved so far (USD)'}>
+                  {linked ? (
+                    <div
+                      className={cn(
+                        inputCls,
+                        'flex items-center gap-1.5 tabular-nums text-muted-foreground',
+                      )}
+                      title="Derived live from your linked accounts"
+                    >
+                      <Link2 size={13} className="shrink-0" />
+                      {formatAmount(linkedUsd, 'usd', rate)}
+                    </div>
+                  ) : (
+                    <input
+                      value={current}
+                      onChange={(e) => setCurrent(e.target.value.replace(/[^0-9.]/g, ''))}
+                      inputMode="decimal"
+                      placeholder="0"
+                      className={cn(inputCls, 'tabular-nums tabular-nums')}
+                    />
+                  )}
+                </Field>
+              </div>
+
+              <Field label="Fund from accounts (optional)">
+                {holdings.length === 0 ? (
+                  <p className="rounded-xl border border-dashed border-border/70 px-3 py-2.5 text-[12px] text-muted-foreground">
+                    No accounts yet — add some in Accounts to fund this goal automatically.
+                  </p>
+                ) : (
+                  <>
+                    <div className="max-h-44 space-y-1 overflow-y-auto rounded-xl border border-border/70 p-1">
+                      {/* Cash, deposits and investments only. One linked before that rule
+                      (a loan, flat or car) stays listed so it can be unticked. */}
+                      {holdings.filter((h) => isGoalFundingAccount(h) || (h.id && linkedIds.includes(h.id))).map((h) => {
+                        const id = h.id ?? ''
+                        const on = linkedIds.includes(id)
+                        const cantFund = !isGoalFundingAccount(h)
+                        const owner = accountToGoal.get(id)
+                        const elsewhere = owner && owner.id !== initial?.id ? owner.name : null
+                        return (
+                          <button
+                            key={id}
+                            type="button"
+                            onClick={() => toggleAccount(id)}
+                            className={cn(
+                              'flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors',
+                              on ? 'bg-accent/70' : 'hover:bg-accent/40',
+                            )}
+                          >
+                            <span
+                              className={cn(
+                                'flex size-4 shrink-0 items-center justify-center rounded border',
+                                on ? 'border-transparent bg-foreground text-background' : 'border-border',
+                              )}
+                            >
+                              {on && <Check size={11} strokeWidth={3} />}
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-[12px] font-medium">
+                                {h.nickname}
+                                <span className="ml-1 font-normal text-muted-foreground">
+                                  · {TYPE_LABELS[h.accountType] ?? h.accountType}
+                                </span>
+                              </span>
+                              {cantFund && (
+                                <span className="block truncate text-[10.5px] text-warning">
+                                  Can&apos;t fund a goal, so it isn&apos;t counted. Untick to remove.
+                                </span>
+                              )}
+                              {elsewhere && (
+                                <span className="block truncate text-[10.5px] text-warning">
+                                  moves from “{elsewhere}”
+                                </span>
+                              )}
+                            </span>
+                            <span className="shrink-0 tabular-nums text-[12px] text-muted-foreground">
+                              {formatAmount(usdValue(h, rate), 'usd', rate)}
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                    <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
+                      {linked
+                        ? `${linkedIds.length} account${linkedIds.length > 1 ? 's' : ''} linked — funded amount tracks them automatically.`
+                        : 'Pick accounts and this goal funds itself from their live balances. Leave empty to enter a number by hand.'}
+                    </p>
+                  </>
+                )}
+              </Field>
             </>
           )}
 
@@ -1161,18 +1175,18 @@ function GoalDialog({
           )}
 
           {!isDebt && (
-          <Field label="I'm putting in (USD / month, optional)">
-            <input
-              value={planned}
-              onChange={(e) => setPlanned(e.target.value.replace(/[^0-9.]/g, ''))}
-              inputMode="decimal"
-              placeholder="e.g. 500"
-              className={cn(inputCls, 'tabular-nums')}
-            />
-            <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
-              Used to show whether you&apos;re on track. Without it, the status looks at savings alone.
-            </p>
-          </Field>
+            <Field label="I'm putting in (USD / month, optional)">
+              <input
+                value={planned}
+                onChange={(e) => setPlanned(e.target.value.replace(/[^0-9.]/g, ''))}
+                inputMode="decimal"
+                placeholder="e.g. 500"
+                className={cn(inputCls, 'tabular-nums')}
+              />
+              <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
+                Used to show whether you&apos;re on track. Without it, the status looks at savings alone.
+              </p>
+            </Field>
           )}
         </div>
 
