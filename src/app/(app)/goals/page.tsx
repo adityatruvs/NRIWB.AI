@@ -743,7 +743,7 @@ function GoalDialog({
         }
         // Apply only the fields that changed; everything else keeps its value.
         if (patch.name != null) setName(patch.name)
-        if (patch.category != null) setCategory(patch.category)
+        // The category is fixed once the goal exists, so a category change is ignored.
         if (patch.kind != null) setKind(patch.kind)
         if (patch.targetUsd != null) setTarget(String(patch.targetUsd))
         if (patch.targetYear != null) setYear(Math.min(maxYear, Math.max(minYear, patch.targetYear)))
@@ -929,15 +929,19 @@ function GoalDialog({
                   <button
                     key={c}
                     type="button"
+                    // An existing goal keeps its category; only the active one shows, read-only.
+                    disabled={isEdit}
                     onClick={() => {
                       setCategory(c)
                       setKind(defaultGoalKind(c))
                     }}
                     className={cn(
                       'flex flex-col items-center gap-1 rounded-xl border px-2 py-2.5 text-[11px] font-medium transition-all',
+                      isEdit && 'cursor-not-allowed',
+                      isEdit && !active && 'opacity-40',
                       active
                         ? 'border-transparent text-foreground shadow-sm ring-1'
-                        : 'border-border/70 text-muted-foreground hover:bg-accent/50',
+                        : cn('border-border/70 text-muted-foreground', !isEdit && 'hover:bg-accent/50'),
                     )}
                     style={
                       active

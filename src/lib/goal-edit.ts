@@ -146,7 +146,7 @@ export function goalEditPatch(
     conversion = t.conversion
   }
   if (changes.name?.trim()) patch.name = changes.name.trim().slice(0, 40)
-  if (changes.category) patch.category = changes.category
+  // The category is fixed once a goal exists, so a requested category change is dropped.
   if (changes.kind) patch.kind = changes.kind
 
   // Drop no-op fields so the summary only lists real changes.

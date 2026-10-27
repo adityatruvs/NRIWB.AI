@@ -187,7 +187,8 @@ function accountFromHolding(h: Holding, rate: number): AccountFields {
 
 function goalFromRaw(g: RawGoal | undefined, currentYear: number, base?: GoalFields): GoalFields {
   const r = g ?? {}
-  const category = r.category ?? base?.category ?? 'other'
+  // Editing an existing goal never changes its category.
+  const category = base?.category ?? r.category ?? 'other'
   return {
     name: r.name ?? base?.name ?? '',
     category,
@@ -344,7 +345,11 @@ export function ProposalCard({
               />
             )}
             {(proposal.type === 'add_goal' || proposal.type === 'update_goal') && (
-              <GoalFieldset g={proposal.goal} onChange={(goal) => onChange({ ...proposal, goal })} />
+              <GoalFieldset
+                g={proposal.goal}
+                lockCategory={proposal.type === 'update_goal'}
+                onChange={(goal) => onChange({ ...proposal, goal })}
+              />
             )}
             {proposal.type === 'set_income' && (
               <Field label="Monthly income" className="col-span-2">
@@ -527,24 +532,38 @@ function AccountFieldset({
   )
 }
 
-function GoalFieldset({ g, onChange }: { g: GoalFields; onChange: (g: GoalFields) => void }) {
+function GoalFieldset({
+  g,
+  lockCategory,
+  onChange,
+}: {
+  g: GoalFields
+  lockCategory?: boolean
+  onChange: (g: GoalFields) => void
+}) {
   return (
     <>
       <Field label="Name" className="col-span-2">
         <TextInput value={g.name} onChange={(name) => onChange({ ...g, name })} placeholder="e.g. India home" />
       </Field>
       <Field label="Category">
-        <Select
-          value={g.category}
-          onChange={(v) => {
-            const category = v as GoalCategory
-            onChange({ ...g, category, kind: defaultGoalKind(category) })
-          }}
-        >
-          {GOAL_CATEGORY_ORDER.map((c) => (
-            <option key={c} value={c}>{GOAL_CATEGORY_META[c].label}</option>
-          ))}
-        </Select>
+        {lockCategory ? (
+          <div className="rounded-xl border border-border/70 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+            {GOAL_CATEGORY_META[g.category].label}
+          </div>
+        ) : (
+          <Select
+            value={g.category}
+            onChange={(v) => {
+              const category = v as GoalCategory
+              onChange({ ...g, category, kind: defaultGoalKind(category) })
+            }}
+          >
+            {GOAL_CATEGORY_ORDER.map((c) => (
+              <option key={c} value={c}>{GOAL_CATEGORY_META[c].label}</option>
+            ))}
+          </Select>
+        )}
       </Field>
       <Field label="Type">
         <Select value={g.kind} onChange={(v) => onChange({ ...g, kind: v as GoalKind })}>
