@@ -42,8 +42,8 @@ function goalBody(g: Omit<Goal, 'id'>) {
     targetMonth: g.targetMonth ?? null,
     linkedAccountIds: g.linkedAccountIds ?? [],
     plannedMonthlyUsd: g.plannedMonthlyUsd ?? null,
-    linkedLiabilityId: g.linkedLiabilityId ?? null,
-    originalAmount: g.originalAmount ?? null,
+    linkedLiabilityIds: g.linkedLiabilityIds ?? [],
+    originalAmounts: g.originalAmounts ?? {},
   }
 }
 
@@ -200,9 +200,11 @@ export function GoalsProvider({ children }: { children: React.ReactNode }) {
             let next = g
             if (g.linkedAccountIds?.some((i) => gone.has(i)))
               next = { ...next, linkedAccountIds: g.linkedAccountIds.filter((i) => !gone.has(i)) }
-            if (g.linkedLiabilityId && gone.has(g.linkedLiabilityId)) {
-              const { linkedLiabilityId: _removed, ...rest } = next
-              next = rest
+            if (g.linkedLiabilityIds?.some((i) => gone.has(i))) {
+              const originalAmounts = Object.fromEntries(
+                Object.entries(g.originalAmounts ?? {}).filter(([i]) => !gone.has(i)),
+              )
+              next = { ...next, linkedLiabilityIds: g.linkedLiabilityIds.filter((i) => !gone.has(i)), originalAmounts }
             }
             return next
           }),

@@ -36,26 +36,27 @@ const baseFields = {
   targetMonth: z.number().int('targetMonth must be a whole month').min(1).max(12).nullable(),
   linkedAccountIds: z.array(z.string().min(1)).max(100),
   plannedMonthlyUsd: z.number().min(0, 'plannedMonthlyUsd cannot be negative').nullable(),
-  linkedLiabilityId: z.string().min(1).nullable(),
-  originalAmount: z.number().positive('originalAmount must be greater than 0').nullable(),
+  linkedLiabilityIds: z.array(z.string().min(1)).max(50),
+  // Starting balance by loan id, each in that loan's own currency.
+  originalAmounts: z.record(z.string().min(1), z.number().positive('originalAmounts must be greater than 0')),
 }
 
 /**
  * Shape rules for how a goal links to accounts (ownership is checked in the DB):
- * a debt-payoff goal links exactly one loan and no assets; any other goal links
- * assets only, never a loan.
+ * a debt-payoff goal links loans and no assets; any other goal links assets
+ * only, never a loan.
  */
 export function linkRuleError(g: {
   category: string
   linkedAccountIds: string[]
-  linkedLiabilityId: string | null
+  linkedLiabilityIds: string[]
 }): string | null {
   if (g.category === 'debt') {
     if (g.linkedAccountIds.length > 0) return 'linkedAccountIds: a debt payoff goal links a loan, not assets'
-    // A null loan is allowed only once the loan has been deleted (see the route).
+    // No loans is allowed only once they've all been deleted (see the route).
     return null
   }
-  if (g.linkedLiabilityId) return 'linkedLiabilityId: only a debt payoff goal can link a loan'
+  if (g.linkedLiabilityIds.length > 0) return 'linkedLiabilityIds: only a debt payoff goal can link a loan'
   return null
 }
 
@@ -82,8 +83,8 @@ export const createGoalSchema = z.object({
   targetMonth: baseFields.targetMonth.optional(),
   linkedAccountIds: baseFields.linkedAccountIds.default([]),
   plannedMonthlyUsd: baseFields.plannedMonthlyUsd.optional(),
-  linkedLiabilityId: baseFields.linkedLiabilityId.optional(),
-  originalAmount: baseFields.originalAmount.optional(),
+  linkedLiabilityIds: baseFields.linkedLiabilityIds.default([]),
+  originalAmounts: baseFields.originalAmounts.default({}),
 })
 
 /** PATCH touches a subset; the route checks `targetYear` with `targetYearError`. */
@@ -111,6 +112,9 @@ export interface GoalRecord {
   targetMonth: number | null
   linkedAccountIds: string[]
   plannedMonthlyUsd: number | null
+  linkedLiabilityIds: string[]
+  originalAmounts: unknown
+  /** Deprecated single-loan columns: read only when `linkedLiabilityIds` is empty. */
   linkedLiabilityId: string | null
   originalAmount: number | null
 }
@@ -119,6 +123,15 @@ const isCategory = (c: string): c is GoalCategory => (GOAL_CATEGORIES as readonl
 const isKind = (k: string | null): k is GoalKind => k !== null && (KINDS as readonly string[]).includes(k)
 
 const unique = (ids: string[]) => Array.from(new Set(ids))
+
+/** The stored JSON as a loan id -> positive amount map; anything else is dropped. */
+function parseAmounts(raw: unknown): Record<string, number> {
+  const out: Record<string, number> = {}
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    for (const [id, n] of Object.entries(raw)) if (typeof n === 'number' && n > 0) out[id] = n
+  }
+  return out
+}
 
 /** DB row -> client `Goal`. Optional fields are omitted rather than null. */
 export function toGoal(row: GoalRecord): Goal {
@@ -134,8 +147,14 @@ export function toGoal(row: GoalRecord): Goal {
   if (row.targetMonth != null) goal.targetMonth = row.targetMonth
   if (row.linkedAccountIds.length > 0) goal.linkedAccountIds = row.linkedAccountIds
   if (row.plannedMonthlyUsd != null) goal.plannedMonthlyUsd = row.plannedMonthlyUsd
-  if (row.linkedLiabilityId) goal.linkedLiabilityId = row.linkedLiabilityId
-  if (row.originalAmount != null) goal.originalAmount = row.originalAmount
+  if (row.linkedLiabilityIds.length > 0) {
+    goal.linkedLiabilityIds = row.linkedLiabilityIds
+    const amounts = parseAmounts(row.originalAmounts)
+    if (Object.keys(amounts).length > 0) goal.originalAmounts = amounts
+  } else if (row.linkedLiabilityId) {
+    goal.linkedLiabilityIds = [row.linkedLiabilityId]
+    if (row.originalAmount != null) goal.originalAmounts = { [row.linkedLiabilityId]: row.originalAmount }
+  }
   return goal
 }
 
@@ -152,8 +171,8 @@ export function toCreateData(input: CreateGoalInput, userId: string) {
     targetMonth: input.targetMonth ?? null,
     linkedAccountIds: unique(input.linkedAccountIds),
     plannedMonthlyUsd: input.plannedMonthlyUsd ?? null,
-    linkedLiabilityId: input.linkedLiabilityId ?? null,
-    originalAmount: input.originalAmount ?? null,
+    linkedLiabilityIds: unique(input.linkedLiabilityIds),
+    originalAmounts: input.originalAmounts,
   }
 }
 
@@ -161,8 +180,10 @@ export function toUpdateData(patch: UpdateGoalInput): Record<string, unknown> {
   const data: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(patch)) {
     if (value === undefined) continue
-    data[key] = key === 'linkedAccountIds' ? unique(value as string[]) : value
+    data[key] = key === 'linkedAccountIds' || key === 'linkedLiabilityIds' ? unique(value as string[]) : value
   }
+  // Writing loans retires the deprecated single-loan columns.
+  if (data.linkedLiabilityIds) Object.assign(data, { linkedLiabilityId: null, originalAmount: null })
   return data
 }
 

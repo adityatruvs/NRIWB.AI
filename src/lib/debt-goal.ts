@@ -1,11 +1,12 @@
 /**
  * Debt-payoff goals ("clear the home loan by 2028"). Pure + testable.
  *
- * A debt goal links exactly one liability and records its `originalAmount` in the
- * loan's own currency. Progress is computed in that currency — (original −
- * current balance) / original — so an INR loan's progress never moves with FX.
- * The payoff date comes from the loan's APR and minimum payment (standard
- * amortization); comparing it with the target year gives the status.
+ * A debt goal links one or more liabilities and records each one's starting balance
+ * (`originalAmounts`) in that loan's own currency. Progress is computed natively —
+ * (original − current balance) / original — so an INR loan's progress never moves
+ * with FX. The payoff date comes from each loan's APR and minimum payment (standard
+ * amortization), the goal clearing when the last loan does; comparing that with the
+ * target year gives the status.
  */
 
 import { isLiability, type Holding } from '@/lib/portfolio'
@@ -23,13 +24,14 @@ export const loanBalanceNative = (loan: Holding): number =>
 export const nativeToUsd = (amount: number, currency: LoanCurrency, rate: number) =>
   currency === 'INR' ? amount / rate : amount
 
-export function linkedLoan(goal: Goal, holdings: Holding[]): Holding | null {
-  if (!goal.linkedLiabilityId) return null
-  const h = holdings.find((x) => x.id === goal.linkedLiabilityId)
-  return h && isLiability(h) ? h : null
+export function linkedLoans(goal: Goal, holdings: Holding[]): Holding[] {
+  return (goal.linkedLiabilityIds ?? []).flatMap((id) => {
+    const h = holdings.find((x) => x.id === id)
+    return h && isLiability(h) ? [h] : []
+  })
 }
 
-export interface DebtProgress {
+export interface LoanProgress {
   currency: LoanCurrency
   originalNative: number
   remainingNative: number
@@ -38,24 +40,54 @@ export interface DebtProgress {
   pct: number
 }
 
-export function debtProgress(goal: Goal, loan: Holding): DebtProgress {
+/** One loan's progress, in its own currency, from the starting balance saved for it. */
+export function loanProgress(goal: Goal, loan: Holding): LoanProgress {
   const currency = loanCurrency(loan)
   const remainingNative = loanBalanceNative(loan)
-  const originalNative = Math.max(goal.originalAmount ?? remainingNative, remainingNative, 0)
+  const saved = loan.id ? goal.originalAmounts?.[loan.id] : undefined
+  const originalNative = Math.max(saved ?? remainingNative, remainingNative, 0)
+  const repaidNative = originalNative - remainingNative
+  const pct = originalNative > 0 ? Math.min(1, Math.max(0, repaidNative / originalNative)) : 1
+  return { currency, originalNative, remainingNative, repaidNative, pct }
+}
+
+export interface DebtProgress {
+  /** The loans' shared currency, or USD when they mix (then amounts are converted at the rate). */
+  currency: LoanCurrency
+  originalNative: number
+  remainingNative: number
+  repaidNative: number
+  /** 0..1 */
+  pct: number
+}
+
+/**
+ * All linked loans together. Loans in one currency are summed natively, so an INR
+ * goal's progress never moves with FX; a mix is converted to USD at `rate`.
+ */
+export function debtProgress(goal: Goal, loans: Holding[], rate: number): DebtProgress {
+  const parts = loans.map((l) => loanProgress(goal, l))
+  const mixed = new Set(parts.map((p) => p.currency)).size > 1
+  const currency: LoanCurrency = mixed ? 'USD' : (parts[0]?.currency ?? 'USD')
+  const conv = (n: number, c: LoanCurrency) => (mixed ? nativeToUsd(n, c, rate) : n)
+  const sum = (pick: (p: LoanProgress) => number) =>
+    parts.reduce((s, p) => s + conv(pick(p), p.currency), 0)
+  const originalNative = sum((p) => p.originalNative)
+  const remainingNative = sum((p) => p.remainingNative)
   const repaidNative = originalNative - remainingNative
   const pct = originalNative > 0 ? Math.min(1, Math.max(0, repaidNative / originalNative)) : 1
   return { currency, originalNative, remainingNative, repaidNative, pct }
 }
 
 /**
- * The goal with USD figures resolved from its loan: target = original, funded =
- * repaid, both at the current rate (so their ratio is the native progress).
- * A missing loan leaves the goal as stored.
+ * The goal with USD figures resolved from its loans: target = original, funded =
+ * repaid, both at the current rate (so their ratio is the native progress for a
+ * single-currency goal). With no loans left the goal stays as stored.
  */
 export function resolveDebtGoal(goal: Goal, holdings: Holding[], rate: number): Goal {
-  const loan = linkedLoan(goal, holdings)
-  if (!loan) return goal
-  const p = debtProgress(goal, loan)
+  const loans = linkedLoans(goal, holdings)
+  if (loans.length === 0) return goal
+  const p = debtProgress(goal, loans, rate)
   return {
     ...goal,
     targetUsd: nativeToUsd(p.originalNative, p.currency, rate),
@@ -93,29 +125,31 @@ export function monthsUntilYearEnd(targetYear: number, now: Date): number {
 
 /** The loan-dependent fields of the Debt payoff dialog. */
 export interface LoanPickState {
-  loanId: string | null
-  /** Starting balance as typed, in the loan's own currency. */
-  original: string
-  /** True once the user has typed their own starting balance for the current loan. */
-  originalEdited: boolean
+  loanIds: string[]
+  /** Starting balance per selected loan as typed, in that loan's own currency. */
+  originals: Record<string, string>
   name: string
   /** The last name we generated, so a hand-written name is never overwritten. */
   autoName: string
 }
 
 /**
- * Picking a loan defaults the starting balance to what's owed today and the name to
- * "Pay off <loan>". A figure typed for one loan doesn't carry over to a different one,
- * and a name the user wrote themselves is left alone.
+ * Ticking a loan adds it, defaulting its starting balance to what's owed today;
+ * unticking drops it and its figure. The name defaults to "Pay off <loan>" (or
+ * "Pay off N loans"), and a name the user wrote themselves is left alone.
  */
-export function pickLoan(state: LoanPickState, loan: Holding): LoanPickState {
-  const next = { ...state, loanId: loan.id ?? null }
-  if (loan.id !== state.loanId || !state.originalEdited) {
-    next.original = String(Math.round(loanBalanceNative(loan)))
-    next.originalEdited = false
-  }
+export function toggleLoan(state: LoanPickState, loan: Holding, all: Holding[]): LoanPickState {
+  const id = loan.id
+  if (!id) return state
+  const on = state.loanIds.includes(id)
+  const loanIds = on ? state.loanIds.filter((i) => i !== id) : [...state.loanIds, id]
+  const originals = { ...state.originals }
+  if (on) delete originals[id]
+  else originals[id] = String(Math.round(loanBalanceNative(loan)))
+  const next = { ...state, loanIds, originals }
   if (!state.name.trim() || state.name === state.autoName) {
-    next.name = `Pay off ${loan.nickname}`
+    const first = all.find((h) => h.id === loanIds[0])
+    next.name = loanIds.length === 0 ? '' : loanIds.length === 1 && first ? `Pay off ${first.nickname}` : `Pay off ${loanIds.length} loans`
     next.autoName = next.name
   }
   return next

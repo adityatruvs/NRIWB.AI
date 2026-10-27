@@ -89,8 +89,12 @@ model Goal {
   linkedAccountIds  String[] @default([])
   // What the user plans to put in each month (drives the on-track status chip).
   plannedMonthlyUsd Float?
-  // Debt payoff only: the liability being paid off (app-managed; nulled when the
-  // loan is deleted) and its starting balance in the loan's own currency.
+  // Debt payoff only: the liabilities being paid off (app-managed; a loan's id is
+  // removed when the loan is deleted) and each one's starting balance by loan id,
+  // in that loan's own currency.
+  linkedLiabilityIds String[] @default([])
+  originalAmounts    Json     @default("{}")
+  // Deprecated: the single-loan fields, read only when linkedLiabilityIds is empty.
   linkedLiabilityId String?
   originalAmount    Float?
   createdAt         DateTime @default(now())

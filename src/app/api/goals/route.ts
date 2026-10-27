@@ -57,7 +57,7 @@ export async function POST(request: Request) {
 
   const linkError = await goalLinksError(
     userId,
-    { category: input.category, linkedAccountIds: input.linkedAccountIds, linkedLiabilityId: input.linkedLiabilityId ?? null },
+    { category: input.category, linkedAccountIds: input.linkedAccountIds, linkedLiabilityIds: input.linkedLiabilityIds },
     true,
   )
   if (linkError) return Response.json({ error: linkError }, { status: 400 })

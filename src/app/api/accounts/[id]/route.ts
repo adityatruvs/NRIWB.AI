@@ -133,11 +133,12 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
     prisma.$executeRaw`
       UPDATE "Goal" SET "linkedAccountIds" = array_remove("linkedAccountIds", ${id})
       WHERE "userId" = ${userId} AND ${id} = ANY("linkedAccountIds")`,
-    // A debt-payoff goal on this loan stays too, showing "Loan removed".
-    prisma.goal.updateMany({
-      where: { userId, linkedLiabilityId: id },
-      data: { linkedLiabilityId: null },
-    }),
+    // A debt-payoff goal on this loan stays too, without it (none left: "Loan removed").
+    prisma.$executeRaw`
+      UPDATE "Goal" SET "linkedLiabilityIds" = array_remove("linkedLiabilityIds", ${id}),
+        "originalAmounts" = "originalAmounts" - ${id}::text,
+        "linkedLiabilityId" = NULL, "originalAmount" = NULL
+      WHERE "userId" = ${userId} AND (${id} = ANY("linkedLiabilityIds") OR "linkedLiabilityId" = ${id})`,
     prisma.account.delete({ where: { id } }),
   ])
 

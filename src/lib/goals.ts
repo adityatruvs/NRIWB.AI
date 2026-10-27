@@ -98,10 +98,10 @@ export interface Goal {
   linkedAccountIds?: string[]
   /** What the user plans to contribute each month, in USD (optional). */
   plannedMonthlyUsd?: number
-  /** Debt payoff only: the liability being paid off. */
-  linkedLiabilityId?: string
-  /** Debt payoff only: the starting balance, in the loan's own currency. */
-  originalAmount?: number
+  /** Debt payoff only: the liabilities being paid off. */
+  linkedLiabilityIds?: string[]
+  /** Debt payoff only: each loan's starting balance (by loan id), in that loan's own currency. */
+  originalAmounts?: Record<string, number>
 }
 
 /** True when the goal draws its funded amount from linked accounts. */
