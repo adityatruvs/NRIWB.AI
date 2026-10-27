@@ -22,6 +22,22 @@ export const IN_ASSET_CHOICES: TypeChoice[] = [
   'nre', 'nro', 'fd_nre', 'fd_nro', 'fcnr', 'mutual_fund', 'brokerage', 'property', 'gold', 'vehicle', 'notes_receivable', 'other',
 ]
 
+const US_ASSET_CHOICES: TypeChoice[] = [
+  'checking', 'savings', 'cd', 'brokerage', 'bond', '401k', 'ira', 'roth_ira', 'real_estate', 'vehicle', 'notes_receivable', 'other',
+]
+const US_LIABILITY_CHOICES: TypeChoice[] = [
+  'mortgage', 'heloc', 'auto_loan', 'student_loan', 'credit_card', 'personal_loan', 'notes_payable', 'other_debt',
+]
+const IN_LIABILITY_CHOICES: TypeChoice[] = [
+  'home_loan', 'auto_loan', 'education_loan', 'credit_card', 'personal_loan', 'notes_payable', 'other_debt',
+]
+
+/** Every type a picker offers for this country × asset/liability, in display order. */
+export function typeChoicesFor(country: 'US' | 'IN', kind: 'asset' | 'liability'): TypeChoice[] {
+  if (kind === 'liability') return country === 'US' ? US_LIABILITY_CHOICES : IN_LIABILITY_CHOICES
+  return country === 'US' ? US_ASSET_CHOICES : IN_ASSET_CHOICES
+}
+
 /** The picker choice for a stored type + scheme. A legacy India fd without a scheme reads as NRE. */
 export function typeChoice(country: 'US' | 'IN', t: AccountType, fdScheme?: FdScheme): TypeChoice {
   if (country === 'IN' && t === 'fd') return fdScheme === 'NRO' ? 'fd_nro' : 'fd_nre'

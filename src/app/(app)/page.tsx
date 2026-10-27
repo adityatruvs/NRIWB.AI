@@ -81,7 +81,12 @@ export default function DashboardPage() {
   const [greeting, setGreeting] = useState('Welcome')
   // Set after mount (like the greeting) so SSR and the first client render agree.
   const [currentYear, setCurrentYear] = useState(2026)
-  useEffect(() => setCurrentYear(new Date().getFullYear()), [])
+  const [currentMonth, setCurrentMonth] = useState(12)
+  useEffect(() => {
+    const now = new Date()
+    setCurrentYear(now.getFullYear())
+    setCurrentMonth(now.getMonth() + 1)
+  }, [])
   useEffect(() => setGreeting(greetingForHour(new Date().getHours())), [])
   const [filter, setFilter] = useState<CountryFilter>('all')
   const [activeAsset, setActiveAsset] = useState<number | null>(null)
@@ -720,7 +725,7 @@ export default function DashboardPage() {
                 const g = resolveGoal(raw, holdings, rate)
                 const pct = goalProgress(g)
                 const accent = goalAccent(g)
-                const status = goalStatus(g, holdings, rate, currentYear)
+                const status = goalStatus(g, holdings, rate, currentYear, undefined, currentMonth)
                 return (
                   <div key={g.id}>
                     <div className="mb-1.5 flex items-center justify-between gap-2">

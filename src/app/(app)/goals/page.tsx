@@ -61,7 +61,7 @@ import { Reveal } from '@/components/ui/Reveal'
 import { cn } from '@/lib/utils'
 import { SearchParamsReader } from '@/components/SearchParamsReader'
 import { GoalStatusChip } from '@/components/GoalStatusChip'
-import { goalStatus } from '@/lib/goal-status'
+import { goalStatus, withinYearLabel } from '@/lib/goal-status'
 
 const CATEGORY_ICON: Record<GoalCategory, LucideIcon> = {
   retirement: PiggyBank,
@@ -96,7 +96,12 @@ export default function GoalsPage() {
   }, [editParam, goalsLoading, goals])
 
   const [currentYear, setCurrentYear] = useState(2026)
-  useEffect(() => setCurrentYear(new Date().getFullYear()), [])
+  const [currentMonth, setCurrentMonth] = useState(12)
+  useEffect(() => {
+    const now = new Date()
+    setCurrentYear(now.getFullYear())
+    setCurrentMonth(now.getMonth() + 1)
+  }, [])
 
   // Each goal's funded amount, resolved live from linked accounts where set.
   const fundedById = useMemo(() => {
@@ -208,6 +213,7 @@ export default function GoalsPage() {
               mode={mode}
               rate={rate}
               currentYear={currentYear}
+              currentMonth={currentMonth}
               age={age}
               onEdit={() => setEditing(g)}
               onDelete={() => setDeleting(g)}
@@ -224,6 +230,7 @@ export default function GoalsPage() {
       {adding && (
         <GoalDialog
           currentYear={currentYear}
+          currentMonth={currentMonth}
           age={age}
           holdings={holdings}
           rate={rate}
@@ -239,6 +246,7 @@ export default function GoalsPage() {
         <GoalDialog
           initial={editing}
           currentYear={currentYear}
+          currentMonth={currentMonth}
           age={age}
           holdings={holdings}
           rate={rate}
@@ -273,6 +281,7 @@ function GoalCard({
   mode,
   rate,
   currentYear,
+  currentMonth,
   age,
   onEdit,
   onDelete,
@@ -285,6 +294,7 @@ function GoalCard({
   mode: ReturnType<typeof useCurrency>['mode']
   rate: number
   currentYear: number
+  currentMonth: number
   age: number | null
   onEdit: () => void
   onDelete: () => void
@@ -304,7 +314,7 @@ function GoalCard({
   const funders = (goal.linkedAccountIds ?? [])
     .map((id) => holdings.find((h) => h.id === id))
     .filter((h): h is Holding => !!h && isGoalFundingAccount(h))
-  const status = goalStatus(rg, holdings, rate, currentYear)
+  const status = goalStatus(rg, holdings, rate, currentYear, undefined, currentMonth)
 
   return (
     <Card hover className="group flex flex-col">
@@ -415,6 +425,11 @@ function GoalCard({
         {reached ? (
           <span className="inline-flex items-center gap-1.5 font-medium text-success">
             <ShieldCheck size={13} /> Goal reached — nice work
+          </span>
+        ) : status.monthsLeftThisYear != null ? (
+          <span className="inline-flex items-center gap-1.5">
+            <Money usd={goalRemaining(goal)} className="font-medium text-foreground" /> left ·{' '}
+            {withinYearLabel(status.monthsLeftThisYear)}
           </span>
         ) : yearsLeft <= 0 ? (
           <span className="inline-flex items-center gap-1.5">
@@ -640,6 +655,7 @@ function useEscape(onClose: () => void) {
 function GoalDialog({
   initial,
   currentYear,
+  currentMonth,
   age,
   holdings,
   rate,
@@ -649,6 +665,7 @@ function GoalDialog({
 }: {
   initial?: Goal
   currentYear: number
+  currentMonth: number
   age: number | null
   holdings: Holding[]
   rate: number
@@ -663,6 +680,8 @@ function GoalDialog({
   const [target, setTarget] = useState(initial ? String(Math.round(initial.targetUsd)) : '')
   const [current, setCurrent] = useState(initial ? String(Math.round(initial.currentUsd)) : '')
   const [year, setYear] = useState(initial?.targetYear ?? currentYear + 10)
+  // Optional deadline month — only offered when the target year is this year.
+  const [month, setMonth] = useState<number | null>(initial?.targetMonth ?? null)
   const [kind, setKind] = useState<GoalKind>(
     initial?.kind ?? defaultGoalKind(initial?.category ?? 'retirement'),
   )
@@ -773,6 +792,10 @@ function GoalDialog({
     ...(initial && initial.targetYear < currentYear ? [initial.targetYear] : []),
     ...Array.from({ length: 51 }, (_, i) => currentYear + i),
   ]
+  const monthName = (m: number) => new Date(2000, m - 1, 1).toLocaleDateString(undefined, { month: 'long' })
+  // A month already behind us can't be picked. One can only come from a goal saved earlier;
+  // it's kept as is (like a past target year), so the goal shows Overdue and stays editable.
+  const monthPassed = !isDebt && year === currentYear && month != null && month < currentMonth
   const plannedValid = planned.trim() === '' || Number(planned) >= 0
   const valid = isDebt
     ? !!name.trim() && !!loan && Number(original) > 0
@@ -803,6 +826,7 @@ function GoalDialog({
       // resolveGoal at display time); manual goals use the typed amount.
       currentUsd: linked ? Math.round(linkedUsd) : Number(current),
       targetYear: year,
+      targetMonth: year === currentYear && month != null ? month : undefined,
       kind,
       linkedAccountIds: linked ? linkedIds : undefined,
       plannedMonthlyUsd: planned.trim() !== '' && Number(planned) > 0 ? Number(planned) : undefined,
@@ -1107,6 +1131,34 @@ function GoalDialog({
               ))}
             </select>
           </Field>
+
+          {!isDebt && year === currentYear && (
+            <Field label="Target month (optional)">
+              <select
+                value={month ?? ''}
+                onChange={(e) => setMonth(e.target.value === '' ? null : Number(e.target.value))}
+                className={inputCls}
+              >
+                <option value="">End of the year</option>
+                {monthPassed && month != null && <option value={month}>{monthName(month)} (passed)</option>}
+                {Array.from({ length: 12 - currentMonth + 1 }, (_, i) => currentMonth + i).map((m) => (
+                  <option key={m} value={m}>
+                    {monthName(m)}
+                  </option>
+                ))}
+              </select>
+              {monthPassed ? (
+                <p className="mt-1.5 text-[11px] leading-snug text-warning">
+                  That month has passed, so this goal shows as Overdue. Pick {monthName(currentMonth)} or later, or
+                  &ldquo;End of the year&rdquo;, to move the deadline.
+                </p>
+              ) : (
+                <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
+                  Since this goal is due this year, pick the month to see how many months are left.
+                </p>
+              )}
+            </Field>
+          )}
 
           {!isDebt && (
           <Field label="I'm putting in (USD / month, optional)">

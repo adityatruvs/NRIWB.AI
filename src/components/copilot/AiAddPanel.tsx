@@ -1,21 +1,19 @@
 'use client'
 
 /**
- * "Add with AI" — an inline, self-contained account assistant that lives in the
- * Accounts side rail. Collapsed, it's a small prompt card. Clicking it morphs the
- * card (shared `layoutId`) into a large panel where the user describes an account,
- * reviews the proposed change as an editable card, and accepts it — applied
- * straight into the shared contexts, so the new account lands in the ledger
- * behind the panel. Minimizing morphs it back to the small card.
+ * "Add with AI" — an account assistant opened from the Accounts page's "Add
+ * account" chooser (or the empty ledger). The user describes an account, reviews
+ * the proposed change as an editable card, and accepts it — applied straight into
+ * the shared contexts, so the new account lands in the ledger behind the panel.
  *
  * It reuses the exact proposal pipeline as the full Copilot page (via
  * useCopilotStream + ProposalCard); it just drops chat history and persistence.
+ * The conversation survives closing and reopening the panel while on the page.
  */
 
 import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { Sparkles, ArrowUp, Minimize2, Square } from 'lucide-react'
-import { CardHeader } from '@/components/ui/Card'
 import { useAccounts } from '@/context/AccountsContext'
 import { useCurrency } from '@/context/CurrencyContext'
 import { useBudget } from '@/context/BudgetContext'
@@ -36,9 +34,7 @@ const EXAMPLES = [
   'Add a $300k mortgage on my home',
 ]
 
-const SURFACE_ID = 'ai-add-surface'
-
-export function AiAdd() {
+export function AiAddDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { holdings, demo } = useAccounts()
   const { rate } = useCurrency()
   const { categories } = useBudget()
@@ -47,7 +43,6 @@ export function AiAdd() {
 
   const chat = useCopilotStream({ holdings, rate, demo, goals, categories })
 
-  const [expanded, setExpanded] = useState(false)
   const [draft, setDraft] = useState('')
 
   /** Apply a proposal through the shared contexts, then mark its card applied. */
@@ -60,94 +55,47 @@ export function AiAdd() {
     const t = draft.trim()
     if (!t) return
     setDraft('')
-    setExpanded(true)
     chat.send(t)
   }
 
-  function pickExample(text: string) {
-    setExpanded(true)
-    chat.send(text)
-  }
-
   return (
-    <>
-      {/* ── Collapsed card (stays in the rail; fades out under the panel) ──── */}
-      <motion.div
-        layoutId={SURFACE_ID}
-        animate={{ opacity: expanded ? 0 : 1 }}
-        transition={{ duration: 0.2 }}
-        className="ai-ring p-5 sm:p-6"
-      >
-        <CardHeader
-          title="Add with AI"
-          subtitle="Describe it — Copilot fills in the details"
-          icon={<Sparkles size={15} />}
-        />
-        <button
-          type="button"
-          onClick={() => setExpanded(true)}
-          className="flex w-full items-center gap-1.5 rounded-2xl border border-input bg-card p-1.5 pl-3.5 text-left shadow-[0_1px_2px_hsl(var(--shadow-color)/0.05)] transition-all hover:border-brand/55"
-        >
-          <span className="min-w-0 flex-1 truncate py-1.5 text-[13px] text-muted-foreground/60">
-            e.g. add my Amex HYSA, $10k at 4.5%
-          </span>
-          <span className="btn-primary flex size-8 shrink-0 items-center justify-center rounded-xl">
-            <ArrowUp size={15} />
-          </span>
-        </button>
-
-        <div className="mt-3 flex flex-col gap-1.5">
-          {EXAMPLES.map((x) => (
-            <button
-              key={x}
-              onClick={() => pickExample(x)}
-              className="group flex items-center gap-2 rounded-xl border border-border/70 bg-card px-3 py-2 text-left text-[12px] text-muted-foreground transition-all hover:border-brand/35 hover:bg-accent/40 hover:text-foreground"
-            >
-              <Sparkles size={12} className="shrink-0 text-brand/70" />
-              <span className="min-w-0 flex-1 truncate">{x}</span>
-              <ArrowUp size={12} className="shrink-0 rotate-45 opacity-0 transition-opacity group-hover:opacity-60" />
-            </button>
-          ))}
-        </div>
-
-        <p className="mt-3 text-[11px] leading-snug text-muted-foreground/80">
-          You&apos;ll review and accept each change here — nothing is added until you confirm.
-        </p>
-      </motion.div>
-
-      {/* ── Expanded panel (morphs out of the card) ───────────────────────── */}
-      <AnimatePresence>
-        {expanded && (
-          <>
+    <AnimatePresence>
+      {open && (
+        <>
+          <motion.div
+            className="fixed inset-0 z-50 bg-foreground/25 backdrop-blur-md"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={onClose}
+          />
+          <div className="pointer-events-none fixed inset-0 z-50 grid place-items-center p-4">
             <motion.div
-              className="fixed inset-0 z-50 bg-foreground/25 backdrop-blur-md"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setExpanded(false)}
-            />
-            <div className="pointer-events-none fixed inset-0 z-50 grid place-items-center p-4">
-              <motion.div
-                layoutId={SURFACE_ID}
-                className="ai-ring pointer-events-auto flex h-[min(80dvh,44rem)] w-full max-w-2xl flex-col overflow-hidden !p-0"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <ExpandedPanel
-                  chat={chat}
-                  draft={draft}
-                  setDraft={setDraft}
-                  onSubmit={submit}
-                  onExample={pickExample}
-                  onClose={() => setExpanded(false)}
-                  onAccept={accept}
-                />
-              </motion.div>
-            </div>
-          </>
-        )}
-      </AnimatePresence>
-    </>
+              role="dialog"
+              aria-label="Add with AI"
+              initial={{ opacity: 0, scale: 0.96, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.97, y: 6 }}
+              transition={{ type: 'spring', stiffness: 380, damping: 32 }}
+              className="ai-ring pointer-events-auto flex h-[min(80dvh,44rem)] w-full max-w-2xl flex-col overflow-hidden !p-0"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <ExpandedPanel
+                chat={chat}
+                draft={draft}
+                setDraft={setDraft}
+                onSubmit={submit}
+                onExample={(text) => chat.send(text)}
+                onClose={onClose}
+                onAccept={accept}
+              />
+            </motion.div>
+          </div>
+        </>
+      )}
+    </AnimatePresence>
   )
+
 }
 
 /* ── The panel contents — thread + composer ─────────────────────────────────── */

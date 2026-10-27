@@ -33,6 +33,7 @@ const baseFields = {
     .int('targetYear must be a whole year')
     .min(1900)
     .max(MAX_TARGET_YEAR, `targetYear must be ${MAX_TARGET_YEAR} or earlier`),
+  targetMonth: z.number().int('targetMonth must be a whole month').min(1).max(12).nullable(),
   linkedAccountIds: z.array(z.string().min(1)).max(100),
   plannedMonthlyUsd: z.number().min(0, 'plannedMonthlyUsd cannot be negative').nullable(),
   linkedLiabilityId: z.string().min(1).nullable(),
@@ -78,6 +79,7 @@ export const createGoalSchema = z.object({
   ...baseFields,
   kind: baseFields.kind.optional(),
   currentUsd: baseFields.currentUsd.default(0),
+  targetMonth: baseFields.targetMonth.optional(),
   linkedAccountIds: baseFields.linkedAccountIds.default([]),
   plannedMonthlyUsd: baseFields.plannedMonthlyUsd.optional(),
   linkedLiabilityId: baseFields.linkedLiabilityId.optional(),
@@ -106,6 +108,7 @@ export interface GoalRecord {
   targetUsd: number
   currentUsd: number
   targetYear: number
+  targetMonth: number | null
   linkedAccountIds: string[]
   plannedMonthlyUsd: number | null
   linkedLiabilityId: string | null
@@ -128,6 +131,7 @@ export function toGoal(row: GoalRecord): Goal {
     targetYear: row.targetYear,
   }
   if (isKind(row.kind)) goal.kind = row.kind
+  if (row.targetMonth != null) goal.targetMonth = row.targetMonth
   if (row.linkedAccountIds.length > 0) goal.linkedAccountIds = row.linkedAccountIds
   if (row.plannedMonthlyUsd != null) goal.plannedMonthlyUsd = row.plannedMonthlyUsd
   if (row.linkedLiabilityId) goal.linkedLiabilityId = row.linkedLiabilityId
@@ -145,6 +149,7 @@ export function toCreateData(input: CreateGoalInput, userId: string) {
     targetUsd: input.targetUsd,
     currentUsd: input.currentUsd,
     targetYear: input.targetYear,
+    targetMonth: input.targetMonth ?? null,
     linkedAccountIds: unique(input.linkedAccountIds),
     plannedMonthlyUsd: input.plannedMonthlyUsd ?? null,
     linkedLiabilityId: input.linkedLiabilityId ?? null,

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { usePlaidLink, type PlaidLinkOnSuccessMetadata } from 'react-plaid-link'
-import { Landmark, Building2, PencilLine, FileUp, X, ChevronRight } from 'lucide-react'
+import { Landmark, Building2, PencilLine, FileUp, ListChecks, Sparkles, X, ChevronRight } from 'lucide-react'
 import type { Holding } from '@/lib/portfolio'
 
 interface Props {
@@ -10,10 +10,22 @@ interface Props {
   onLinked: (accounts: Holding[]) => void
   onManual: () => void
   onImportCas: () => void
+  /** Pick several from a checklist and fill in the amounts on one screen. */
+  onAddSeveral: () => void
+  /** Describe an account; NRIWB AI drafts it for the user to accept. */
+  onAddWithAi: () => void
   onClose: () => void
 }
 
-export function AddAccountChooser({ fxRate, onLinked, onManual, onImportCas, onClose }: Props) {
+export function AddAccountChooser({
+  fxRate,
+  onLinked,
+  onManual,
+  onImportCas,
+  onAddSeveral,
+  onAddWithAi,
+  onClose,
+}: Props) {
   const [linkToken, setLinkToken] = useState<string | null>(null)
 
   useEffect(() => {
@@ -69,11 +81,22 @@ export function AddAccountChooser({ fxRate, onLinked, onManual, onImportCas, onC
         <div className="px-7 pb-2 pt-8">
           <h2 className="font-serif text-lg font-medium tracking-tight">Add an account</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Link a bank automatically, or enter one by hand.
+            Describe it to AI, link a bank, or enter it by hand.
           </p>
         </div>
 
         <div className="flex flex-col gap-2.5 px-5 pb-6 pt-3">
+          <Option
+            icon={<Sparkles size={18} strokeWidth={1.75} />}
+            accent="ai"
+            title="Add with AI"
+            subtitle="Describe it — e.g. “my ICICI NRE FD, ₹40L at 7%” — and check what it fills in"
+            onClick={() => {
+              onAddWithAi()
+              onClose()
+            }}
+          />
+
           {/* U.S. bank via Plaid */}
           <Option
             icon={<Landmark size={18} strokeWidth={1.75} />}
@@ -116,6 +139,17 @@ export function AddAccountChooser({ fxRate, onLinked, onManual, onImportCas, onC
               onClose()
             }}
           />
+
+          <Option
+            icon={<ListChecks size={18} strokeWidth={1.75} />}
+            accent="brand"
+            title="Add several at once"
+            subtitle="Tick what you have from a checklist, then fill in the amounts"
+            onClick={() => {
+              onAddSeveral()
+              onClose()
+            }}
+          />
         </div>
       </div>
     </div>
@@ -134,15 +168,21 @@ function Option({
   icon: React.ReactNode
   title: string
   subtitle: string
-  accent: 'us' | 'india' | 'brand'
+  accent: 'us' | 'india' | 'brand' | 'ai'
   badge?: string
   disabled?: boolean
   onClick?: () => void
 }) {
   const accentText =
-    accent === 'us' ? 'text-us' : accent === 'india' ? 'text-india' : 'text-brand'
+    accent === 'us' ? 'text-us' : accent === 'india' ? 'text-india' : accent === 'ai' ? 'text-white' : 'text-brand'
   const accentBg =
-    accent === 'us' ? 'bg-us-muted/60' : accent === 'india' ? 'bg-india-muted/60' : 'bg-brand-muted/60'
+    accent === 'us'
+      ? 'bg-us-muted/60'
+      : accent === 'india'
+        ? 'bg-india-muted/60'
+        : accent === 'ai'
+          ? 'ai-chip'
+          : 'bg-brand-muted/60'
 
   return (
     <button
