@@ -15,8 +15,10 @@ export function PlaidConnect({ onLinked, fxRate }: Props) {
 
   useEffect(() => {
     fetch('/api/plaid/create-link-token', { method: 'POST' })
-      .then((r) => r.json())
-      .then((d) => setLinkToken(d.link_token))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setLinkToken(d?.link_token ?? null))
+      // No token (Plaid not configured, or the request failed): the button stays disabled.
+      .catch(() => setLinkToken(null))
   }, [])
 
   const onSuccess = useCallback(
